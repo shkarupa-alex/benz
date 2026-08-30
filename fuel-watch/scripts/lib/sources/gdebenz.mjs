@@ -8,12 +8,59 @@ export async function collect(request, ctx) {
     let opened = await ctx.browser.open("https://gdebenz.ru/");
     if (is502(opened)) { opened = await ctx.browser.open("https://gdebenz.ru/"); if (is502(opened)) return healthResult(id, "HTTP_ERROR", "HTTP_ERROR_PAGE", "Fixture-validated 502 error page"); }
     await ctx.browser.waitReady({ anyOfSelectors: ["#map", "[class*=map]", "script"], urlRejectPatterns: ["captcha", "challenge"], timeoutMs: Math.min(20000, ctx.config.browser.adapterTimeoutMs) });
-    const raw = await ctx.browser.evalJson(GDEBENZ_EXTRACTOR);
+    let raw = await ctx.browser.evalJson(gdebenzApiExtractor(nearbyUrl(request.area.polygon)));
+    if (raw.apiUnavailable) {
+      const fallback = await ctx.browser.evalJson(GDEBENZ_EXTRACTOR);
+      raw = fallback.schemaChanged ? { ...fallback, message: `${raw.message}; ${fallback.message}` } : fallback;
+    }
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
     return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
 function is502(opened) { return /^\s*(?:error\s+)?502(?:\s*-?\s*bad gateway)?\s*$/iu.test(opened.pageTitle ?? "") || /^\s*502\s*-?\s*bad gateway\b/iu.test(opened.pageTextPrefix ?? ""); }
+export function gdebenzApiExtractor(url) { return String.raw`(async () => {
+  try {
+    const response = await fetch(${JSON.stringify(url)}, { credentials: 'same-origin' });
+    if (!response.ok) return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API returned HTTP ' + response.status };
+    const payload = await response.json();
+    const rows = Array.isArray(payload) ? payload : payload && Array.isArray(payload.stations) ? payload.stations : [];
+    if (!rows.length) return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API exposed no station rows' };
+    const stations = [], observations = [], queues = [];
+    const isoTime = value => {
+      if (!value) return undefined;
+      const normalized = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(String(value)) ? String(value).replace(' ', 'T') + 'Z' : value;
+      const date = new Date(normalized);
+      return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+    };
+    for (const row of rows) {
+      const id = String(row.osm_id || row.id || '');
+      if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
+      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.addr, url: location.href });
+      const detail = String(row.detail || '');
+      const listed = String(row.fuels_now || '') + ' ' + detail;
+      const hasAi95 = /(?:^|[^\p{L}\p{N}])(?:аи[-\s]?)?95(?:\+)?(?:[^\p{L}\p{N}]|$)/iu.test(listed);
+      const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);
+      observations.push({ stationId: id, fuel: 'АИ-95', status: familyUnavailable ? 'нет топлива' : hasAi95 ? 'есть топливо' : 'нет данных о топливе', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
+      const queue = detail.match(/очередь\s*([^·,;]*)/iu)?.[1]?.trim();
+      if (queue) {
+        const ordinal = /100\s*\+/u.test(queue) ? 'VERY_LONG' : /50\s*[–—-]\s*100/u.test(queue) ? 'LONG' : /20\s*[–—-]\s*50/u.test(queue) ? 'LONG' : /5\s*[–—-]\s*20/u.test(queue) ? 'MEDIUM' : undefined;
+        queues.push({ stationId: id, value: queue, ordinal, present: true, observedAt: isoTime(row.last_at) });
+      }
+    }
+    return { stations, observations, queues, activity: [], schemaChanged: stations.length === 0, partial: false, freshnessExpected: true, naturalTermination: true, message: stations.length ? undefined : 'gdebenz nearby API rows lacked station identity or coordinates' };
+  } catch (error) {
+    return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API could not be read: ' + error.message };
+  }
+})()`; }
+
+function nearbyUrl(polygon) {
+  const ring = polygon.length > 1 && polygon[0][0] === polygon.at(-1)[0] && polygon[0][1] === polygon.at(-1)[1] ? polygon.slice(0, -1) : polygon;
+  const lon = ring.reduce((sum, point) => sum + point[0], 0) / ring.length;
+  const lat = ring.reduce((sum, point) => sum + point[1], 0) / ring.length;
+  const radiusKm = Math.max(5, Math.ceil(Math.max(...ring.map(point => distanceKm([lon, lat], point))) + 2));
+  return `https://gdebenz.ru/api/nearby?lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}&radius_km=${radiusKm}`;
+}
+function distanceKm(a, b) { const rad = value => value * Math.PI / 180; const dLat = rad(b[1] - a[1]), dLon = rad(b[0] - a[0]); const x = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLon / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x)); }
 export const GDEBENZ_EXTRACTOR = String.raw`(() => {
   const stations = [], observations = [], queues = [], activity = [], seen = new Set();
   const consume = raw => {

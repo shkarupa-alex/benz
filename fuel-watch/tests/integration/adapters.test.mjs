@@ -74,3 +74,34 @@ test("gdebenz page extractor uses stable data-osm cards", () => {
   assert.equal(raw.freshnessExpected,false);
   assert.match(raw.message,/no observation timestamps or freshness bands/);
 });
+
+test("gdebenz nearby API extractor preserves coordinates, current family status and time", async () => {
+  const rows={stations:[
+    {osm_id:"yes-95",lon:44.5,lat:48.7,name:"АЗС 1",addr:"Адрес 1",status:"queue",fuels_now:"92,95",detail:"92, 95 · Очередь ≈20–50 машин",last_at:"2026-08-30 19:33:26"},
+    {osm_id:"no-fuel",lon:44.6,lat:48.8,name:"АЗС 2",addr:"Адрес 2",status:"no",fuels_now:"95",detail:"Заправка не работает",last_at:"2026-08-30 19:35:39"}
+  ]};
+  const fetch=async()=>({ok:true,json:async()=>rows});
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(fetch,{href:"https://gdebenz.ru/"});
+  assert.deepEqual(raw.stations[0].coordinate,[44.5,48.7]);
+  assert.equal(raw.observations[0].status,"есть топливо");
+  assert.equal(raw.observations[0].observedAt,"2026-08-30T19:33:26.000Z");
+  assert.equal(raw.observations[1].status,"нет топлива");
+  assert.equal(raw.observations[1].familyAllUnavailable,true);
+  assert.equal(raw.queues[0].ordinal,"LONG");
+  assert.equal(raw.freshnessExpected,true);
+});
+
+test("2GIS extractor reads the page's current fuel response instead of catalogue only", async () => {
+  const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=station-1";
+  const rows=[{station:{id:"station-1",lng:44.5,lat:48.7,name:"АЗС",address:"Адрес",brand:"Бренд"},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z",queue_level:"UP_TO_25"}],queue_level:"UP_TO_25"}];
+  const document={body:{innerText:"АЗС"},scripts:[]};
+  const performance={getEntriesByType:()=>[{name:liveUrl}]};
+  const fetch=async()=>({ok:true,json:async()=>rows});
+  const raw=await Function("window","document","location","performance","fetch","URL",`return ${twogis.TWOGIS_EXTRACTOR}`)({},document,{href:"https://2gis.ru/volgograd/search/АЗС"},performance,fetch,URL);
+  assert.deepEqual(raw.stations[0].coordinate,[44.5,48.7]);
+  assert.equal(raw.observations[0].fuel,"AI_95");
+  assert.equal(raw.observations[0].status,"IN_STOCK");
+  assert.equal(raw.observations[0].observedAt,"2026-08-30T19:40:00Z");
+  assert.equal(raw.queues[0].ordinal,"LONG");
+  assert.equal(raw.partial,false);
+});
