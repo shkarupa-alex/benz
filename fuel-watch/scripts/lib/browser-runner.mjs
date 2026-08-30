@@ -47,7 +47,7 @@ export class BrowserRunner {
     this.expectedUrl = reportedUrl || url;
     if (reportedUrl) assertAllowedLanding(reportedUrl, this.config.browser.allowedDomains);
     const snapshot = await this.snapshot();
-    return { finalUrl: snapshot.url, pageTextPrefix: snapshot.textPrefix };
+    return { finalUrl: snapshot.url, pageTitle: snapshot.title, pageTextPrefix: snapshot.textPrefix };
   }
 
   async waitReady(condition) {
