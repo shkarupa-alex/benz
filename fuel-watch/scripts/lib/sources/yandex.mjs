@@ -27,8 +27,13 @@ export async function collect(request, ctx) {
     }
     raw = mergeBatches(batches);
     raw.naturalTermination = naturalTermination;
-    raw.partial = !naturalTermination || raw.observations.length === 0;
-    if (raw.partial) { raw.code = naturalTermination ? "LOW_FUEL_COVERAGE" : "TRUNCATED"; raw.message = naturalTermination ? "Stations were enumerated but no current fuel blocks were extracted" : "Pagination cap reached before repeated/empty station IDs"; }
+    const noGradeFreshness = raw.observations.length > 0 && !raw.observations.some(observation => observation.observedAt);
+    raw.freshnessExpected = !noGradeFreshness;
+    raw.partial = !naturalTermination || raw.observations.length === 0 || noGradeFreshness;
+    if (raw.partial) {
+      raw.code = !naturalTermination ? "TRUNCATED" : noGradeFreshness ? "NO_GRADE_FRESHNESS_METADATA" : "LOW_FUEL_COVERAGE";
+      raw.message = !naturalTermination ? "Pagination cap reached before repeated/empty station IDs" : noGradeFreshness ? "Yandex exposes only station-level freshness, which is ineligible for grade verdicts" : "Stations were enumerated but no current fuel blocks were extracted";
+    }
     return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
@@ -47,7 +52,7 @@ export const YANDEX_EXTRACTOR = String.raw`(() => {
       const rows = Array.isArray(fuels?.fuel) ? fuels.fuel : Array.isArray(fuels) ? fuels : Object.entries(fuels).filter(([,value]) => value == null || typeof value !== 'object' || !Array.isArray(value)).map(([fuel, value]) => typeof value === 'object' ? { fuel, ...value } : { fuel, status: value });
       for (const f of rows) {
         const fuel = f.localizedName || f.fuelType || f.fuel || f.name || f.title || f.grade;
-        const observedAt = isoTime(f.lastSignalTimestamp || f.updatedAt || f.timestamp || fuels.lastSignalTimestamp);
+        const observedAt = isoTime(f.lastSignalTimestamp || f.updatedAt || f.timestamp);
         const perGradeSignals = f.signalsCountPerHour == null ? NaN : Number(f.signalsCountPerHour);
         observations.push({ stationId: id, fuel, status: f.status || f.availability || f.value, observedAt, signalsPerHour: Number.isFinite(perGradeSignals) ? perGradeSignals : undefined, url: location.href });
         if (isGasoline(fuel)) activity.push({ stationId: id, fuel, gradeLabel: fuel, kind: 'PETROL_STATUS_SNAPSHOT', status: f.status || f.availability || f.value, gradeSpecific: true, sourceTerminology: 'STATUS' });

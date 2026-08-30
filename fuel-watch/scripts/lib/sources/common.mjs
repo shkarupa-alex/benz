@@ -9,7 +9,7 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
     const classified = o.product ?? classifyFuelLabel(o.fuel ?? o.label ?? o.grade, request.requestedProducts);
     const product = capability === "CURRENT_FAMILY" && classified ? { family: "AI_95", variant: "UNKNOWN", variantKey: "FAMILY", displayLabel: classified.displayLabel, specificity: "FAMILY_ONLY", productKey: "AI95_FAMILY" } : capability === "CATALOG_ONLY" && classified ? { ...classified, specificity: "CATALOG_ONLY" } : classified;
     if (!sourceStationId || !stationIds.has(sourceStationId) || !product) return [];
-    return [{ source, sourceStationId, product, status: normalizeStatus(o.status), time: normalizeTime(o), signalsPerHour: finite(o.signalsPerHour), familyAllUnavailable: o.familyAllUnavailable === true, rawStatus: String(o.status ?? "UNKNOWN"), conflict: o.conflict ? { raw: o.conflict } : undefined, fetchedAt: request.fetchedAt, provenanceUrl: o.url ?? enumerated.find(s => s.sourceStationId === sourceStationId)?.provenanceUrl ?? "" }];
+    return [{ source, sourceStationId, product, status: normalizeStatus(o.normalizedStatus ?? o.status), time: normalizeTime(o), signalsPerHour: finite(o.signalsPerHour), familyAllUnavailable: o.familyAllUnavailable === true, rawStatus: String(o.status ?? "UNKNOWN"), conflict: o.conflict ? { raw: o.conflict } : undefined, fetchedAt: request.fetchedAt, provenanceUrl: o.url ?? enumerated.find(s => s.sourceStationId === sourceStationId)?.provenanceUrl ?? "" }];
   });
   const queues = (raw.queues ?? []).flatMap(q => {
     const sourceStationId = String(q.stationId ?? q.sourceStationId ?? "");

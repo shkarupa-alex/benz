@@ -80,3 +80,49 @@ test("synchronized petrol status transitions predict delivery while diesel is ab
   assert.equal(forecast.items[0].signalBasis,"PETROL_STATUS_PATTERN");
   assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:00:00.000Z");
 });
+
+test("history keeps station continuity when a merged member source disappears", async () => {
+  const config=await loadConfig();
+  const physical=(stationKey,verdict,memberKeys)=>({...station(stationKey,verdict),memberKeys});
+  const history={schemaVersion:1,ticks:[
+    {fetchedAt:"2026-08-28T08:00:00Z",areaHash:"area",queryHash:"query",stations:[physical("merged:old","NOT_AVAILABLE",["gdebenz:a","benzonavt:b"])]},
+    {fetchedAt:"2026-08-28T08:30:00Z",areaHash:"area",queryHash:"query",stations:[physical("source:benzonavt:b","AVAILABLE",["benzonavt:b"])]},
+    {fetchedAt:"2026-08-29T08:00:00Z",areaHash:"area",queryHash:"query",stations:[physical("source:gdebenz:a","NOT_AVAILABLE",["gdebenz:a"])]},
+    {fetchedAt:"2026-08-29T08:30:00Z",areaHash:"area",queryHash:"query",stations:[physical("merged:new","AVAILABLE",["gdebenz:a","benzonavt:b"])]},
+    {fetchedAt:"2026-08-30T08:00:00Z",areaHash:"area",queryHash:"query",stations:[physical("source:benzonavt:b","NOT_AVAILABLE",["benzonavt:b"])]},
+    {fetchedAt:"2026-08-30T08:15:00Z",areaHash:"area",queryHash:"query",stations:[physical("source:benzonavt:b","NOT_AVAILABLE",["benzonavt:b"])]}
+  ]};
+  const current={...station("source:benzonavt:b","NOT_AVAILABLE"),members:[{source:"benzonavt",sourceStationId:"b"}]};
+  const forecast=buildForecast(history,{fetchedAt:"2026-08-30T08:15:00Z",areaHash:"area",queryHash:"query",assessments:[current]},config);
+  assert.equal(forecast.completedEpisodeCount,2);
+  assert.equal(forecast.items[0].basis,"STATION");
+  assert.equal(forecast.items[0].sampleSize,2);
+});
+
+test("same physical station is conservatively collapsed once per historical tick", async () => {
+  const config=await loadConfig();
+  const physical=(stationKey,verdict,memberKeys,confidence)=>({...station(stationKey,verdict,confidence),memberKeys});
+  const history={schemaVersion:1,ticks:[
+    {fetchedAt:"2026-08-28T08:00:00Z",areaHash:"area",queryHash:"query",stations:[physical("source:gdebenz:a","NOT_AVAILABLE",["gdebenz:a"]),physical("source:benzonavt:b","AVAILABLE",["benzonavt:b"],"HIGH")]},
+    {fetchedAt:"2026-08-28T08:15:00Z",areaHash:"area",queryHash:"query",stations:[physical("merged:ab","NOT_AVAILABLE",["gdebenz:a","benzonavt:b"])]},
+    {fetchedAt:"2026-08-28T08:30:00Z",areaHash:"area",queryHash:"query",stations:[physical("merged:ab","AVAILABLE",["gdebenz:a","benzonavt:b"],"HIGH")]},
+    {fetchedAt:"2026-08-30T08:00:00Z",areaHash:"area",queryHash:"query",stations:[physical("merged:ab","NOT_AVAILABLE",["gdebenz:a","benzonavt:b"])]},
+    {fetchedAt:"2026-08-30T08:15:00Z",areaHash:"area",queryHash:"query",stations:[physical("merged:ab","NOT_AVAILABLE",["gdebenz:a","benzonavt:b"])]}
+  ]};
+  const current={...station("merged:ab","NOT_AVAILABLE"),members:[{source:"gdebenz",sourceStationId:"a"},{source:"benzonavt",sourceStationId:"b"}]};
+  const forecast=buildForecast(history,{fetchedAt:"2026-08-30T08:15:00Z",areaHash:"area",queryHash:"query",assessments:[current]},config);
+  assert.equal(forecast.completedEpisodeCount,1);
+  assert.equal(forecast.items.length,0);
+});
+
+test("parallel history updates retain every tick", async () => {
+  const config=await loadConfig();
+  const dir=await mkdtemp(join(tmpdir(),"fuel-history-lock-test-"));
+  const path=join(dir,"history.json");
+  const snapshots=Array.from({length:8},(_,index)=>({fetchedAt:new Date(Date.parse("2026-08-30T10:00:00Z")+index*60000).toISOString(),areaHash:"area",queryHash:"query",assessments:[]}));
+  await Promise.all(snapshots.map(snapshot=>recordHistory(path,snapshot,config)));
+  const saved=JSON.parse(await readFile(path,"utf8"));
+  assert.equal(saved.ticks.length,8);
+  assert.deepEqual(saved.ticks.map(value=>value.fetchedAt).sort(),snapshots.map(value=>value.fetchedAt).sort());
+  await assert.rejects(readFile(`${path}.lock`,"utf8"),error=>error.code==="ENOENT");
+});

@@ -131,7 +131,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
   };
   if (historyPath) {
     try { snapshot.forecast = (await recordHistory(historyPath, snapshot, config)).forecast; }
-    catch (error) { warnings.push({ code: "HISTORY_UNAVAILABLE", message: `7-day history could not be updated: ${error.message}` }); snapshot.forecast = { generatedAt: fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: 0, completedEpisodeCount: 0, items: [] }; }
+    catch (error) { warnings.push({ code: "HISTORY_UNAVAILABLE", message: `7-day history could not be updated (${error.code ?? "HISTORY_ERROR"}): ${error.message}` }); snapshot.forecast = { generatedAt: fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: 0, completedEpisodeCount: 0, items: [] }; }
   }
   if (outputPath) await writeJsonAtomic(outputPath, snapshot);
   return { snapshot, exitCode: warnings.some(w => w.code === "CLEANUP_FAILED") ? 75 : assessments.length || results.some(r => r.health.status === "OK") ? 0 : 2 };

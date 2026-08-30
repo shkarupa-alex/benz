@@ -34,14 +34,22 @@ export function benzonavtExtractor(url) { return String.raw`(async () => {
       const unavailable = String(state.status || '').toLowerCase() === 'no';
       const currentFuels = Array.isArray(state.fuels_now) ? state.fuels_now.map(String) : [];
       const ai95 = currentFuels.filter(fuel => /^(?:аи[-\s]?|ai[-\s]?)?95\+?$/iu.test(fuel.trim()));
-      if (unavailable) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true });
+      const hasConflict = state.conflict != null && state.conflict !== false;
+      const conflict = hasConflict ? state.conflict : undefined;
+      if (hasConflict) {
+        const conflictTime = typeof conflict === 'object' ? conflict.created_at || conflict.updated_at : undefined;
+        const products = ai95.length ? ai95 : ['АИ-95'];
+        for (const fuel of products) observations.push({ stationId: id, product: ai95.length ? undefined : familyProduct, fuel, status: 'UNCERTAIN', observedAt: conflictTime, conflict: { current: { status: state.status, fuels_now: currentFuels, updated_at: updatedAt }, opposing: conflict } });
+      } else if (unavailable) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true });
       else if (ai95.length) for (const fuel of ai95) observations.push({ stationId: id, fuel, status: 'IN_STOCK', observedAt: updatedAt });
+      else if (currentFuels.length) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true });
       else observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'UNKNOWN', observedAt: updatedAt });
       const queue = state.queue;
       if (queue) {
-        const value = typeof queue === 'object' ? queue.label || queue.level || queue.status || queue.value : queue;
+        const value = typeof queue === 'object' ? queue.size || queue.label || queue.level || queue.status || queue.value : queue;
         const vehicleCount = typeof queue === 'object' ? Number(queue.vehicle_count ?? queue.vehicleCount ?? queue.count) : undefined;
-        queues.push({ stationId: id, value, ordinal: value, vehicleCount: Number.isFinite(vehicleCount) ? vehicleCount : undefined, present: true, observedAt: updatedAt });
+        const ordinal = /^(?:20_50|20-50)$/iu.test(String(value)) ? 'LONG' : /^(?:gt50|50\+|over_50)$/iu.test(String(value)) ? 'VERY_LONG' : value;
+        queues.push({ stationId: id, value, ordinal, vehicleCount: Number.isFinite(vehicleCount) ? vehicleCount : undefined, present: true, observedAt: typeof queue === 'object' ? queue.at : undefined });
       }
     }
     const hasFreshness = observations.some(observation => observation.observedAt);

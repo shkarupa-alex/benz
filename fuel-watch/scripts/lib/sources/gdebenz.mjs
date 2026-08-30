@@ -40,7 +40,7 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
       const listed = String(row.fuels_now || '') + ',' + detail.split('·')[0];
       const hasAi95 = /(?:^|[\s,;/])(?:аи[-\s]?|ai[-\s]?)?95\+?(?=$|[\s,;/])/iu.test(listed);
       const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);
-      observations.push({ stationId: id, fuel: 'АИ-95', status: familyUnavailable ? 'нет топлива' : hasAi95 ? 'есть топливо' : 'нет данных о топливе', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
+      observations.push({ stationId: id, fuel: 'АИ-95', status: detail || String(row.status || ''), normalizedStatus: familyUnavailable ? 'OUT_OF_STOCK' : hasAi95 ? 'IN_STOCK' : 'UNKNOWN', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
       const queue = detail.match(/очередь\s*([^·,;]*)/iu)?.[1]?.trim();
       if (queue) {
         const ordinal = /100\s*\+/u.test(queue) ? 'VERY_LONG' : /50\s*[–—-]\s*100/u.test(queue) ? 'LONG' : /20\s*[–—-]\s*50/u.test(queue) ? 'LONG' : /5\s*[–—-]\s*20/u.test(queue) ? 'MEDIUM' : undefined;

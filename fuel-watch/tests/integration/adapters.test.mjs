@@ -70,19 +70,27 @@ test("gdebenz falls back to DOM when a nonempty API payload has no compatible st
   assert.equal(result.stations.length,1);
 });
 
-test("Yandex extractor keeps aggregate counts out of grade confidence and excludes diesel activity", () => {
+test("Yandex extractor keeps aggregate counts out of grade confidence and declares missing grade freshness", async () => {
   const payload={stack:[{results:{items:[{id:"1089357396",coordinates:[44.502992,48.723609],title:"АЗС",fuelAvailability:{fuel:[{fuelType:"AI92",localizedName:"92",status:"IN_STOCK"},{fuelType:"AI95",localizedName:"95",status:"IN_STOCK"},{fuelType:"DIESEL",localizedName:"ДТ",status:"IN_STOCK"}],signalsCountPerHour:3,lastSignalTimestamp:1788076800,queueStatus:"MEDIUM",localizedQueueSize:"Средняя"}}]}}]};
   const document={scripts:[{textContent:JSON.stringify(payload)}],querySelectorAll:()=>[]};
   const raw=Function("window","document","location",`return ${yandex.YANDEX_EXTRACTOR}`)({},document,{href:"https://yandex.ru/maps"});
   assert.equal(raw.stations[0].id,"1089357396");
   assert.equal(raw.observations[0].status,"IN_STOCK");
   assert.equal(raw.observations[0].signalsPerHour,undefined);
-  assert.match(raw.observations[0].observedAt,/^2026-/);
+  assert.equal(raw.observations[0].observedAt,undefined);
+  assert.equal(raw.observations.some(value=>value.observedAt),false);
   assert.equal(raw.activity.length,2);
   assert.equal(raw.activity.some(value=>value.gradeLabel==="ДТ"),false);
   assert.equal(raw.activity[0].kind,"PETROL_STATUS_SNAPSHOT");
   assert.equal(raw.activity[0].gradeLabel,"92");
   assert.equal(raw.queues[0].ordinal,"MEDIUM");
+  assert.match(raw.queues[0].observedAt,/^2026-/);
+  const config=await loadConfig();
+  const browser={open:async()=>({finalUrl:"https://yandex.ru/maps",pageTextPrefix:"АЗС"}),waitReady:async()=>{},evalJson:async expression=>expression.includes("window.scrollBy")?true:raw};
+  const result=await yandex.collect(request(config),{browser,config});
+  assert.equal(result.health.status,"PARTIAL");
+  assert.equal(result.health.code,"NO_GRADE_FRESHNESS_METADATA");
+  assert.equal(result.coverage.freshnessExpected,false);
 });
 
 test("gdebenz page extractor uses stable data-osm cards", () => {
@@ -105,19 +113,26 @@ test("gdebenz nearby API extractor preserves coordinates, current family status 
   const fetch=async()=>({ok:true,json:async()=>rows});
   const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(fetch,{href:"https://gdebenz.ru/"});
   assert.deepEqual(raw.stations[0].coordinate,[44.5,48.7]);
-  assert.equal(raw.observations[0].status,"есть топливо");
+  assert.equal(raw.observations[0].status,"92, 95 · Очередь ≈20–50 машин");
+  assert.equal(raw.observations[0].normalizedStatus,"IN_STOCK");
   assert.equal(raw.observations[0].observedAt,"2026-08-30T19:33:26.000Z");
-  assert.equal(raw.observations[1].status,"нет топлива");
+  assert.equal(raw.observations[1].status,"Заправка не работает");
+  assert.equal(raw.observations[1].normalizedStatus,"OUT_OF_STOCK");
   assert.equal(raw.observations[1].familyAllUnavailable,true);
   assert.equal(raw.queues[0].ordinal,"LONG");
   assert.equal(raw.freshnessExpected,true);
+  const browser={open:async()=>({finalUrl:"https://gdebenz.ru/",pageTitle:"Где бензин",pageTextPrefix:"Карта"}),waitReady:async()=>{},evalJson:async()=>raw};
+  const normalized=await gdebenz.collect(request(await loadConfig()),{browser,config:await loadConfig()});
+  assert.equal(normalized.observations[1].status,"OUT_OF_STOCK");
+  assert.equal(normalized.observations[1].rawStatus,"Заправка не работает");
 });
 
 test("gdebenz API extractor treats missing timestamps as a declared limitation and ignores decimal prices", async () => {
   const rows={stations:[{osm_id:"price-only",lon:44.5,lat:48.7,status:"yes",fuels_now:"",detail:"Цена 59.95 · Только наличные"}]};
   const fetch=async()=>({ok:true,json:async()=>rows});
   const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(fetch,{href:"https://gdebenz.ru/"});
-  assert.equal(raw.observations[0].status,"нет данных о топливе");
+  assert.equal(raw.observations[0].status,"Цена 59.95 · Только наличные");
+  assert.equal(raw.observations[0].normalizedStatus,"UNKNOWN");
   assert.equal(raw.partial,true);
   assert.equal(raw.code,"NO_FRESHNESS_METADATA");
   assert.equal(raw.freshnessExpected,false);
@@ -138,18 +153,34 @@ test("2GIS extractor reads the page's current fuel response instead of catalogue
   assert.equal(raw.partial,false);
 });
 
-test("Benzonavt extractor keeps exact AI-95 positives and family-wide negatives separate", async () => {
+test("Benzonavt handles exhaustive fuels, conflicts and structured queues conservatively", async () => {
   const rows=[
-    {id:1,lon:44.5,lat:48.7,name:"АЗС 1",brand:"Бренд",address:"Адрес 1",st:{status:"yes",fuels_now:["92","95"],updated_at:"2026-08-30T19:40:00Z",queue:"UP_TO_25"}},
-    {id:2,lon:44.6,lat:48.8,name:"АЗС 2",brand:"Бренд",address:"Адрес 2",st:{status:"no",fuels_now:[],updated_at:"2026-08-30T19:41:00Z"}}
+    {id:1,lon:44.5,lat:48.7,name:"АЗС 1",brand:"Бренд",address:"Адрес 1",st:{status:"yes",fuels_now:["92","95"],updated_at:"2026-08-30T19:40:00Z",queue:{at:"2026-08-30T19:42:00Z",size:"20_50"}}},
+    {id:2,lon:44.6,lat:48.8,name:"АЗС 2",brand:"Бренд",address:"Адрес 2",st:{status:"no",fuels_now:[],updated_at:"2026-08-30T19:41:00Z"}},
+    {id:3,lon:44.7,lat:48.7,name:"АЗС 3",brand:"Бренд",address:"Адрес 3",st:{status:"yes",fuels_now:["dt"],updated_at:"2026-08-30T19:42:00Z",queue:{at:"2026-08-30T19:43:00Z",size:"gt50"}}},
+    {id:4,lon:44.8,lat:48.7,name:"АЗС 4",brand:"Бренд",address:"Адрес 4",st:{status:"no",fuels_now:[],updated_at:"2026-08-30T19:43:00Z",conflict:{status:"yes",created_at:"2026-08-30T19:42:00Z"}}},
+    {id:5,lon:44.9,lat:48.7,name:"АЗС 5",brand:"Бренд",address:"Адрес 5",st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:44:00Z",conflict:{status:"no",created_at:"2026-08-30T19:43:00Z"}}},
+    {id:6,lon:45.0,lat:48.7,name:"АЗС 6",brand:"Бренд",address:"Адрес 6",st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:45:00Z",conflict:{fuels_now:["dt"]},queue:{size:"20_50"}}}
   ];
   const document={body:{innerText:"Бензонавт"}};
   const fetch=async()=>({ok:true,json:async()=>rows});
   const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)(document,{href:"https://benzonavt.ru/"},fetch);
-  assert.equal(raw.stations.length,2);
-  assert.equal(raw.observations[0].fuel,"95");
-  assert.equal(raw.observations[0].status,"IN_STOCK");
-  assert.equal(raw.observations[1].product.specificity,"FAMILY_ONLY");
-  assert.equal(raw.observations[1].familyAllUnavailable,true);
+  assert.equal(raw.stations.length,6);
+  const byId=Object.fromEntries(raw.observations.map(value=>[value.stationId,value]));
+  assert.equal(byId["1"].status,"IN_STOCK");
+  assert.equal(byId["2"].familyAllUnavailable,true);
+  assert.equal(byId["3"].status,"OUT_OF_STOCK");
+  assert.equal(byId["3"].familyAllUnavailable,true);
+  assert.equal(byId["4"].status,"UNCERTAIN");
+  assert.equal(byId["4"].familyAllUnavailable,undefined);
+  assert.equal(byId["5"].status,"UNCERTAIN");
+  assert.equal(byId["6"].status,"UNCERTAIN");
+  assert.equal(byId["6"].observedAt,undefined);
+  assert.ok(byId["4"].conflict && byId["5"].conflict && byId["6"].conflict);
+  assert.equal(raw.queues[0].ordinal,"LONG");
+  assert.equal(raw.queues[0].observedAt,"2026-08-30T19:42:00Z");
+  assert.equal(raw.queues[1].ordinal,"VERY_LONG");
+  assert.equal(raw.queues[2].ordinal,"LONG");
+  assert.equal(raw.queues[2].observedAt,undefined);
   assert.equal(raw.freshnessExpected,true);
 });
