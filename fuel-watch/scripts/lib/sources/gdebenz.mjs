@@ -14,7 +14,7 @@ export async function collect(request, ctx) {
   } catch (error) { return errorResult(id, error); }
 }
 function is502(opened) { return /^\s*(?:error\s+)?502(?:\s*-?\s*bad gateway)?\s*$/iu.test(opened.pageTitle ?? "") || /^\s*502\s*-?\s*bad gateway\b/iu.test(opened.pageTextPrefix ?? ""); }
-const GDEBENZ_EXTRACTOR = String.raw`(() => {
+export const GDEBENZ_EXTRACTOR = String.raw`(() => {
   const stations = [], observations = [], queues = [], activity = [], seen = new Set();
   const consume = raw => {
     if (!raw || typeof raw !== 'object') return;
@@ -28,5 +28,32 @@ const GDEBENZ_EXTRACTOR = String.raw`(() => {
   const walked = new WeakSet(); const walk = (v,d=0) => { if (!v || typeof v !== 'object' || d > 9 || walked.has(v)) return; walked.add(v); consume(v); for (const x of Object.values(v)) walk(x,d+1); };
   for (const key of Object.keys(window).filter(k => /state|station|map|data/i.test(k)).slice(0,100)) try { walk(window[key]); } catch {}
   for (const script of document.scripts) { const t=script.textContent||''; if(t.length>100&&t.length<10000000&&/(station|fuel|бенз)/i.test(t)) try { walk(JSON.parse(t)); } catch {} }
-  return { stations, observations, queues, activity, schemaChanged: stations.length === 0, message: 'gdebenz page exposed no recognizable coordinate-bearing station data' };
+  const cards = [...document.querySelectorAll('.stn[data-osm]')];
+  for (const card of cards) {
+    const id = String(card.dataset.osm || '');
+    if (!id || seen.has(id)) continue;
+    const text = (card.innerText || card.textContent || '').replace(/\s+/g, ' ').trim();
+    const coordinate = String(card.dataset.coordinates || '').split(',').map(Number);
+    const title = card.querySelector('[class*=brand],strong,b')?.textContent?.trim() || text.split(/\s{2,}|\n/)[0] || 'АЗС';
+    seen.add(id); stations.push({ id, coordinate: coordinate.length === 2 && coordinate.every(Number.isFinite) ? coordinate : [NaN,NaN], title, address: text.slice(0,500), url: location.href });
+    const explicitNegative = /нет\s+топлива|заправка\s+не\s+работает/i.test(text);
+    const explicitPositive = /есть\s+топливо/i.test(text) && /(?:^|[^\p{L}\p{N}])(?:аи[-\s]?)?95(?:\+)?(?:[^\p{L}\p{N}]|$)/iu.test(text);
+    const status = explicitNegative ? 'нет топлива' : explicitPositive ? 'есть топливо' : 'нет данных о топливе';
+    observations.push({ stationId: id, fuel: 'АИ-95', status, familyAllUnavailable: explicitNegative });
+    if (/очередь/i.test(text)) queues.push({ stationId: id, present: true, value: text.match(/очередь[^,;]*/i)?.[0] || 'очередь' });
+  }
+  if (!cards.length) for (const [index, marker] of [...document.querySelectorAll('button[aria-label^="АЗС:"], [role="img"][aria-label^="АЗС:"]')].entries()) {
+    const label = marker.getAttribute('aria-label') || '';
+    const owner = marker.closest('[data-id],[data-station-id],[data-coordinates]');
+    const id = marker.dataset.id || marker.dataset.stationId || owner?.dataset.id || owner?.dataset.stationId || 'dom-marker-' + index;
+    if (seen.has(id)) continue;
+    const rawCoordinate = marker.dataset.coordinates || owner?.dataset.coordinates || '';
+    const coordinate = String(rawCoordinate).split(',').map(Number);
+    seen.add(id); stations.push({ id, coordinate: coordinate.length === 2 && coordinate.every(Number.isFinite) ? coordinate : [NaN,NaN], title: 'АЗС', address: label, url: location.href });
+    const dieselOnly = /только\s+дизель/i.test(label);
+    observations.push({ stationId: id, fuel: 'АИ-95', status: dieselOnly ? 'нет данных о топливе' : label.replace(/^АЗС:\s*/i,''), familyAllUnavailable: /нет\s+топлива/i.test(label) });
+    if (/очередь/i.test(label)) queues.push({ stationId: id, present: true, value: 'очередь' });
+  }
+  const missingCoordinates = stations.some(s => !Number.isFinite(Number(s.coordinate?.[0])) || !Number.isFinite(Number(s.coordinate?.[1])));
+  return { stations, observations, queues, activity, schemaChanged: stations.length === 0, partial: missingCoordinates, code: missingCoordinates ? 'COORDINATE_COVERAGE' : undefined, message: missingCoordinates ? 'Recognizable gdebenz station statuses were found, but some coordinates are unavailable' : stations.length ? undefined : 'gdebenz page exposed no recognizable station data' };
 })()`;

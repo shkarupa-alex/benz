@@ -13,6 +13,11 @@
 - [ ] В строке `95+` сохранять консервативный агрегат, но отдельно перечислять подтверждённые негативы по вариантам, чтобы факт `Экто: НЕТ` не терялся среди вариантов без свежих данных.
 - [ ] Уменьшить стоимость browser polling: сейчас проверка готовности создаёт несколько CLI-процессов на итерацию. Исследовать один атомарный `eval` для URL, title, текста и selector readiness без ослабления проверки page drift.
 
+## Browser runtime
+
+- [ ] **Yandex map canvas.** В headed-режиме левая панель и структурированные `fuelAvailability` данные загружаются, но canvas карты визуально оставался пустым. После согласованного restart diagnostic daemon собрать короткими командами console errors и failed/blocked requests без `screenshot`, HAR или trace; проверить asset-domain allowlist отдельно от парсера.
+- [ ] **Убрать visual-mode workaround после исправления agent-browser.** В версии 0.35.1 CDP network controls детерминированно ломают третью вкладку (`Cannot find default execution context`), а `screenshot` может заблокировать command queue. Сейчас видимый осмотр использует точные URL без network controls с ручной fail-closed проверкой final host; автоматический collect сохраняет allowlist.
+
 ## Исправления из ревью
 
 - [x] Cleanup принимает только принадлежащий Fuel Watch каталог внутри временного корня и валидирует ownership/state/lease перед рекурсивным удалением.
@@ -20,4 +25,3 @@
 - [x] Нарушение completeness invariants переводит источник в `PARTIAL` и запрещает обновлять baseline.
 - [x] `LIKELY_AVAILABLE / LOW` сохраняется как осторожный `FIRST_SEEN`, без утверждения о фактическом появлении топлива.
 - [x] Первичный redirect разрешён на любой host из `allowedDomains`; последующий page drift по-прежнему проверяется по строгому origin.
-

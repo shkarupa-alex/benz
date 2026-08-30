@@ -25,29 +25,62 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
   const previous = previousPath ? await readJson(previousPath) : undefined;
   const fetchedAt = now.toISOString();
   const request = { area, requestedProducts: config.requestedProducts, fetchedAt, deadlineAt: new Date(now.getTime() + config.browser.adapterTimeoutMs * config.sources.filter(s => s.enabled).length).toISOString() };
-  const runner = browserFactory(config);
   const results = [];
   const warnings = [];
   let runtimeHealth = { status: "OK" };
-  let cleanup;
+  const cleanups = [];
+  const browserNamespaces = [];
+  const orderedSources = [...config.sources].sort((a, b) => a.order - b.order);
+  const firstEnabled = orderedSources.find(source => source.enabled);
+  let firstRunner;
   try {
-    await runner.probe();
-    for (const source of [...config.sources].sort((a, b) => a.order - b.order)) {
-      if (!source.enabled) { results.push({ source: source.id, health: { source: source.id, status: "DISABLED" }, stations: [], observations: [], queues: [], activity: [] }); continue; }
-      try {
-        const adapter = await adapters[source.id]();
-        results.push(await adapter.collect(request, { browser: runner, previous, config }));
-      } catch (error) {
-        results.push({ source: source.id, health: { source: source.id, status: "PARTIAL", code: "INTERNAL_ADAPTER_ERROR", message: error.message }, stations: [], observations: [], queues: [], activity: [] });
-      }
+    if (firstEnabled) {
+      firstRunner = browserFactory(config, firstEnabled.id);
+      browserNamespaces.push(firstRunner.namespace);
+      await firstRunner.probe();
     }
   } catch (error) {
     runtimeHealth = { status: "BROWSER_UNAVAILABLE", code: error.code ?? "BROWSER_UNAVAILABLE", message: error.message };
     warnings.push({ code: "BROWSER_RUNTIME_FAILED", message: `Common browser runtime failure: ${error.message}` });
     for (const source of config.sources) results.push({ source: source.id, health: { source: source.id, status: source.enabled ? "PARTIAL" : "DISABLED", code: source.enabled ? "NOT_ATTEMPTED" : undefined, message: source.enabled ? "Not attempted because the shared browser runtime failed" : undefined }, stations: [], observations: [], queues: [], activity: [] });
-  } finally {
-    cleanup = await runner.close().catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
   }
+  if (runtimeHealth.status === "OK") {
+    let usedFirstRunner = false;
+    for (const source of orderedSources) {
+      if (!source.enabled) { results.push({ source: source.id, health: { source: source.id, status: "DISABLED" }, stations: [], observations: [], queues: [], activity: [] }); continue; }
+      let runner = !usedFirstRunner && source.id === firstEnabled.id ? firstRunner : browserFactory(config, source.id);
+      usedFirstRunner = true;
+      if (!browserNamespaces.includes(runner.namespace)) browserNamespaces.push(runner.namespace);
+      let sourceResult;
+      for (let browserAttempt = 0; browserAttempt < 2; browserAttempt++) {
+        try {
+          const adapter = await adapters[source.id]();
+          sourceResult = await adapter.collect(request, { browser: runner, previous, config });
+        } catch (error) {
+          sourceResult = { source: source.id, health: { source: source.id, status: "PARTIAL", code: "INTERNAL_ADAPTER_ERROR", message: error.message }, stations: [], observations: [], queues: [], activity: [] };
+        } finally {
+          const sourceCleanup = await runner.close().catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
+          for (const namespace of runner.namespaceHistory ?? [runner.namespace]) if (!browserNamespaces.includes(namespace)) browserNamespaces.push(namespace);
+          cleanups.push({ source: source.id, browserNamespaces: runner.namespaceHistory ?? [runner.namespace], networkControls: runner.networkControlsStatus, ...sourceCleanup });
+          for (const message of runner.runtimeWarnings ?? []) warnings.push({ code: "BROWSER_NETWORK_CONTROLS_DEGRADED", message: `${source.id}: ${message}` });
+        }
+        if (browserAttempt === 0 && isNetworkControlsHealth(sourceResult.health)) {
+          runner = browserFactory(config, source.id);
+          runner.networkControlsStatus = "DEGRADED";
+          runner.runtimeWarnings ??= [];
+          runner.runtimeWarnings.push("agent-browser network controls failed during adapter execution; retried once with exact-URL navigation and fail-closed final-host/page-drift checks");
+          if (!browserNamespaces.includes(runner.namespace)) browserNamespaces.push(runner.namespace);
+          continue;
+        }
+        break;
+      }
+      results.push(sourceResult);
+    }
+  } else if (firstRunner) {
+    const sourceCleanup = await firstRunner.close().catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
+    cleanups.push({ source: firstEnabled.id, networkControls: firstRunner.networkControlsStatus, ...sourceCleanup });
+  }
+  const cleanup = { sessionsRemaining: cleanups.reduce((sum, value) => sum + value.sessionsRemaining, 0), warnings: cleanups.flatMap(value => value.warnings.map(message => `${value.source}: ${message}`)), sources: cleanups };
   if (cleanup.sessionsRemaining || cleanup.warnings.length) warnings.push({ code: "CLEANUP_FAILED", message: cleanup.warnings.join("; ") || `${cleanup.sessionsRemaining} browser session(s) remain` });
   if (results.some(r => ["PARTIAL", "SCHEMA_CHANGED", "CHALLENGE", "TIMEOUT", "HTTP_ERROR", "RESOURCE_BLOCKED"].includes(r.health.status))) warnings.push({ code: "PARTIAL_COVERAGE", message: "At least one source did not provide complete evidence." });
 
@@ -83,7 +116,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
     sourceCoverage: Object.fromEntries(results.filter(r => r.coverage).map(r => [r.source, r.coverage])),
     coverageBaselines: nextCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt),
     warnings,
-    runtime: { browserNamespace: runner.namespace, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup },
+    runtime: { browserNamespace: browserNamespaces[0], browserNamespaces, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup },
     changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), adapterContractHash, assessments })
   };
   if (outputPath) await writeJsonAtomic(outputPath, snapshot);
@@ -91,6 +124,10 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
 }
 
 function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
+function isNetworkControlsHealth(health) {
+  if (health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls|CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message))) return true;
+  return health?.code === "PAGE_LOST" && /got about:blank/i.test(String(health.message));
+}
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
 function baselineKey(source, areaHash, contractHash) { return `${source}:${areaHash}:${contractHash}`; }

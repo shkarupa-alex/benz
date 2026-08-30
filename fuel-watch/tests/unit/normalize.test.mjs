@@ -1,13 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../../scripts/lib/config.mjs";
-import { normalizeStatus, okResult } from "../../scripts/lib/sources/common.mjs";
+import { normalizeCoordinate, normalizeStatus, okResult, validCoordinate } from "../../scripts/lib/sources/common.mjs";
 import { assessRequestedUnion } from "../../scripts/lib/verdict.mjs";
 
 test("negative and unknown phrases cannot become availability", () => {
   for (const value of ["unavailable", "not available", "нет в наличии", "не в наличии", "отсутствует в наличии"]) assert.equal(normalizeStatus(value), "OUT_OF_STOCK", value);
   assert.equal(normalizeStatus("нет данных"), "UNKNOWN");
   assert.equal(normalizeStatus("в наличии"), "IN_STOCK");
+  assert.equal(normalizeStatus("IN_STOCK"), "IN_STOCK");
+  assert.equal(normalizeStatus("OUT_OF_STOCK"), "OUT_OF_STOCK");
+});
+
+test("serialized missing coordinates never become the real point zero-zero", () => {
+  for (const value of [[null,null],["",""]]) assert.equal(validCoordinate(normalizeCoordinate(value)),false);
+  assert.deepEqual(normalizeCoordinate(["44.5","48.7"]),[44.5,48.7]);
 });
 
 test("negative source phrase cannot enter the destination list end to end", async () => {

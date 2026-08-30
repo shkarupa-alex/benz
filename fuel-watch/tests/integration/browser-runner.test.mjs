@@ -82,6 +82,94 @@ test("initial redirect may cross between configured 2GIS domains", async () => {
   assert.equal(opened.finalUrl,landed);
 });
 
+test("stale CDP target is recreated once before opening 2GIS", async () => {
+  const config=await loadConfig(); let opens=0;
+  const landed="https://2gis.ru/volgograd/search/%D0%90%D0%97%D0%A1";
+  const exec=async(command,args)=>{
+    if(args.includes("open") && opens++ === 0)return{exitCode:1,stdout:"",stderr:"Failed to install browser network controls: CDP error (Page.enable): Session with given id not found."};
+    if(args.includes("open"))return{exitCode:0,stdout:JSON.stringify({data:{url:landed}}),stderr:""};
+    if(args.includes("url"))return{exitCode:0,stdout:JSON.stringify({data:{url:landed}}),stderr:""};
+    if(args.includes("title"))return{exitCode:0,stdout:JSON.stringify({data:{title:"2GIS"}}),stderr:""};
+    if(args.includes("text"))return{exitCode:0,stdout:JSON.stringify({data:{text:"АЗС"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  const opened=await runner.open(landed);
+  assert.equal(opened.finalUrl,landed);
+  assert.equal(opens,2);
+  assert.equal(runner.networkControlsStatus,"DEGRADED");
+  assert.equal(runner.runtimeWarnings.length,1);
+});
+
+test("degraded network-control fallback still rejects an external landing", async () => {
+  const config=await loadConfig(); let opens=0;
+  const exec=async(command,args)=>{
+    if(args.includes("open") && opens++ === 0)return{exitCode:1,stdout:"",stderr:"Failed to install browser network controls: CDP error (Runtime.evaluate): Cannot find default execution context"};
+    if(args.includes("open"))return{exitCode:0,stdout:JSON.stringify({data:{url:"https://evil.invalid/"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  await assert.rejects(runner.open("https://gdebenz.ru/"),error=>error.code==="RESOURCE_BLOCKED");
+});
+
+test("post-open network-control failure recreates before page inspection", async () => {
+  const config=await loadConfig(); let opens=0,urlReads=0;
+  const exec=async(command,args)=>{
+    if(args.includes("open")){opens++;return{exitCode:0,stdout:JSON.stringify({data:{url:"https://gdebenz.ru/"}}),stderr:""};}
+    if(args.includes("url") && urlReads++ === 0)return{exitCode:1,stdout:"",stderr:"Failed to install browser network controls: CDP error (Runtime.evaluate): Cannot find default execution context"};
+    if(args.includes("url"))return{exitCode:0,stdout:JSON.stringify({data:{url:"https://gdebenz.ru/"}}),stderr:""};
+    if(args.includes("title"))return{exitCode:0,stdout:JSON.stringify({data:{title:"ГдеБЕНЗ"}}),stderr:""};
+    if(args.includes("text"))return{exitCode:0,stdout:JSON.stringify({data:{text:"АЗС"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  const opened=await runner.open("https://gdebenz.ru/");
+  assert.equal(opened.finalUrl,"https://gdebenz.ru/");
+  assert.equal(opens,2);
+  assert.equal(runner.networkControlsStatus,"DEGRADED");
+});
+
+test("network controls are installed once per live browser session", async () => {
+  const config=await loadConfig();
+  const openCalls=[];
+  let currentUrl="https://yandex.ru/maps";
+  const exec=async(command,args)=>{
+    if(args.includes("open")){
+      openCalls.push(args);
+      currentUrl=args[args.indexOf("open")+1];
+      return{exitCode:0,stdout:JSON.stringify({data:{url:currentUrl}}),stderr:""};
+    }
+    if(args.includes("url"))return{exitCode:0,stdout:JSON.stringify({data:{url:currentUrl}}),stderr:""};
+    if(args.includes("title"))return{exitCode:0,stdout:JSON.stringify({data:{title:"page"}}),stderr:""};
+    if(args.includes("text"))return{exitCode:0,stdout:JSON.stringify({data:{text:"body"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  await runner.open("https://yandex.ru/maps");
+  await runner.open("https://gdebenz.ru/");
+  assert.equal(openCalls.length,2);
+  assert.ok(openCalls[0].includes("--allowed-domains"));
+  assert.equal(openCalls[1].includes("--allowed-domains"),false);
+});
+
+test("snapshot never runs concurrent CLI commands in one session", async () => {
+  const config=await loadConfig();
+  let active=0,maxActive=0;
+  const exec=async(command,args)=>{
+    active++;maxActive=Math.max(maxActive,active);
+    await new Promise(resolve=>setTimeout(resolve,2));
+    active--;
+    if(args.includes("open"))return{exitCode:0,stdout:JSON.stringify({data:{url:"https://gdebenz.ru/"}}),stderr:""};
+    if(args.includes("url"))return{exitCode:0,stdout:JSON.stringify({data:{url:"https://gdebenz.ru/"}}),stderr:""};
+    if(args.includes("title"))return{exitCode:0,stdout:JSON.stringify({data:{title:"ГдеБЕНЗ"}}),stderr:""};
+    if(args.includes("text"))return{exitCode:0,stdout:JSON.stringify({data:{text:"АЗС"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  await runner.open("https://gdebenz.ru/");
+  assert.equal(maxActive,1);
+});
+
 test("cleanup never invokes close --all outside owned namespace", async () => {
   const config = await loadConfig();
   config.browser.cleanupReserveMs = 20;

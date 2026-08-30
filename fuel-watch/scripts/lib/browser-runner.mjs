@@ -10,11 +10,14 @@ export class BrowserRunner {
   constructor(config, options = {}) {
     this.config = config;
     this.namespace = options.namespace ?? uniqueId("fuel-watch");
+    this.namespaceHistory = [this.namespace];
     this.sessionName = options.sessionName ?? "source";
     this.command = options.command ?? config.browser.executable;
     this.exec = options.exec ?? execute;
     this.started = false;
-    this.recreated = false;
+    this.probed = false;
+    this.networkControlsStatus = "PENDING";
+    this.runtimeWarnings = [];
     this.expectedUrl = undefined;
   }
 
@@ -22,32 +25,64 @@ export class BrowserRunner {
     await resolveExecutable(this.command, this.environment());
     const result = await this.commandJson(["session", "list", "--json"], { timeoutMs: 10000 });
     if (result.exitCode !== 0) throw new BrowserError("BROWSER_UNAVAILABLE", result.stderr || result.stdout);
+    this.probed = true;
     return result.json;
   }
 
   async ensureRunSession() {
-    if (!this.started) await this.probe();
+    if (!this.probed) await this.probe();
     return { namespace: this.namespace, sessionName: this.sessionName };
   }
 
-  async open(url) {
+  async open(url, attempt = 0) {
     await this.ensureRunSession();
-    const result = await this.commandJson(["--allowed-domains", this.config.browser.allowedDomains.join(","), "open", url, "--json"], { timeoutMs: this.config.browser.adapterTimeoutMs });
+    const networkControls = this.started || this.networkControlsStatus === "DEGRADED" ? [] : ["--allowed-domains", this.config.browser.allowedDomains.join(",")];
+    const result = await this.commandJson([...networkControls, "open", url, "--json"], { timeoutMs: this.config.browser.adapterTimeoutMs });
     if (result.exitCode !== 0) {
-      if (!this.recreated && isBrowserLevelFailure(result)) {
-        this.recreated = true;
+      if (attempt < 2 && isNetworkControlsFailure(result) && this.networkControlsStatus !== "DEGRADED") {
+        await this.degradeNetworkControls();
+        return this.open(url, attempt + 1);
+      }
+      if (attempt < 2 && isBrowserLevelFailure(result)) {
         await this.closeSessionBestEffort();
-        return this.open(url);
+        this.rotateNamespace();
+        this.started = false;
+        this.expectedUrl = undefined;
+        return this.open(url, attempt + 1);
       }
       throw classifyCommandFailure(result, "open");
     }
     this.started = true;
+    if (networkControls.length) this.networkControlsStatus = "ACTIVE";
     const opened = commandPayload(result.json);
     const reportedUrl = String(opened?.url ?? opened?.finalUrl ?? "");
     this.expectedUrl = reportedUrl || url;
     if (reportedUrl) assertAllowedLanding(reportedUrl, this.config.browser.allowedDomains);
-    const snapshot = await this.snapshot();
+    let snapshot;
+    try {
+      snapshot = await this.snapshot();
+    } catch (error) {
+      if (attempt < 2 && this.networkControlsStatus !== "DEGRADED" && isNetworkControlsFailureText(error.message)) {
+        await this.degradeNetworkControls();
+        return this.open(url, attempt + 1);
+      }
+      throw error;
+    }
     return { finalUrl: snapshot.url, pageTitle: snapshot.title, pageTextPrefix: snapshot.textPrefix };
+  }
+
+  async degradeNetworkControls() {
+    this.networkControlsStatus = "DEGRADED";
+    if (!this.runtimeWarnings.length) this.runtimeWarnings.push("agent-browser network controls failed; using exact-URL navigation with fail-closed final-host and page-drift checks");
+    await this.closeSessionBestEffort();
+    this.rotateNamespace();
+    this.started = false;
+    this.expectedUrl = undefined;
+  }
+
+  rotateNamespace() {
+    this.namespace = uniqueId("fuel-watch");
+    this.namespaceHistory.push(this.namespace);
   }
 
   async waitReady(condition) {
@@ -76,11 +111,9 @@ export class BrowserRunner {
   }
 
   async snapshot() {
-    const [url, title, text] = await Promise.all([
-      this.commandJson(["get", "url", "--json"], { timeoutMs: 10000 }),
-      this.commandJson(["get", "title", "--json"], { timeoutMs: 10000 }),
-      this.commandJson(["get", "text", "body", "--json"], { timeoutMs: 10000 })
-    ]);
+    const url = await this.commandJson(["get", "url", "--json"], { timeoutMs: 10000 });
+    const title = await this.commandJson(["get", "title", "--json"], { timeoutMs: 10000 });
+    const text = await this.commandJson(["get", "text", "body", "--json"], { timeoutMs: 10000 });
     for (const part of [url, title, text]) if (part.exitCode !== 0) throw classifyCommandFailure(part, "snapshot");
     const snapshot = { url: String(unwrapJson(url.json) ?? ""), title: String(unwrapJson(title.json) ?? ""), textPrefix: clampText(unwrapJson(text.json), 1000) };
     if (this.expectedUrl) assertSameOrigin(this.expectedUrl, snapshot.url);
@@ -184,7 +217,9 @@ function assertAllowedLanding(actual, allowedDomains) {
   } catch { throw new BrowserError("RESOURCE_BLOCKED", `Browser landed outside allowed domains: ${actual || "empty URL"}`); }
 }
 function domainMatches(hostname, pattern) { const host = hostname.toLowerCase(), allowed = pattern.toLowerCase(); return allowed.startsWith("*.") ? host.endsWith(allowed.slice(1)) && host !== allowed.slice(2) : host === allowed; }
-function isBrowserLevelFailure(result) { return /daemon|connection|browser.*closed|target.*closed|socket|econn/i.test(`${result.stderr} ${result.stdout}`); }
+function isNetworkControlsFailure(result) { return isNetworkControlsFailureText(`${result.stderr} ${result.stdout}`); }
+function isNetworkControlsFailureText(text) { return /failed to install browser network controls|CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(text)); }
+function isBrowserLevelFailure(result) { return /daemon|connection|failed to connect|browser.*closed|target.*closed|session with given id not found|no session with given id|cannot find default execution context|execution context.*(?:destroyed|not found)|socket|econn/i.test(`${result.stderr} ${result.stdout}`); }
 function classifyCommandFailure(result, operation) {
   const text = `${result.stderr} ${result.stdout}`;
   if (result.exitCode === 124) return new BrowserError("TIMEOUT", `${operation} timed out`);

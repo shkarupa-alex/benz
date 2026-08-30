@@ -51,3 +51,24 @@ test("gdebenz recognizes the observed Error 502 headed-vs-headless response", as
   assert.equal(opens,2);
   assert.equal(result.health.code,"HTTP_ERROR_PAGE");
 });
+
+test("Yandex page extractor reads live fuelAvailability shape", () => {
+  const payload={stack:[{results:{items:[{id:"1089357396",coordinates:[44.502992,48.723609],title:"АЗС",fuelAvailability:{fuel:[{fuelType:"AI95",localizedName:"95",status:"IN_STOCK"}],signalsCountPerHour:3,lastSignalTimestamp:1788076800,queueStatus:"MEDIUM",localizedQueueSize:"Средняя"}}]}}]};
+  const document={scripts:[{textContent:JSON.stringify(payload)}],querySelectorAll:()=>[]};
+  const raw=Function("window","document","location",`return ${yandex.YANDEX_EXTRACTOR}`)({},document,{href:"https://yandex.ru/maps"});
+  assert.equal(raw.stations[0].id,"1089357396");
+  assert.equal(raw.observations[0].status,"IN_STOCK");
+  assert.equal(raw.observations[0].signalsPerHour,3);
+  assert.match(raw.observations[0].observedAt,/^2026-/);
+  assert.equal(raw.queues[0].ordinal,"MEDIUM");
+});
+
+test("gdebenz page extractor uses stable data-osm cards", () => {
+  const card={dataset:{osm:"1377306600"},innerText:"Teboil Есть топливо 95 Очередь до 5 ул. Рокоссовского, 4б",textContent:"",querySelector:()=>({textContent:"Teboil"})};
+  const document={scripts:[],querySelectorAll:selector=>selector===".stn[data-osm]"?[card]:[]};
+  const raw=Function("window","document","location",`return ${gdebenz.GDEBENZ_EXTRACTOR}`)({},document,{href:"https://gdebenz.ru/"});
+  assert.equal(raw.stations[0].id,"1377306600");
+  assert.equal(raw.observations[0].status,"есть топливо");
+  assert.equal(raw.queues[0].present,true);
+  assert.equal(raw.partial,true);
+});
