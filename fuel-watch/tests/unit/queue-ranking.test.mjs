@@ -15,3 +15,10 @@ test("transaction resumption outranks a shorter measured queue", () => {
   const short = { ...base, stationKey: "a", activity: [], queue: { comparable: true, vehicleCount: 1 } };
   assert.equal(rankAssessments([short, resumed], [44,48])[0].stationKey, "b");
 });
+
+test("recent observed transition outranks an older run", () => {
+  const base = { verdict: "AVAILABLE", confidence: "MEDIUM", observations: [], activity: [], coordinate: [44,48], queue: { comparable: false } };
+  const old = { ...base, stationKey: "old", availabilityRun: { basis: "OBSERVED_TRANSITION", firstObservedAt: "2026-08-30T07:00:00Z" } };
+  const recent = { ...base, stationKey: "recent", availabilityRun: { basis: "OBSERVED_TRANSITION", firstObservedAt: "2026-08-30T09:55:00Z" } };
+  assert.equal(rankAssessments([old, recent], [44,48], new Date("2026-08-30T10:00:00Z"))[0].stationKey, "recent");
+});

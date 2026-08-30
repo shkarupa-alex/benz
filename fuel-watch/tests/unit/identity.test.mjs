@@ -17,3 +17,12 @@ test("conflicting known brands never merge", async () => {
   const values=reconcileStations([{source:"yandex",sourceStationId:"1",brand:"A",address:"ул. Мира, 1",coordinate:[44.5,48.7]},{source:"2gis",sourceStationId:"2",brand:"B",address:"ул. Мира, 1",coordinate:[44.5,48.7]}],config);
   assert.equal(values.length,2);
 });
+
+test("a surviving member preserves merged station identity", async () => {
+  const config = await loadConfig();
+  const stations = [{source:"yandex",sourceStationId:"1",brand:"A",address:"ул. Мира, 1",coordinate:[44.5,48.7]},{source:"gdebenz",sourceStationId:"2",brand:"A",address:"ул. Мира, 1",coordinate:[44.5001,48.7001]}];
+  const [both] = reconcileStations(stations, config);
+  const previous = { assessments: [both] };
+  const [current] = reconcileStations([stations[0]], config, previous);
+  assert.equal(current.stationKey, both.stationKey);
+});

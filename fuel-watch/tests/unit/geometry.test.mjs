@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../../scripts/lib/config.mjs";
-import { isInsideArea, resolveArea } from "../../scripts/lib/geometry.mjs";
+import { isInsideArea, resolveArea, samePlace } from "../../scripts/lib/geometry.mjs";
 
 test("Volgograd hull includes all anchors and control stations", async () => {
   const config = await loadConfig();
@@ -9,6 +9,11 @@ test("Volgograd hull includes all anchors and control stations", async () => {
   for (const anchor of config.area.anchors) assert.equal(isInsideArea(anchor.point, area), true, anchor.label);
   assert.equal(isInsideArea([44.4940448, 48.7150466], area), true);
   assert.equal(isInsideArea([44.4925455, 48.7101139], area), true);
+});
+
+test("anchor pinning uses exact normalized address, not substring", () => {
+  assert.equal(samePlace("Ангарская ул., 162", "Ангарская ул., 16"), false);
+  assert.equal(samePlace("г. Волгоград, Ангарская ул., 162", "Ангарская ул., 162"), true);
 });
 
 test("rejects collinear anchor geometry", () => {

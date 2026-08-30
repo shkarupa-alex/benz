@@ -26,9 +26,10 @@ export async function collect(request, ctx) {
       previousIds = new Set([...previousIds, ...ids]);
     }
     raw = mergeBatches(batches);
+    raw.naturalTermination = naturalTermination;
     raw.partial = !naturalTermination || raw.observations.length === 0;
     if (raw.partial) { raw.code = naturalTermination ? "LOW_FUEL_COVERAGE" : "TRUNCATED"; raw.message = naturalTermination ? "Stations were enumerated but no current fuel blocks were extracted" : "Pagination cap reached before repeated/empty station IDs"; }
-    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config);
+    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
 
@@ -52,8 +53,8 @@ const YANDEX_EXTRACTOR = String.raw`(() => {
   for (const key of ['__INITIAL_STATE__','__PRELOADED_STATE__','__APOLLO_STATE__']) try { walk(window[key]); } catch {}
   for (const script of document.scripts) { const text = script.textContent || ''; if (text.length > 200 && text.length < 10000000 && /fuelAvailability|signalsCountPerHour/.test(text)) { try { walk(JSON.parse(text)); } catch {} } }
   for (const card of document.querySelectorAll('[data-business-id], [data-id], .search-snippet-view')) { const id = card.dataset.businessId || card.dataset.id || card.querySelector('a[href*="/org/"]')?.href.match(/\/org\/[^/]+\/(\d+)/)?.[1]; const title = card.querySelector('h2,h3,[class*=title]')?.textContent?.trim(); const text = card.textContent || ''; if (id && !stationMap.has(id)) stationMap.set(id, { id, title, address: text.slice(0,300), coordinate: [NaN,NaN], url: card.querySelector('a')?.href || location.href }); }
-  const stations = [...stationMap.values()].filter(s => Number.isFinite(Number(s.coordinate?.[0])) && Number.isFinite(Number(s.coordinate?.[1])));
-  return { stations, observations, queues, activity, schemaChanged: stations.length === 0, message: stations.length ? undefined : 'Yandex station enumeration returned no coordinate-bearing records' };
+  const stations = [...stationMap.values()];
+  return { stations, observations, queues, activity, schemaChanged: stations.length === 0, message: stations.length ? undefined : 'Yandex station enumeration returned no station records' };
 })()`;
 function centroid(points) { const ring = points.at(-1)?.[0] === points[0]?.[0] && points.at(-1)?.[1] === points[0]?.[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
 function mergeBatches(batches) { const stations = new Map(), observations = new Map(), queues = new Map(), activity = new Map(); for (const batch of batches) { for (const station of batch.stations ?? []) stations.set(String(station.id), station); for (const value of batch.observations ?? []) observations.set(JSON.stringify([value.stationId,value.fuel,value.status,value.observedAt]), value); for (const value of batch.queues ?? []) queues.set(JSON.stringify([value.stationId,value.value,value.observedAt]), value); for (const value of batch.activity ?? []) activity.set(JSON.stringify(value), value); } return { stations:[...stations.values()], observations:[...observations.values()], queues:[...queues.values()], activity:[...activity.values()] }; }

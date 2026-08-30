@@ -11,7 +11,7 @@ export async function collect(request, ctx) {
     const raw = await ctx.browser.evalJson(TWOGIS_EXTRACTOR);
     if (raw.challenge) return healthResult(id, "CHALLENGE", "CHALLENGE", "2GIS challenge detected; no bypass attempted");
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
-    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config);
+    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
 const TWOGIS_EXTRACTOR = String.raw`(() => {

@@ -7,6 +7,12 @@ test("scope change suppresses station diffs", () => {
   assert.deepEqual(diffSnapshots({areaHash:"a",queryHash:"q",assessments:[]},{areaHash:"b",queryHash:"q",assessments:[]})[0].type, "SCOPE_CHANGED");
 });
 
+test("adapter contract change suppresses station diffs", () => {
+  const previous={areaHash:"a",queryHash:"q",adapterContractHash:"old",assessments:[{stationKey:"s",verdict:"AVAILABLE",confidence:"MEDIUM"}]};
+  const current={areaHash:"a",queryHash:"q",adapterContractHash:"new",assessments:[]};
+  assert.deepEqual(diffSnapshots(previous,current).map(change=>change.type),["SCOPE_CHANGED"]);
+});
+
 test("availability run opens factual transition only after prior negative", () => {
   const previous = { fetchedAt: "2026-08-30T10:00:00Z", assessments: [{stationKey:"s",verdict:"NOT_AVAILABLE"}] };
   const runs = updateAvailabilityRuns([], [{stationKey:"s",verdict:"AVAILABLE",confidence:"MEDIUM"}], previous, "2026-08-30T10:15:00Z");

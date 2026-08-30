@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserRunner } from "./lib/browser-runner.mjs";
 import { deriveActivityEvidence } from "./lib/activity.mjs";
 import { loadConfig } from "./lib/config.mjs";
@@ -10,7 +10,7 @@ import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
 import { reconcileStations } from "./lib/identity.mjs";
 import { normalizeQueues } from "./lib/queue.mjs";
 import { rankAssessments } from "./lib/ranking.mjs";
-import { readJson, sha256, stableJson } from "./lib/util.mjs";
+import { readJson, sha256, stableJson, writeJsonAtomic } from "./lib/util.mjs";
 import { assessRequestedUnion } from "./lib/verdict.mjs";
 
 const adapters = {
@@ -28,6 +28,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
   const runner = browserFactory(config);
   const results = [];
   const warnings = [];
+  let runtimeHealth = { status: "OK" };
   let cleanup;
   try {
     await runner.probe();
@@ -41,7 +42,9 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
       }
     }
   } catch (error) {
-    for (const source of config.sources) results.push({ source: source.id, health: { source: source.id, status: source.enabled ? "TIMEOUT" : "DISABLED", code: source.enabled ? (error.code ?? "BROWSER_UNAVAILABLE") : undefined, message: source.enabled ? error.message : undefined }, stations: [], observations: [], queues: [], activity: [] });
+    runtimeHealth = { status: "BROWSER_UNAVAILABLE", code: error.code ?? "BROWSER_UNAVAILABLE", message: error.message };
+    warnings.push({ code: "BROWSER_RUNTIME_FAILED", message: `Common browser runtime failure: ${error.message}` });
+    for (const source of config.sources) results.push({ source: source.id, health: { source: source.id, status: source.enabled ? "PARTIAL" : "DISABLED", code: source.enabled ? "NOT_ATTEMPTED" : undefined, message: source.enabled ? "Not attempted because the shared browser runtime failed" : undefined }, stations: [], observations: [], queues: [], activity: [] });
   } finally {
     cleanup = await runner.close().catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
   }
@@ -49,7 +52,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
   if (results.some(r => ["PARTIAL", "SCHEMA_CHANGED", "CHALLENGE", "TIMEOUT", "HTTP_ERROR", "RESOURCE_BLOCKED"].includes(r.health.status))) warnings.push({ code: "PARTIAL_COVERAGE", message: "At least one source did not provide complete evidence." });
 
   const stations = results.flatMap(r => r.stations);
-  const merged = reconcileStations(stations, config);
+  const merged = reconcileStations(stations, config, previous);
   const sourceGroups = Object.fromEntries(config.sources.map(s => [s.id, s.provenanceGroup]));
   const assessments = [];
   for (const station of merged) {
@@ -63,26 +66,49 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
     assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now) });
   }
   const referencePoint = config.ranking.referencePoint ?? centroid(area.polygon);
+  const adapterContractHash = await computeAdapterContractHash();
+  applyCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt, warnings);
   const snapshot = {
     schemaVersion: 1,
     fetchedAt,
     areaLabel: area.label,
     areaHash: area.areaHash,
     queryHash: sha256(config.requestedProducts),
-    adapterContractHash: sha256("fuel-watch-adapters-v1"),
+    adapterContractHash,
     requestedProducts: config.requestedProducts.products.map(p => ({ productKey: p.productKey, variantKey: p.variantKey })),
     assessments,
+    rankingReferencePoint: referencePoint,
     rankedStationKeys: rankAssessments(assessments, referencePoint).map(a => a.stationKey),
     sourceHealth: results.map(r => r.health),
+    sourceCoverage: Object.fromEntries(results.filter(r => r.coverage).map(r => [r.source, r.coverage])),
+    coverageBaselines: nextCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt),
     warnings,
-    runtime: { browserNamespace: runner.namespace, cleanup },
-    changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), assessments })
+    runtime: { browserNamespace: runner.namespace, health: runtimeHealth, cleanup },
+    changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), adapterContractHash, assessments })
   };
-  if (outputPath) await writeFile(outputPath, `${JSON.stringify(snapshot, null, 2)}\n`, { mode: 0o600 });
+  if (outputPath) await writeJsonAtomic(outputPath, snapshot);
   return { snapshot, exitCode: warnings.some(w => w.code === "CLEANUP_FAILED") ? 75 : assessments.length || results.some(r => r.health.status === "OK") ? 0 : 2 };
 }
 
 function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
+function baselineKey(source, areaHash, contractHash) { return `${source}:${areaHash}:${contractHash}`; }
+function applyCoverageBaselines(results, previous, areaHash, contractHash, fetchedAt, warnings) {
+  const cutoff = new Date(fetchedAt).getTime() - 90 * 86400000;
+  for (const result of results) {
+    if (!result.coverage) continue;
+    const baseline = previous?.coverageBaselines?.[baselineKey(result.source, areaHash, contractHash)];
+    if (baseline && new Date(baseline.updatedAt).getTime() >= cutoff && baseline.stationCount >= 4 && result.coverage.stationCount < baseline.stationCount * 0.5) warnings.push({ code: "STATION_COUNT_REGRESSION", message: `${result.source}: station count ${result.coverage.stationCount} is below 50% of baseline ${baseline.stationCount}` });
+    if (result.coverage.duplicateRatio > 0.15 || result.coverage.coordinateCoverage < 0.9 || result.coverage.fuelBlockCoverage < 0.2 || result.coverage.timestampCoverage < 0.2) warnings.push({ code: "COMPLETENESS_INVARIANT", message: `${result.source}: coverage invariants failed (${JSON.stringify(result.coverage)})` });
+  }
+}
+function nextCoverageBaselines(results, previous, areaHash, contractHash, fetchedAt) {
+  const cutoff = new Date(fetchedAt).getTime() - 90 * 86400000;
+  const out = Object.fromEntries(Object.entries(previous?.coverageBaselines ?? {}).filter(([, value]) => new Date(value.updatedAt).getTime() >= cutoff));
+  for (const result of results) if (result.health.status === "OK" && result.coverage) { const key = baselineKey(result.source, areaHash, contractHash); const old = out[key]; out[key] = { stationCount: Math.max(old?.stationCount ?? 0, result.coverage.stationCount), updatedAt: fetchedAt }; }
+  return out;
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));

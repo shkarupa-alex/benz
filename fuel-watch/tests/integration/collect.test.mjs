@@ -17,3 +17,11 @@ test("all-source degradation is not rendered as no fuel and cleanup failure retu
   assert.ok(result.snapshot.sourceHealth.every(h=>h.status!=="OK"));
   assert.ok(result.snapshot.warnings.some(w=>w.code==="CLEANUP_FAILED"));
 });
+
+test("shared browser failure is reported once as common-mode failure", async () => {
+  const runner = { namespace:"fixture", probe:async()=>{throw Object.assign(new Error("missing runtime"),{code:"BROWSER_UNAVAILABLE"});}, close:async()=>({sessionsRemaining:0,warnings:[]}) };
+  const result = await collectSnapshot({browserFactory:()=>runner,now:new Date("2026-08-30T10:00:00Z")});
+  assert.equal(result.snapshot.runtime.health.status,"BROWSER_UNAVAILABLE");
+  assert.ok(result.snapshot.sourceHealth.filter(h=>h.status!=="DISABLED").every(h=>h.code==="NOT_ATTEMPTED"));
+  assert.ok(result.snapshot.sourceHealth.every(h=>h.status!=="TIMEOUT"));
+});

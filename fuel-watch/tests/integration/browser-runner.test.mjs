@@ -22,7 +22,29 @@ test("runner strips inherited agent-browser, gateway and proxy variables", async
     assert.equal(env.HTTP_PROXY, undefined);
     assert.equal(env.AGENT_BROWSER_NAMESPACE, "test-ns");
     assert.equal(env.AGENT_BROWSER_IDLE_TIMEOUT_MS, "10000");
+    assert.ok(calls.length);
   } finally { process.env = original; }
+});
+
+test("runner pins the skill-owned config file", async () => {
+  const config = await loadConfig();
+  const calls = [];
+  const exec = async (command, args) => { calls.push(args); return { exitCode: 0, stdout: JSON.stringify({data:{sessions:[]}}), stderr: "" }; };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.probe();
+  assert.equal(calls[0][calls[0].indexOf("--config") + 1], config.browser.configPath);
+  assert.match(config.browser.configPath, /fuel-watch\/config\/agent-browser\.json$/);
+});
+
+test("page loss is explicit and cannot become an empty parser result", async () => {
+  const config = await loadConfig();
+  const exec = async (command, args) => {
+    if (args.includes("open")) return { exitCode: 0, stdout: JSON.stringify({ data: { url: "https://yandex.ru/maps" } }), stderr: "" };
+    if (args.includes("url")) return { exitCode: 0, stdout: JSON.stringify({ data: { url: "about:blank" } }), stderr: "" };
+    return { exitCode: 0, stdout: JSON.stringify({ data: { value: "" } }), stderr: "" };
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(runner.open("https://yandex.ru/maps"), error => error.code === "PAGE_LOST");
 });
 
 test("cleanup never invokes close --all outside owned namespace", async () => {

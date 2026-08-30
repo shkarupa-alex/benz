@@ -46,7 +46,7 @@ description: Проверяет текущее наличие базового �
 3. Между tick’ами браузер уже закрыт. Жди foreground-командой `sleep 45` или короче. После каждого фрагмента проверяй новый пользовательский ввод, `monitor.mjs due` и `STOP` через его поле `stopped`; не запускай единый 15-минутный sleep.
 4. После четырёх пустых tick’ов используй `report.mjs --compact`, но продолжай cadence.
 5. При возобновлении задачи сначала вызови `monitor.mjs recover --state-dir "$STATE_DIR"`. Если есть pending report, повторно отрендери его с `--recovered`, сохрани тот же report ID и затем commit.
-6. При остановке вызови `monitor.mjs stop`, выполни одну namespace-scoped очистку последнего browser-run и заверши `monitor.mjs cleanup`. Подтверди удаление временного состояния.
+6. При остановке вызови `node "$FUEL_WATCH_ROOT/scripts/monitor.mjs" stop --state-dir "$STATE_DIR"`, выполни одну namespace-scoped очистку последнего browser-run и заверши `node "$FUEL_WATCH_ROOT/scripts/monitor.mjs" cleanup --state-dir "$STATE_DIR"`. Подтверди удаление временного состояния.
 
 Никогда не держи браузер во время ожидания. Любая коллекция чаще одного раза в 15 минут запрещена в monitoring mode.
 

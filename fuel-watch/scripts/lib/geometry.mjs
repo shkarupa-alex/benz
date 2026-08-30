@@ -28,7 +28,7 @@ export function isInsideArea(coordinate, resolvedArea, { anchorLabels = [], stat
   if (stationLabel && anchorLabels.some(label => samePlace(label, stationLabel))) return true;
   return booleanPointInPolygon(point(coordinate), resolvedArea.feature, { ignoreBoundary: false });
 }
-function samePlace(a, b) { const normalize = value => String(value).normalize("NFKC").toLowerCase().replaceAll("ё", "е").replace(/\b(г\.?\s*)?волгоград\b/gu, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); const aa = normalize(a), bb = normalize(b); return aa === bb || aa.includes(bb) || bb.includes(aa); }
+export function samePlace(a, b) { const normalize = value => String(value).normalize("NFKC").toLowerCase().replaceAll("ё", "е").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/^(г\s+)?волгоград\s+/u, "").trim(); const aa = normalize(a), bb = normalize(b); return Boolean(aa) && aa === bb; }
 
 export function haversineMeters(a, b) {
   const rad = value => value * Math.PI / 180;

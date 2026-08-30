@@ -40,6 +40,7 @@
   ],
   "browser": {
     "executable": "agent-browser",
+    "configPath": "./agent-browser.json",
     "idleTimeoutMs": 10000,
     "adapterTimeoutMs": 45000,
     "cleanupReserveMs": 20000,

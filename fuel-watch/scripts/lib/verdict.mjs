@@ -55,21 +55,28 @@ export function assessRequestedUnion({ observations = [], activity = [], config,
   else if (likely.length) selected = strongest(likely);
   else if (familyAssessment?.verdict === "LIKELY_AVAILABLE") selected = familyAssessment;
   else if (conflicting.length) selected = strongest(conflicting);
+  else if (hasFreshFamilyAllNegative(family, config.freshness, now)) selected = { verdict: "NOT_AVAILABLE", confidence: "MEDIUM", reason: "source explicitly reports the whole AI-95 family unavailable" };
   else if (config.requestedProducts.products.every(p => assessments[p.productKey].verdict === "NOT_AVAILABLE")) selected = { verdict: "NOT_AVAILABLE", confidence: weakest(config.requestedProducts.products.map(p => assessments[p.productKey].confidence)), reason: "every configured AI-95 member has fresh direct negative evidence" };
   else if (values.some(v => v.verdict === "INDIRECT") || familyAssessment?.verdict === "INDIRECT") selected = { verdict: "INDIRECT", confidence: "LOW", reason: "indirect evidence only" };
   else selected = { verdict: "NO_FRESH_DATA", confidence: "NONE", reason: "configured union lacks complete fresh evidence" };
   const enriched = assessStation({ observations, activity, config, sourceGroups, now }).observations;
-  return { ...selected, observations: enriched, activity, productAssessments: assessments };
+  return { ...selected, observations: enriched, activity, productAssessments: Object.fromEntries(Object.entries(assessments).map(([key, value]) => [key, compactAssessment(value)])) };
 }
 
 export function freshnessBand(observation, freshness, now = new Date()) { return enrich(observation, freshness, now).band; }
 
 function enrich(observation, freshness, now) {
+  if (observation.time?.kind === "BOUNDED_AGE") {
+    const min = Number(observation.time.minMinutes), max = Number(observation.time.maxMinutes);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < min) return { ...observation, ageKind: "INVALID", ageMinutes: null, band: "invalid", expired: true, observedMs: -Infinity };
+    const band = bandForAge(max, freshness);
+    return { ...observation, ageKind: "BOUNDED_AGE", ageMinutes: max, ageRangeMinutes: [min, max], approximate: true, band, expired: max > freshness.expireMinutes, observedMs: now.getTime() - max * 60000 };
+  }
   if (observation.time?.kind !== "EXACT") return { ...observation, ageKind: observation.time?.kind ?? "UNKNOWN", ageMinutes: null, band: "unknown", expired: true, observedMs: -Infinity };
   const ms = new Date(observation.time.observedAt).getTime();
   if (!Number.isFinite(ms) || ms - now.getTime() > freshness.futureSkewSeconds * 1000) return { ...observation, ageKind: "INVALID", ageMinutes: null, band: "invalid", expired: true, observedMs: -Infinity };
   const age = Math.max(0, ageMinutes(observation.time.observedAt, now));
-  const band = age <= freshness.freshMinutes ? "fresh" : age <= freshness.recentMinutes ? "recent" : age <= freshness.staleMinutes ? "stale" : "expired";
+  const band = bandForAge(age, freshness);
   return { ...observation, ageKind: "EXACT", ageMinutes: age, band, expired: age > freshness.expireMinutes, observedMs: ms };
 }
 function hasFreshConflict(positives, negatives, windowMinutes) {
@@ -88,3 +95,10 @@ function result(verdict, confidence, observations, activity, reason) { return { 
 function strongest(values) { return [...values].sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence))[0]; }
 function weakest(values) { return [...values].sort((a, b) => confidenceRank(a) - confidenceRank(b))[0] ?? "NONE"; }
 function confidenceRank(v) { return ({ NONE: 0, LOW: 1, MEDIUM: 2, HIGH: 3 })[v] ?? 0; }
+function bandForAge(age, freshness) { return age <= freshness.freshMinutes ? "fresh" : age <= freshness.recentMinutes ? "recent" : age <= freshness.staleMinutes ? "stale" : "expired"; }
+function hasFreshFamilyAllNegative(observations, freshness, now) { return observations.some(o => o.familyAllUnavailable === true && o.status === "OUT_OF_STOCK" && !enrich(o, freshness, now).expired); }
+function compactAssessment(value) {
+  const usable = value.observations.filter(o => !o.expired);
+  const ages = usable.map(o => o.ageMinutes).filter(Number.isFinite);
+  return { verdict: value.verdict, confidence: value.confidence, reason: value.reason, freshestAgeMinutes: ages.length ? Math.min(...ages) : null, approximate: usable.some(o => o.approximate), supportingSources: [...new Set(usable.map(o => o.source))] };
+}

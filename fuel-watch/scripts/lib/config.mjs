@@ -14,6 +14,7 @@ export async function loadConfig(path = defaultConfigPath) {
   const validate = ajv.compile(schema);
   if (!validate(config)) throw new ConfigError(validate.errors.map(formatAjvError));
   validateSemantics(config);
+  config.browser.configPath = resolve(dirname(path), config.browser.configPath);
   return config;
 }
 

@@ -10,7 +10,7 @@ export async function collect(request, ctx) {
     await ctx.browser.waitReady({ anyOfSelectors: ["#map", "[class*=map]", "script"], urlRejectPatterns: ["captcha", "challenge"], timeoutMs: Math.min(20000, ctx.config.browser.adapterTimeoutMs) });
     const raw = await ctx.browser.evalJson(GDEBENZ_EXTRACTOR);
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
-    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config);
+    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
 function is502(opened) { return /(?:^|\s)502(?:\s|$)|bad gateway/i.test(opened.pageTextPrefix); }
@@ -22,7 +22,7 @@ const GDEBENZ_EXTRACTOR = String.raw`(() => {
     const coordinate = raw.coordinates || raw.coordinate || (raw.lon != null ? [raw.lon, raw.lat] : raw.lng != null ? [raw.lng, raw.lat] : null);
     if (id && Array.isArray(coordinate) && !seen.has(id)) { seen.add(id); stations.push({ id, coordinate, title: raw.name || raw.title, brand: raw.brand, address: raw.address, url: location.href }); }
     const fuels = raw.fuels || raw.fuel_status || raw.petrol || raw.grades;
-    if (id && fuels) for (const [fuel, value] of Object.entries(fuels)) { const v = typeof value === 'object' ? value : { status: value }; observations.push({ stationId: id, fuel, status: v.status ?? v.available ?? value, observedAt: v.updatedAt || v.timestamp, minMinutes: v.minMinutes, maxMinutes: v.maxMinutes, conflict: v.conflict }); }
+    if (id && fuels) for (const [fuel, value] of Object.entries(fuels)) { const v = typeof value === 'object' ? value : { status: value }; observations.push({ stationId: id, fuel, status: v.status ?? v.available ?? value, observedAt: v.updatedAt || v.timestamp, minMinutes: v.minMinutes, maxMinutes: v.maxMinutes, conflict: v.conflict, familyAllUnavailable: v.familyAllUnavailable === true || v.scope === 'family-all' }); }
     if (id && (raw.queue || raw.hasQueue)) queues.push({ stationId: id, value: raw.queue, present: raw.hasQueue === true, observedAt: raw.updatedAt });
   };
   const walked = new WeakSet(); const walk = (v,d=0) => { if (!v || typeof v !== 'object' || d > 9 || walked.has(v)) return; walked.add(v); consume(v); for (const x of Object.values(v)) walk(x,d+1); };

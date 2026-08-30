@@ -5,8 +5,9 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { loadConfig } from "./lib/config.mjs";
-import { updateAvailabilityRuns } from "./lib/state.mjs";
+import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
 import { readJson, stableJson, writeJsonAtomic } from "./lib/util.mjs";
+import { renderReport } from "./report.mjs";
 
 export async function monitorCommand(command, args = {}) {
   if (command === "init") return init(args);
@@ -58,15 +59,17 @@ async function prepare(stateDir, state, args) {
   }
   const snapshot = await readJson(args.snapshot);
   const config = await loadConfig(args.config ?? state.configPath);
-  const availabilityRuns = updateAvailabilityRuns(state.availabilityRuns, snapshot.assessments, state.previous, snapshot.fetchedAt);
-  for (const assessment of snapshot.assessments) assessment.availabilityRun = availabilityRuns.find(r => r.stationKey === assessment.stationKey && r.productKey === "AI95_UNION");
-  await writeJsonAtomic(args.snapshot, snapshot);
-  const freshCount = snapshot.assessments.filter(a => a.observations.some(o => Number.isFinite(o.ageMinutes) && o.ageMinutes <= config.freshness.recentMinutes)).length;
-  const next = { ...state, generation: state.generation + 1, dueAt: new Date(new Date(snapshot.fetchedAt).getTime() + config.monitoring.intervalMinutes * 60000).toISOString(), previous: snapshot, availabilityRuns, consecutiveEmptyTicks: freshCount ? 0 : state.consecutiveEmptyTicks + 1 };
+  const prepared = prepareMonitoringSnapshot(state, snapshot, config);
+  const expectedReportId = renderReport(prepared.snapshot, { monitorId: state.monitorId, generation: state.generation }).reportId;
+  if (expectedReportId !== args["report-id"]) throw new Error("Report ID does not match the immutable prepared snapshot");
+  const preparedPath = join(stateDir, `prepared-${args["report-id"]}.json`);
+  await writeJsonAtomic(preparedPath, prepared.snapshot);
+  const freshCount = prepared.snapshot.assessments.filter(a => a.observations.some(o => Number.isFinite(o.ageMinutes) && o.ageMinutes <= config.freshness.recentMinutes)).length;
+  const next = { ...state, generation: state.generation + 1, dueAt: new Date(new Date(prepared.snapshot.fetchedAt).getTime() + config.monitoring.intervalMinutes * 60000).toISOString(), previous: prepared.snapshot, availabilityRuns: prepared.availabilityRuns, consecutiveEmptyTicks: freshCount ? 0 : state.consecutiveEmptyTicks + 1 };
   delete next.pending;
   const nextStatePath = join(stateDir, `next-${state.generation + 1}.json`);
   await writeJsonAtomic(nextStatePath, next);
-  state.pending = { reportId: args["report-id"], snapshotPath: resolve(args.snapshot), nextStatePath };
+  state.pending = { reportId: args["report-id"], snapshotPath: preparedPath, inputSnapshotPath: resolve(args.snapshot), nextStatePath };
   await writeJsonAtomic(join(stateDir, "state.json"), state);
   return { pending: state.pending, compact: next.consecutiveEmptyTicks >= config.monitoring.compactAfterEmptyTicks };
 }
@@ -76,6 +79,7 @@ async function commit(stateDir, state, args) {
   await writeJsonAtomic(join(stateDir, "state.json"), next);
   if (next.previous) await writeJsonAtomic(join(stateDir, "previous.json"), next.previous);
   await rm(state.pending.nextStatePath, { force: true });
+  await rm(state.pending.snapshotPath, { force: true });
   await refresh(stateDir, next);
   return { committed: true, generation: next.generation, dueAt: next.dueAt };
 }

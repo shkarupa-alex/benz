@@ -15,6 +15,7 @@ export class BrowserRunner {
     this.exec = options.exec ?? execute;
     this.started = false;
     this.recreated = false;
+    this.expectedUrl = undefined;
   }
 
   async probe() {
@@ -41,6 +42,10 @@ export class BrowserRunner {
       throw classifyCommandFailure(result, "open");
     }
     this.started = true;
+    const opened = commandPayload(result.json);
+    const reportedUrl = String(opened?.url ?? opened?.finalUrl ?? "");
+    this.expectedUrl = reportedUrl || url;
+    if (reportedUrl) assertSameOrigin(url, reportedUrl);
     const snapshot = await this.snapshot();
     return { finalUrl: snapshot.url, pageTextPrefix: snapshot.textPrefix };
   }
@@ -60,6 +65,11 @@ export class BrowserRunner {
   }
 
   async evalJson(expression) {
+    await this.assertCurrentPage();
+    return this.evalJsonUnchecked(expression);
+  }
+
+  async evalJsonUnchecked(expression) {
     const result = await this.commandJson(["eval", "--stdin", "--json"], { input: expression, timeoutMs: this.config.browser.adapterTimeoutMs });
     if (result.exitCode !== 0) throw classifyCommandFailure(result, "eval");
     return unwrapJson(result.json);
@@ -72,7 +82,16 @@ export class BrowserRunner {
       this.commandJson(["get", "text", "body", "--json"], { timeoutMs: 10000 })
     ]);
     for (const part of [url, title, text]) if (part.exitCode !== 0) throw classifyCommandFailure(part, "snapshot");
-    return { url: String(unwrapJson(url.json) ?? ""), title: String(unwrapJson(title.json) ?? ""), textPrefix: clampText(unwrapJson(text.json), 1000) };
+    const snapshot = { url: String(unwrapJson(url.json) ?? ""), title: String(unwrapJson(title.json) ?? ""), textPrefix: clampText(unwrapJson(text.json), 1000) };
+    if (this.expectedUrl) assertSameOrigin(this.expectedUrl, snapshot.url);
+    return snapshot;
+  }
+
+  async assertCurrentPage() {
+    if (!this.expectedUrl) return;
+    const result = await this.commandJson(["get", "url", "--json"], { timeoutMs: 10000 });
+    if (result.exitCode !== 0) throw classifyCommandFailure(result, "page check");
+    assertSameOrigin(this.expectedUrl, String(unwrapJson(result.json) ?? ""));
   }
 
   async close() {
@@ -112,7 +131,7 @@ export class BrowserRunner {
   }
 
   async commandJson(args, options = {}) {
-    const result = await this.exec(this.command, ["--namespace", this.namespace, "--session", this.sessionName, ...args], { env: this.environment(), timeoutMs: options.timeoutMs, input: options.input });
+    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, "--namespace", this.namespace, "--session", this.sessionName, ...args], { env: this.environment(), timeoutMs: options.timeoutMs, input: options.input });
     let json;
     try { json = result.stdout.trim() ? JSON.parse(result.stdout) : null; } catch { json = null; }
     return { ...result, json };
@@ -139,6 +158,13 @@ function unwrapJson(json) {
   if (json == null) return null;
   const value = Object.hasOwn(json, "data") ? json.data : json;
   return value?.result ?? value?.value ?? value?.text ?? value?.url ?? value?.title ?? value;
+}
+function commandPayload(json) { return json && Object.hasOwn(json, "data") ? json.data : json; }
+function assertSameOrigin(expected, actual) {
+  try {
+    const expectedUrl = new URL(expected), actualUrl = new URL(actual);
+    if (actualUrl.protocol === "about:" || expectedUrl.origin !== actualUrl.origin) throw new Error();
+  } catch { throw new BrowserError("PAGE_LOST", `Browser page changed unexpectedly: expected ${expected}, got ${actual || "empty URL"}`); }
 }
 function isBrowserLevelFailure(result) { return /daemon|connection|browser.*closed|target.*closed|socket|econn/i.test(`${result.stderr} ${result.stdout}`); }
 function classifyCommandFailure(result, operation) {

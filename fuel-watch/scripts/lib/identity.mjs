@@ -1,7 +1,7 @@
 import { haversineMeters } from "./geometry.mjs";
 import { sha256 } from "./util.mjs";
 
-export function reconcileStations(stations, config) {
+export function reconcileStations(stations, config, previousSnapshot) {
   const overrides = overrideIndex(config.identity.manualOverrides);
   const groups = new Map();
   for (const station of stations) {
@@ -26,7 +26,21 @@ export function reconcileStations(stations, config) {
       }
     }
   }
-  return values.filter(Boolean).map(group => canonicalize(group, config.ranking.sourcePriority));
+  return preservePreviousKeys(values.filter(Boolean), previousSnapshot).map(group => canonicalize(group, config.ranking.sourcePriority));
+}
+
+function preservePreviousKeys(groups, previousSnapshot) {
+  const memberToKey = new Map();
+  for (const station of previousSnapshot?.assessments ?? []) for (const member of station.members ?? []) memberToKey.set(`${member.source}:${member.sourceStationId}`, station.stationKey);
+  const claimed = new Set();
+  return groups.map(group => {
+    const keys = new Set(group.members.map(member => memberToKey.get(`${member.source}:${member.sourceStationId}`)).filter(Boolean));
+    if (keys.size !== 1) return group;
+    const [key] = keys;
+    if (claimed.has(key)) return group;
+    claimed.add(key);
+    return { ...group, stationKey: key, matchConfidence: group.matchConfidence === "MANUAL" ? "MANUAL" : "PREVIOUS_MEMBER" };
+  });
 }
 
 function matchScore(a, b, maxMeters) {

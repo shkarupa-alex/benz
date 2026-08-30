@@ -1,6 +1,6 @@
 export function diffSnapshots(previous, current) {
   if (!previous) return [];
-  if (previous.areaHash !== current.areaHash || previous.queryHash !== current.queryHash) return [{ type: "SCOPE_CHANGED", message: "Зона или набор топлива изменились; сравнение подавлено." }];
+  if (previous.areaHash !== current.areaHash || previous.queryHash !== current.queryHash || previous.adapterContractHash !== current.adapterContractHash) return [{ type: "SCOPE_CHANGED", message: "Зона, набор топлива или контракт адаптеров изменились; сравнение подавлено." }];
   const before = new Map(previous.assessments.map(a => [a.stationKey, a]));
   const changes = [];
   for (const item of current.assessments) {

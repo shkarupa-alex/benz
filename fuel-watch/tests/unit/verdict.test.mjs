@@ -42,3 +42,19 @@ test("union is not negative until every configured member is covered", async () 
   const result = assessRequestedUnion({ observations: [{ ...observation("yandex", "OUT_OF_STOCK", 5), product }], config, sourceGroups: { yandex: "shared" } });
   assert.equal(result.verdict, "NO_FRESH_DATA");
 });
+
+test("fresh bounded age uses conservative maximum and remains usable", async () => {
+  const config = await loadConfig();
+  const result = assessStation({ observations: [{ source: "gdebenz", product, status: "IN_STOCK", time: { kind: "BOUNDED_AGE", minMinutes: 5, maxMinutes: 10 } }], config, now: new Date("2026-08-30T10:00:00Z") });
+  assert.equal(result.verdict, "AVAILABLE");
+  assert.equal(result.observations[0].ageMinutes, 10);
+  assert.equal(result.observations[0].approximate, true);
+});
+
+test("only explicit family-all negative can negate configured union", async () => {
+  const config = await loadConfig();
+  const family = { family: "AI_95", variant: "UNKNOWN", specificity: "FAMILY_ONLY", productKey: "AI95_FAMILY" };
+  const base = { source: "gdebenz", product: family, status: "OUT_OF_STOCK", time: { kind: "BOUNDED_AGE", minMinutes: 5, maxMinutes: 10 } };
+  assert.notEqual(assessRequestedUnion({ observations: [base], config }).verdict, "NOT_AVAILABLE");
+  assert.equal(assessRequestedUnion({ observations: [{ ...base, familyAllUnavailable: true }], config }).verdict, "NOT_AVAILABLE");
+});

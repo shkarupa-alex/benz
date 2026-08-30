@@ -2,8 +2,9 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { loadConfig } from "./lib/config.mjs";
+import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
 import { readJson, sha256, stableJson } from "./lib/util.mjs";
-import { updateAvailabilityRuns } from "./lib/state.mjs";
 
 const VERDICT = { AVAILABLE: "ЕСТЬ", LIKELY_AVAILABLE: "СКОРЕЕ ЕСТЬ", CONFLICTING: "ПРОТИВОРЕЧИВО", INDIRECT: "КОСВЕННО", NOT_AVAILABLE: "НЕТ", NO_FRESH_DATA: "НЕТ СВЕЖИХ ДАННЫХ" };
 const CONFIDENCE = { HIGH: "высокая", MEDIUM: "средняя", LOW: "низкая", NONE: "нет" };
@@ -24,7 +25,9 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${item.title}${item.address ? ` · ${item.address}` : ""}`);
     lines.push(`   АИ-95: ${VERDICT[item.verdict]} (${CONFIDENCE[item.confidence]}, ${freshnessText(item.observations)}) · очередь: ${item.queue?.displayText ?? "нет данных"}`);
-    lines.push(`   ${runText(item.availabilityRun)}источники: ${supportingSources(item)}`);
+    const grades = gradeText(item, snapshot.requestedProducts);
+    if (grades) lines.push(`   ${grades}`);
+    lines.push(`   ${activityText(item.activity)}${runText(item.availabilityRun)}источники: ${supportingSources(item)}`);
   }
   const conflictCount = snapshot.assessments.filter(a => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
   const negativeCount = snapshot.assessments.filter(a => a.verdict === "NOT_AVAILABLE").length;
@@ -37,18 +40,30 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
 function healthText(h) { return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`; }
 function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${c.current.title}: появилась в выборке`; if (c.type === "REMOVED") return `${c.previous.title}: исчезла из выборки`; return `${c.current.title}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
 function formatTime(value) { return new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
-function freshnessText(observations = []) { const ages = observations.map(o => o.ageMinutes).filter(Number.isFinite); if (!ages.length) return "возраст неизвестен"; const min = Math.round(Math.min(...ages)); return min < 1 ? "только что" : `${min} мин`; }
+function freshnessText(observations = []) { const usable = observations.filter(o => Number.isFinite(o.ageMinutes)); if (!usable.length) return "возраст неизвестен"; const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0]; const min = Math.round(freshest.ageMinutes); return `${freshest.approximate ? "≈" : ""}${min < 1 ? "только что" : `${min} мин`}`; }
 function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(o => ["IN_STOCK", "LIMITED"].includes(o.status)).map(o => o.source))]; return values.length ? values.join(", ") : "нет прямой поддержки"; }
-function runText(run) { if (!run) return "время появления неизвестно · "; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${CONFIDENCE[run.confidence] ?? "текущая уверенность"}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} · `; }
+function runText(run) { if (!run) return "время появления неизвестно · "; const confidence = CONFIDENCE[run.confidence] ?? "уверенность неизвестна"; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} (${confidence}) · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} (${confidence}) · `; }
+function activityText(activity = []) { if (activity.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "активность возобновилась (эвристика) · "; if (activity.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "активность продолжается (эвристика) · "; return ""; }
+function gradeText(item, requested = []) {
+  const assessments = item.productAssessments ?? {};
+  const base = assessments.AI95_BASE;
+  const premiums = requested.filter(product => product.productKey !== "AI95_BASE").map(product => assessments[product.productKey]).filter(Boolean);
+  const premium = aggregateGrades(premiums);
+  const parts = [];
+  if (base) parts.push(`95: ${VERDICT[base.verdict]} (${CONFIDENCE[base.confidence]}${base.approximate ? ", ≈" : ""})`);
+  if (premium) parts.push(`95+: ${VERDICT[premium.verdict]} (${CONFIDENCE[premium.confidence]}${premium.approximate ? ", ≈" : ""})`);
+  return parts.join(" · ");
+}
+function aggregateGrades(values) { if (!values.length) return null; const order = ["AVAILABLE", "LIKELY_AVAILABLE", "CONFLICTING", "INDIRECT", "NO_FRESH_DATA", "NOT_AVAILABLE"]; const verdict = order.find(name => values.some(value => value.verdict === name)) ?? "NO_FRESH_DATA"; const matching = values.filter(value => value.verdict === verdict); const confidence = matching.sort((a, b) => ({ NONE: 0, LOW: 1, MEDIUM: 2, HIGH: 3 })[b.confidence] - ({ NONE: 0, LOW: 1, MEDIUM: 2, HIGH: 3 })[a.confidence])[0]?.confidence ?? "NONE"; return { verdict, confidence, approximate: matching.some(value => value.approximate) }; }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const snapshot = args.snapshot ? await readJson(args.snapshot) : JSON.parse(await readStdin());
+  let snapshot = args.snapshot ? await readJson(args.snapshot) : JSON.parse(await readStdin());
   let state;
   if (args["state-dir"]) state = await readJson(resolve(args["state-dir"], "state.json"));
   if (state) {
-    const runs = updateAvailabilityRuns(state.availabilityRuns, snapshot.assessments, state.previous, snapshot.fetchedAt);
-    for (const assessment of snapshot.assessments) assessment.availabilityRun = runs.find(run => run.stationKey === assessment.stationKey && run.productKey === "AI95_UNION");
+    const config = await loadConfig(state.configPath);
+    snapshot = prepareMonitoringSnapshot(state, snapshot, config).snapshot;
   }
   const result = renderReport(snapshot, { monitorId: state?.monitorId, generation: state?.generation, recovered: args.recovered, compact: args.compact });
   process.stdout.write(args.json ? `${stableJson(result)}\n` : `${result.markdown}\n`);
