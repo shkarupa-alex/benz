@@ -1,0 +1,15 @@
+{
+  "name": "fuel-watch-skill",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test tests/unit/*.test.mjs tests/integration/*.test.mjs",
+    "test:live": "FUEL_WATCH_LIVE=1 node --test tests/live/*.test.mjs"
+  },
+  "dependencies": {
+    "@turf/turf": "7.2.0",
+    "ajv": "8.20.0"
+  }
+}

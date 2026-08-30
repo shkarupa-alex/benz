@@ -1,0 +1,134 @@
+{
+  "target_id": "spec-review",
+  "approval_score": 7,
+  "would_adopt": true,
+  "summary": "The strongest revision so far and architecturally adoptable: the round-two blockers were closed on the merits rather than deflected - UNCERTAIN now has a verdict, the family-versus-exact interaction turns out to be logically correct for union queries, temporal handling is fully specified including future-skew rejection, turf 7.2.0 is pinned with matching boundary-inclusive semantics, baselines expire without self-calibrating, and publish-then-compare-and-swap-commit with an idempotent reportId and a recover path is the right ordering for an active-task model with no delivery receipt. I verified the CLI contract against the installed agent-browser 0.35.1 and every required feature exists. I still broke it in five places. The environment isolation list is a hand-maintained denylist that misses roughly 25 real variables - including AGENT_BROWSER_MAX_OUTPUT, which silently truncates extraction into well-formed short results and defeats the entire TRUNCATED/BODY_TOO_LARGE strategy, plus EXECUTABLE_PATH, ARGS, ENGINE, IGNORE_HTTPS_ERRORS and ALLOW_FILE_ACCESS - while clearing AGENT_BROWSER_CDP, which does not exist. The confidence base table is quantified on 'one fresh exact direct observation', so two agreeing same-group observations (the shipped default) match no row, and nothing resolves multiple matching rows. Availability runs open on a single LOW-confidence LIKELY_AVAILABLE tick but require two negatives to close, so one flaky family-unspecified signal produces an unqualified 'появился между X и Y' delivery claim. httpStatus and the gdebenz 502 retry depend on a mechanism absent from the required CLI feature list. And ten referenced types plus the BrowserRunner and SourceAdapter interfaces remain undefined or prose-only, contradicting this round's own ledger row about defining all referenced schemas.",
+  "phase": "spec-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Browser environment isolation",
+      "description": "The environment clearing list is a denylist of 18 names. Checked against the installed agent-browser 0.35.1, which documents 61 environment variables, it misses about 25 real ones with material impact: AGENT_BROWSER_MAX_OUTPUT (truncates page output, producing short-but-well-formed extraction results that defeat the spec's Node-side TRUNCATED/BODY_TOO_LARGE detection and silently degrade coverage), AGENT_BROWSER_EXECUTABLE_PATH, AGENT_BROWSER_ARGS, AGENT_BROWSER_ENGINE (lightpanda silently invalidates every fixture-validated extraction contract), AGENT_BROWSER_IGNORE_HTTPS_ERRORS, AGENT_BROWSER_CA_CERT, AGENT_BROWSER_ALLOW_FILE_ACCESS, AGENT_BROWSER_CONTENT_BOUNDARIES, AGENT_BROWSER_DEFAULT_TIMEOUT, AGENT_BROWSER_JSON, AGENT_BROWSER_DEBUG, AGENT_BROWSER_ACTION_POLICY, AGENT_BROWSER_CONFIRM_ACTIONS, AGENT_BROWSER_CONFIRM_INTERACTIVE, AGENT_BROWSER_PROXY, AGENT_BROWSER_PROXY_BYPASS, AI_GATEWAY_URL, ENCRYPTION_KEY, STATE_EXPIRE_DAYS, RESTORE_CHECK_*, AUTOSAVE_INTERVAL_MS, USER_AGENT, PIN_TAB, DOWNLOAD_PATH, WEBGPU, STREAM_*, IOS_*. It also clears AGENT_BROWSER_CDP, which the CLI does not document. A denylist against a 0.x CLI that adds variables between releases is structurally wrong.",
+      "required_change": "Replace the denylist with an allowlist: unset every variable matching ^AGENT_BROWSER_ and ^AI_GATEWAY_ plus the generic proxy set, then set only AGENT_BROWSER_NAMESPACE, AGENT_BROWSER_SESSION, AGENT_BROWSER_IDLE_TIMEOUT_MS, AGENT_BROWSER_ALLOWED_DOMAINS and AGENT_BROWSER_CONFIG. Add an integration test that injects AGENT_BROWSER_MAX_OUTPUT=1024, AGENT_BROWSER_ENGINE=lightpanda and AGENT_BROWSER_EXECUTABLE_PATH=/bin/false and asserts the run is unaffected."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Confidence algorithm",
+      "description": "Base confidence rows are quantified on a single observation ('AVAILABLE from one fresh exact direct observation -> MEDIUM', 'NOT_AVAILABLE from one fresh exact or family-all direct observation -> MEDIUM'). Two fresh agreeing exact observations from the same provenance group - the shipped default places yandex and gdebenz both in crowd-overlap, so this is the common case - match no base row and are not eligible for the HIGH upgrade, leaving confidence undefined. Separately, no rule resolves the case where several base rows match simultaneously, e.g. a LIKELY_AVAILABLE supported both by fresh grade-specific resumption (MEDIUM) and by family-unspecified evidence (LOW).",
+      "required_change": "Requantify the base rows as 'at least one', add an explicit row for multiple agreeing same-group observations (recommend MEDIUM with an explicit no-downgrade floor), and state the selection rule when multiple base rows match (recommend: highest base confidence wins)."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Availability runs",
+      "description": "The verdict-to-run mapping sends both AVAILABLE and LIKELY_AVAILABLE to run state AVAILABLE, and LIKELY_AVAILABLE includes the LOW-confidence family-unspecified path. An established run closes only after two consecutive NOT_AVAILABLE ticks, but opens on a single positive tick. One flaky low-confidence signal therefore emits basis OBSERVED_TRANSITION and the report line 'появился между 15:45 и 16:00' - an unqualified factual delivery claim, with no confidence attached, and it is the claim most likely to make the user drive somewhere.",
+      "required_change": "Require the opening tick to be AVAILABLE, or LIKELY_AVAILABLE with confidence at least MEDIUM, before emitting OBSERVED_TRANSITION; otherwise emit FIRST_SEEN. Attach the underlying verdict's confidence to every appearance-time sentence, and add a golden case for a low-confidence opening tick."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Contracts and interfaces",
+      "description": "The ledger adopts 'Define all referenced snapshot, assessment, station, state, and execution schemas', but NormalizedQueue (StationAssessment.queue), ExecutionWarning (ExecutionEnvelope.warnings), RequestedProductsConfig, RuntimeConfig, MonitoringConfig, FreshnessConfig, ActivityConfig, QueueConfig, IdentityConfig and RankingConfig are referenced and never defined. BrowserRunner and SourceAdapter remain prose bullet lists with no method signatures for the third consecutive revision, while the contract-test section requires a fake BrowserRunner exercising every adapter.",
+      "required_change": "Define all ten referenced types as TypeScript interfaces, and restore BrowserRunner and SourceAdapter as typed interfaces with method names, parameter types and return types so the adapter fake and parallel adapter work are executable."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Default behaviour configuration",
+      "description": "The task's headline default - base AI-95 plus all premium/branded AI-95 variants - still has no concrete definition. RequestedProductsConfig is undefined and absent from the defaults JSON, there is no alias table of branded variants, no normalization procedure for Russian fuel labels (АИ-95 / Аи 95 / 95 / АИ 95 Экто, hyphen and space variants, Latin-Cyrillic homoglyphs, NFKC, ё normalization), and no rule for classifying an unrecognised branded label. Deferring source-label-to-product mapping to the feasibility milestone is legitimate; deferring the requested product set and the normalization algorithm is not, since neither depends on the page contract.",
+      "required_change": "Define RequestedProductsConfig, give the default requestedProducts content with productKey and variantKey values for base AI-95 and each configured premium variant, specify the fuel-label normalization pipeline and matcher, and state the fallback classification for unrecognised labels."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "HTTP status detection",
+      "description": "SourceHealthRecord.httpStatus and the gdebenz rule 'retry one transient 502 in the same tick' both require an HTTP status, but agent-browser open exposes none and 'network requests' is absent from the required CLI feature list. With the declared feature set httpStatus is unfillable and 502 is indistinguishable from any other failed load. Third revision unresolved.",
+      "required_change": "Add 'network requests' to the required CLI features and specify how status is extracted, or remove httpStatus and the status-specific retry rule and reclassify 502 detection explicitly (for example a validated page-text sentinel)."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Component ownership",
+      "description": "collect.mjs is responsible for 'Prepare availability-run state without committing it' and emits nextMonitorState in the snapshot, while monitor-state.mjs prepare 'calculate[s] next state without mutating committed state' from --state and --snapshot, and the tick sequence calls prepare at step 3. Two components produce the same artifact and neither is declared authoritative. Raised in the previous round, unchanged.",
+      "required_change": "Assign next-state derivation to exactly one component and remove or re-scope nextMonitorState accordingly."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Monitoring capability gate and re-entry",
+      "description": "The interruptible-wait gate is correctly fail-closed but names no primitive and defines no probe, so 'SKILL.md must establish that the runtime can wait <=50s and return early' either always passes by assertion or always fails, and the monitoring test 'interruptible wait capability gate' has no writable subject. Nothing bounds monitoring duration or describes re-entry after context compaction; MonitorState and recover make resumption possible but no instruction connects them.",
+      "required_change": "Name the concrete wait primitive, add a STOP sentinel file in the monitoring directory checked at every chunk boundary as a mechanism-independent stop path, and specify the resume procedure (run recover, read dueAt, continue) plus any maximum monitoring duration."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Area and query hashing",
+      "description": "areaHash and queryHash are computed into every snapshot and consumed by no rule. Nothing invalidates a source's expectedStationCount baseline when the area changes (the new 90-day BASELINE_STALE rule catches age, not scope) and nothing suppresses the change section when the previous snapshot used a different area or product set. Raised in the previous round, unchanged.",
+      "required_change": "Key baselines to areaHash and mark them stale when it changes; require report.mjs to suppress the changes section when the previous snapshot's areaHash or queryHash differs."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Resource allowlist and failure classification",
+      "description": "--allowed-domains restricts resource domains, but an incomplete feasibility-recorded CDN set yields a partially rendered page that the adapter reports as SCHEMA_CHANGED, sending the operator to investigate a nonexistent site change. No distinct blocked-resource classification exists and nothing requires the feasibility pass to capture and verify the complete resource-domain set.",
+      "required_change": "Require the feasibility pass to enumerate and verify the full resource-domain set, and add a distinct internal code (for example RESOURCE_BLOCKED) so allowlist gaps are not misreported as schema drift."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Golden example and CLI consistency",
+      "description": "The normative report example renders '95+: НЕТ (низкая уверенность, 12 мин)', but 12 minutes is FRESH and NOT_AVAILABLE from one fresh exact or family-all direct observation is MEDIUM per the confidence table; goldens are generated from this example. Separately, monitor-state.mjs init takes --output <state-directory> while prepare/commit/recover/cleanup take --state <state-path>, leaving directory-versus-file ambiguous, and the verdict table is never explicitly declared top-down first-match.",
+      "required_change": "Correct the example to match the confidence table, state whether --state is a directory or a file consistently across all five operations, and declare the verdict table's evaluation order explicitly."
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Ranking",
+      "description": "queueRank sorts 'unknown or incomparable' (5) below VERY_LONG (4), so a station with fresh positive evidence and no queue data ranks beneath one with a very long queue. Missing queue data is a source-coverage artifact, not evidence about the queue; this is the mirror-image invented judgment to treating unknown as zero, and it is unremarked. Consider making the unknown-queue position configurable or documenting the rationale."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Traceability",
+      "description": "The ledger row 'Reject global process-name killing during cleanup | rejected' inverts its own meaning - the body adopts the prohibition. Two rows still state the option rather than the decision. There is still no ledger row for the area-resolution dependency, and resolve-area.mjs retains a full CLI contract with no stated mechanism for turning anchor labels into coordinates (no geocoding origin in the allowlist, no config entry, no manual-entry fallback) - the one round-one finding never addressed."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Browser lifecycle",
+      "description": "The 10-second idle timeout still doubles as the only daemon reaper (no daemon-stop verb exists). No invariant bounds the Node-side gap between browser commands below it, and a daemon idle-shutdown mid-run would be misclassified as NETWORK/COMMAND_FAILED and consume the single allowed session recreation. Risk is low given the chunked extraction budgets but remains unstated across three revisions."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Scope",
+      "description": "Per-source default enablement is still unstated. A CHALLENGE_ONLY 2GIS adapter trips a CAPTCHA endpoint every 15 minutes to print one line that could equally be a static configuration note, which sits awkwardly with the legal posture. Recommend declaring CHALLENGE_ONLY sources default-disabled. Separately, on-demand runs still have no minimum interval, and the compare-and-swap/generation/recover machinery is the most defensible over-engineering candidate for a personal 15-minute checker, though it is cheap and its rationale is stated."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Testing rigor",
+      "description": "'No residual owned RSS remains after process exit' is tautological and weaker than the earlier 'no upward RSS trend beyond a defined tolerance'. turf.buffer options (units, steps) are not pinned, so corner geometry could shift across patch releases. The two supplied interior control points and eight hull vertices are stated as expectations in the area section but never named in the test list."
+    }
+  ],
+  "assumptions": [
+    "I treated the locally installed agent-browser 0.35.1 as the target runtime and enumerated its documented environment variables and CLI features directly from --help, plus a read-only 'session list --json' probe in an unused namespace; I made no network requests to Yandex, 2GIS or gdebenz.",
+    "I assumed the verdict table is intended to be evaluated top-down first-match, since the spec still does not say, and evaluated its correctness under that reading.",
+    "I assumed the shipped default provenanceGroups (yandex and gdebenz both in crowd-overlap) when analysing the confidence table's multi-observation behaviour.",
+    "I assumed turf 7.2.0's booleanPointInPolygon default (ignoreBoundary false) is what satisfies the 'boundary points count as inside' requirement, since the spec pins the library but not the call options.",
+    "I did not read any prior council artifacts under spec/**, per instructions; this review is based solely on the task text, the specification quoted above, and direct inspection of the installed agent-browser CLI."
+  ],
+  "round": 3,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

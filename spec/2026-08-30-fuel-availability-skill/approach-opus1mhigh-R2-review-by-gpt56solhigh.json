@@ -1,0 +1,123 @@
+{
+  "target_id": "proposal-2",
+  "approval_score": 4,
+  "would_adopt": false,
+  "summary": "Proposal 2 is more explainable after removing false-precision percentages, and its directness, evidence, identifier, and read-only transport distinctions are valuable. It is still not adoptable because it preserves automatic monitor termination and a city-wide default area, retains the demonstrated short-page pagination bug, has a first-match contradiction bug in the verdict table, lacks multi-product station-ranking semantics, gives unknown queues an invented rank, and defers required named-anchor and 2GIS capabilities outside the claimed complete V1.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "monitoring lifecycle",
+      "description": "Monitoring terminates after 12 hours, 48 runs, or four total-source failures instead of continuing until the user explicitly asks to stop.",
+      "required_change": "Remove default terminal budgets and outage aborts; continue degraded reporting and retries until explicit stop or unavoidable host/task termination."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "monitor responsiveness",
+      "description": "A 240-second wait chunk leaves the agent unresponsive beyond the required safe bounded-wait interval.",
+      "required_change": "Limit each wait or poll to at most 60 seconds while preserving monotonic 15-minute targets."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "area configuration",
+      "description": "A Volgograd-wide bbox is silently used despite the requirement for a user-configured acceptable area.",
+      "required_change": "Fail closed when no rectangle, polygon, or resolved anchor boundary is configured; retain city bounds only as an explicit example."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Yandex pagination",
+      "description": "Stopping on a short page would stop after the observed 24-item second page and miss the observed 13-item third page.",
+      "required_change": "Do not terminate on one short page; use validated last-page metadata, empty or repeated pages, zero-new-ID criteria, deadline, or hard cap."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "verdict logic",
+      "description": "The newer-negative rule precedes the conflict-window rule, so a negative report newer by one minute produces НЕТ rather than ПРОТИВОРЕЧИВО; approximate bounded ages are also compared as exact instants.",
+      "required_change": "Apply conflict-window and interval-overlap logic before decisive-newer rules, and consider bounded evidence decisively newer only when its entire possible interval is newer."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "multi-product ranking",
+      "description": "Assessments and the comparator are defined for one grade, but the default request contains AI95 and AI95_PREMIUM and no station-level aggregation rule is provided.",
+      "required_change": "Define independent concrete-product assessments and select the best eligible exact product for station ranking and display."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "probability ordering",
+      "description": "The categorical comparator can consult queue before distinguishing corroboration and evidence strength within the same verdict/confidence class, so it does not fully rank by likelihood first.",
+      "required_change": "Add an explicit ordinal evidence-strength tuple before queue comparison, without requiring an invented floating-point probability."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "queue ordering",
+      "description": "Unknown queue is assigned 1.5 and therefore ranks ahead of known medium/long queues and behind known none/short queues, contradicting the claim that it is neutral.",
+      "required_change": "Compare queue only when both candidates have fresh comparable queue observations."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "fuel semantics",
+      "description": "Generic gdebenz AI95 evidence is cloned into premium-AI95 evidence, and unmasked undocumented fmask grades become OUT_OF_STOCK.",
+      "required_change": "Keep generic family evidence at the family-union level, never project it into premium-only evidence, and treat absent undocumented mask grades as unknown unless closed-world semantics are independently verified."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "required V1 scope",
+      "description": "Named-anchor resolution and the 2GIS adapter are deferred to V2 even though both are explicit task requirements.",
+      "required_change": "Include unambiguous named-anchor resolution and a real best-effort 2GIS catalogue adapter in the approved implementation scope."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "runtime privacy and state",
+      "description": "Mutable state and automatic raw parser-body captures remain beneath the installed skill directory.",
+      "required_change": "Use a configurable external state directory and make sanitized parser-body capture explicitly opt-in."
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "identity matching",
+      "description": "Globally distance-sorted greedy pairing is described as mutual-best but does not enforce reciprocal best candidates.",
+      "required_change": "Require reciprocal-best acceptance or document and test the intended greedy behavior under competing candidates."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "freshness bands",
+      "description": "Band 3 is imputed as 45 minutes despite a claimed source bound of less than one hour.",
+      "required_change": "Use the verified maximum bound, conservatively 60 minutes if the less-than-one-hour meaning is correct."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "adapter errors",
+      "description": "The must-never-reject adapter contract can hide implementation defects.",
+      "required_change": "Return expected operational failures as data but let unexpected defects reject for pipeline-level classification."
+    }
+  ],
+  "assumptions": [
+    "The categorical verdicts may serve as probability bands, but queue must not be consulted before all intended likelihood evidence has been ordered.",
+    "The supplied empirical source observations are provisional and undocumented.",
+    "The original explicit-stop condition overrides the proposal's preferred safety budgets."
+  ],
+  "round": 2,
+  "reviewer": "gpt56solhigh",
+  "judge": {
+    "slug": "gpt56solhigh",
+    "model": "gpt-5.6-sol",
+    "route": "codex-sdk",
+    "effort": "high"
+  }
+}

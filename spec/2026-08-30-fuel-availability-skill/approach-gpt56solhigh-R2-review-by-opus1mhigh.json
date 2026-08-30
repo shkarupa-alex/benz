@@ -1,0 +1,66 @@
+{
+  "target_id": "proposal-1",
+  "approval_score": 5,
+  "would_adopt": false,
+  "summary": "This revision correctly absorbed the source-model correction — tiling is gone, gdebenz's JSON API is first-class, no production browser subsystem — and it contributes two ideas better than proposal 2's (the ObservationTime discriminated union with BOUNDED_AGE, and the PRESENCE queue kind excluded from ordering), plus it types gdebenz's conflict field as string|null, which the live data vindicates and proposal 2 gets wrong. But the round-1 critical finding is unfixed verbatim: section 11 still specifies a foreground NDJSON child process AND agent polling at 60-second intervals AND the agent sending SIGINT, three mutually exclusive things, still justified by a learn.chatgpt.com /goal link that is not evidence of a Codex primitive. I also verified a new, silent, severe defect: deriving lastPage from page 1's advertised pagination fetches 3 pages and collects 70 of 130 real Volgograd stations (54%) while reporting health OK, because totalResultCount reads 51/100/132/99 across pages. Add the unflagged fresh_band direction assumption, a confidence scale that measurement shows cannot reach HIGH, and dead 2GIS catalogue machinery that anchor resolution depends on, and this is not implementation-ready.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "monitoring lifecycle",
+      "description": "Unchanged from round 1. Section 11 simultaneously specifies 'launch one foreground monitor --ndjson process', 'publish every snapshot as a complete commentary update', 'poll or wait in intervals no longer than 60 seconds', and 'on explicit stop: abort active fetches; send SIGINT'. If the agent is blocked inside a foreground exec it can do none of the latter three. The durable-goal mechanism is still asserted via a ChatGPT consumer documentation link, which does not establish the primitive exists for a Codex skill. Proposal 2 identified this same hazard unprompted and fixed it with a chunked wait.",
+      "required_change": "Rewrite section 11 around a single verified primitive: a non-spawning command that blocks for a bounded interval (e.g. <= 240 s) and exits with a status code so the agent itself loops, collects, and publishes. Remove the unverified durable-goal dependency or demonstrate it exists on the target host."
+    },
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "yandex pagination",
+      "description": "Verified 2026-08-30 by walking pages 1-7: the query returns 130 unique stations across 6 pages, and totalResultCount reads 51 / 100 / 132 / 99 on pages 1-4 respectively. Section 3.1's rule ('parse the first response and determine its advertised pagination; fetch pages 2..lastPage') computes lastPage=3 from page 1's value of 51, collects 70 of 130 stations (54%), and terminates with health OK and pagesFetched 3/3 - TRUNCATED never fires because the 20-page cap was never approached. The user receives a complete-looking ranking over a 46% sample with no warning. The design never mentions that totalResultCount is unstable.",
+      "required_change": "Terminate pagination on zero new oids or zero businesses only, never on an advertised total; cap by maxPages and emit TRUNCATED when the cap binds while new oids are still arriving; record the per-page totalResultCount sequence as a diagnostic. Also note pages 4 and 5 are both short (24) yet page 5 yields 24 new oids, so a short-page stop is equally wrong."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "gdebenz freshness semantics",
+      "description": "Section 3.2 presents the fresh_band -> meaning table ('less than one hour' / 'within three hours' / 'today') as source-documented fact, with a 'Source meaning' column, and section 19 does not list it as an assumption. Nothing observable confirms the direction. Measured distribution is band 1:7, 2:59, 3:52. If the ordering is inverted, the design treats the freshest reports as expired and the stalest as current - a silent failure in the unsafe direction.",
+      "required_change": "Move fresh_band semantics to the assumptions list, and add the self-calibration path: 118 comment rows join cleanly to stations by osm_id, and Yandex supplies exact lastSignalTimestamp for co-located stations, so band-to-age can be measured. Until calibrated, treat all bands as one low-precision class rather than assuming an ordering."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "confidence calibration",
+      "description": "Using the document's own constants and measured data: Yandex fresh IN_STOCK with signalsPerHour=1 gives weight 0.598; gdebenz band 3 scored at max age 60 min against fresh 20 / stale 90 gives weight 0.281; coverage = 1 - (1-0.598)(1-0.281) = 0.711, below the 0.75 HIGH boundary. Perfect two-source agreement therefore yields MEDIUM. Moreover only 13 of 208 gdebenz stations carry explicit '95' in fuels_now and zero carry any premium-95 concept, so the corroborating observation usually does not exist. The claim that 'high confidence normally requires agreement between Yandex and gdebenz' describes a state that is nearly unreachable; the three-label scale collapses to two.",
+      "required_change": "Recalibrate the HIGH boundary or the weight factors against the measured data (13 stations with 95 evidence, signalsPerHour typically 1-5), and state explicitly in SKILL.md that premium-95 verdicts are single-source by construction because gdebenz has no premium concept."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "2GIS dead machinery",
+      "description": "2GIS returns 302/CAPTCHA to unattended requests (re-verified with a full desktop UA), and the design explicitly declines a browser fallback. Yet it specifies 20-page pagination, concurrency 2, a 24-hour catalogue TTL, a 6-hour monitor refresh, a 2gis-catalog.json cache file, and five fixture categories - and makes boundary-anchor resolution depend on the cache ('search Yandex, gdebenz, and cached 2GIS catalogue data for named anchors'), which can never populate.",
+      "required_change": "Reduce 2GIS to a disabled config stub with the adapter wired but unbuilt; remove the 2GIS dependency from anchor resolution, which gdebenz's 208-row registry already covers."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "confidence formula ambiguity",
+      "description": "Round-1 finding unresolved. UNKNOWN has statusLikelihood 0.50 (zero logit contribution), but section 9's coverage = 1 - prod(1 - effectiveIndependentGroupWeight) does not say whether zero-information observations are excluded. The new rule 'if fuels_now lists other grades but not the requested grade, the requested grade remains UNKNOWN' now generates such observations systematically, so if they enter coverage, confidence inflates exactly where evidence is emptiest.",
+      "required_change": "State explicitly that UNKNOWN (and any status whose logit contribution is zero) is excluded from the coverage term."
+    }
+  ],
+  "assumptions": [
+    "I re-verified all source behaviour by read-only GET this session rather than asking; measurements above are from 2026-08-30.",
+    "I assumed the target host is a Codex skill environment where tool calls are request/response, so an agent blocked in a foreground exec cannot publish intermediate output.",
+    "I assumed gdebenz's fresh_band direction remains unverified for both proposals, since nothing I can probe establishes it.",
+    "I treated the /api/cfg 'live: false' flag as an unresolved unknown rather than assuming a specific meaning."
+  ],
+  "round": 2,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fuel Watch"
+  short_description: "Проверяет наличие АИ-95 и очереди на АЗС"
+  default_prompt: "Используй $fuel-watch, чтобы проверить наличие АИ-95 в настроенной зоне и показать источники и свежесть данных."

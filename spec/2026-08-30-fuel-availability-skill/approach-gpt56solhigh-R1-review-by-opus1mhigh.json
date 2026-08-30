@@ -1,0 +1,58 @@
+{
+  "target_id": "proposal-1",
+  "approval_score": 5,
+  "would_adopt": false,
+  "summary": "A rigorous, well-organized design whose scoring semantics (banded lexicographic ranking, correlation-group weighting, confidence separated from probability, fail-closed area) are in places better than proposal 2's — but it is built entirely on the brief's stale source snapshot without a single verification, and I confirmed by live probe that all three of its load-bearing premises are wrong: gdebenz serves a clean JSON API with 208 stations (not a 502 HTML scrape), 2GIS provides no availability at all (so its whole browser/CAPTCHA subsystem buys nothing), and Yandex answers plain curl with full pagination (so ~90-tile coverage is unnecessary and, at a 120 s deadline with 10 s timeouts, arithmetically infeasible). Its monitoring lifecycle contradicts itself — 'one foreground child process streaming NDJSON' versus 'bounded waits of at most 60 seconds' — and rests on a ChatGPT /goal documentation link that is not evidence of a Codex CLI durable-goal primitive. Adopt its ranking and correlation-group ideas; do not adopt its source model or lifecycle.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "source model",
+      "description": "Design treats gdebenz as an optional degraded HTML source (502) and 2GIS as the discovery/identity backbone. Live probe on 2026-08-30: gdebenz /api/stations returns 200 with 208 JSON stations (osm_id, brand, addr, status, fuels_now, prices_now) and /api/comments returns 116 rows with fmask/fresh_band/conflict; 2GIS is 403 to curl, CAPTCHAs browsers, and publishes no live fuel feed. Effort is allocated to a zero-value browser subsystem while the richest registry is ignored.",
+      "required_change": "Re-verify all three sources and rebuild the source model: gdebenz JSON API as registry + corroborating availability voter, Yandex as availability authority via plain HTTPS, 2GIS reduced to a disabled config stub with no browser port work."
+    },
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "monitoring lifecycle",
+      "description": "Section 8 specifies both 'launch one foreground child process running monitor --ndjson' with Codex publishing each NDJSON line, and 'between ticks use bounded waits of at most 60 seconds'. These are mutually exclusive architectures. A blocking foreground child gives the agent no way to publish line n mid-call. The durable-goal mechanism is asserted via a learn.chatgpt.com /goal link, which does not establish that a Codex CLI skill has that primitive.",
+      "required_change": "Pick and specify one verified primitive: a non-spawning blocking wait command that exits with a status code so the agent itself loops and publishes. Remove the unverified durable-goal dependency or demonstrate it exists in the target host."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "collection plan / rate limiting",
+      "description": "Default 5 km tiles with 10% overlap over Volgograd's bbox (~43x52 km) yields roughly 90-100 tiles times pagination, under a stated 120 s cycle deadline with 10 s per-request timeouts. Infeasible, and at 15-minute cadence it is ~400 Yandex requests/hour, the fastest route to being challenged. Measured reality: 25 businesses per page with working pagination; gdebenz returns 208 stations in one request.",
+      "required_change": "Replace tiling with measured pagination (stop on short page or zero new oids, cap pages), and re-derive the cycle deadline from actual per-source request counts."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "confidence model",
+      "description": "UNKNOWN observations have statusLikelihood 0.50 (zero logit contribution) but still carry effectiveGroupWeight into coverage = 1 - prod(1 - w). A source explicitly reporting 'no information' therefore raises confidence while probability stays at the prior, producing '50% - medium confidence' output that asserts knowledge the data does not contain.",
+      "required_change": "Exclude UNKNOWN (and any zero-information status) from the coverage term; confidence must be driven only by observations that move the probability."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "identity persistence",
+      "description": "Station keys are stable only within 'the monitoring process's runtime station registry'. There is no persisted cross-run crosswalk, so restarting a task resets the change-diff ('newly available' / 'no longer supported') and produces spurious change reports.",
+      "required_change": "Persist the station crosswalk to the state directory with hand-editable overrides, keyed on durable source ids."
+    }
+  ],
+  "assumptions": [
+    "I verified sources by read-only HTTP GET rather than asking; results above are from 2026-08-30 and are treated as ground truth over the brief's snapshot.",
+    "I assumed the target host is Codex CLI skill execution, where tool calls are request/response and long blocking calls may hit a timeout.",
+    "I assumed 'rank by probability, and where data exists by smallest queue' means probability is primary and queue is a secondary/tiebreak criterion."
+  ],
+  "round": 1,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

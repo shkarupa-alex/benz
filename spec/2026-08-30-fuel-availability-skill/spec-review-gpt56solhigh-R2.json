@@ -1,0 +1,104 @@
+{
+  "target_id": "spec-review",
+  "approval_score": 6,
+  "would_adopt": false,
+  "summary": "The revision resolves most high-level architecture, safety, browser lifecycle, release-gating, evidence, and testing concerns, and its stated agent-browser 0.35.1 feature assumptions are locally plausible. It is still not ready for implementation as-is because stable station identity, full configuration and snapshot schemas, monitoring-state ownership, geometry semantics, temporal edge cases, union aggregation, activity representation, and exact queue ranking remain underdefined. These gaps can fabricate availability transitions or produce incompatible module implementations, but they are concentrated enough that one further contract-hardening revision should make the design adoptable.",
+  "phase": "spec-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Station identity and continuity",
+      "description": "The normalized match-score formula, string normalization, canonical stationKey generation, and previous-tick cluster reconciliation are missing.",
+      "required_change": "Define exact normalization and scoring algorithms, deterministic canonical keys, and conservative previous-tick key carry-forward with ambiguity suppression."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Interfaces and configuration",
+      "description": "ReconciledStation, StationAssessment, MonitorState, browser/process results, execution envelopes, ranking tuples, and the full source, area, fuel-alias, and requested-product schemas are absent.",
+      "required_change": "Add complete TypeScript interfaces and JSON Schema shapes, including validation ranges and cross-field invariants."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Monitoring lifecycle",
+      "description": "Orphan detection relies on a persistent process even though active-agent monitoring has no persistent Node process, and active-task loss behavior is unspecified.",
+      "required_change": "Define task-owned monitor identity or lease semantics, concurrent-monitor exclusion, stale-state recovery, and best-effort termination behavior when the active task disappears."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Geometry and default area",
+      "description": "Default anchors use a point field not accepted by AreaConfig, buffer/projection semantics are undefined, and filtering-before-reconciliation can lose valid boundary evidence.",
+      "required_change": "Unify the anchor schema, select and pin the geometry algorithm/library, define numerical tolerances, and specify boundary-near reconciliation and qualification order."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Evidence contracts",
+      "description": "Fresh UNCERTAIN evidence, future timestamps, timezone parsing, family-scoped claim subjects, mixed union evidence, and rolling-count activity inputs lack deterministic handling.",
+      "required_change": "Complete the temporal validation and verdict tables, separate family from product claim subjects, and add explicit timeline and rolling-summary activity schemas."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Coverage and source enumeration",
+      "description": "Station-count baselines are not bound to areaHash, and the spec does not require enumeration independent of current availability.",
+      "required_change": "Key baselines by source contract and areaHash, define unvalidated-area behavior, and require station discovery that can distinguish a valid all-negative result from incomplete extraction."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Queue ranking",
+      "description": "Exact vehicle counts are reduced to ordinal bands, so different known queue sizes can tie, and unknown queue ordering is undefined.",
+      "required_change": "Preserve and rank exact comparable counts before ordinal fallback, and place unknown or presence-only queues deterministically without treating them as short."
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Browser containment",
+      "description": "Source URLs are validated, but the design does not explicitly pass validated resource-domain unions through agent-browser network containment.",
+      "required_change": "Use --allowed-domains where feasible and contract-test required page resources."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Exit handling",
+      "description": "Exit code 75 may accompany a valid reportable snapshot, but SKILL.md caller behavior is not specified.",
+      "required_change": "Define which nonzero exits still require rendering an existing validated snapshot."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Traceability",
+      "description": "The ledger covers the major refinement decisions but omits several substantive thresholds and operational choices present in the body.",
+      "required_change": "Add grouped ledger rows for runtime baseline, identity, timing, queue, area, and exit-code decisions."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Dependencies",
+      "description": "Schema and geometry dependencies are promised but not selected.",
+      "required_change": "Name the packages and supported versions or specify a dependency-free algorithm."
+    }
+  ],
+  "assumptions": [
+    "The review used only the task and specification supplied in the prompt and did not inspect prior council artifacts under spec/**.",
+    "Local agent-browser help and version output were treated as authoritative for the installed 0.35.1 CLI contract; no website was opened.",
+    "Source selectors and internal page-state paths are legitimately deferred to the release-gated feasibility pass.",
+    "Monitoring is expected to operate only while the active Codex task remains alive; no external scheduler or daemon may be introduced.",
+    "No repository files, dependencies, git state, or external services were modified."
+  ],
+  "round": 2,
+  "reviewer": "gpt56solhigh",
+  "judge": {
+    "slug": "gpt56solhigh",
+    "model": "gpt-5.6-sol",
+    "route": "codex-sdk",
+    "effort": "high"
+  }
+}

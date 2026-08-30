@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.invalid/fuel-watch/config.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["area", "requestedProducts", "sources", "browser", "monitoring", "freshness", "activity", "queue", "identity", "ranking"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "area": { "$ref": "#/$defs/area" },
+    "requestedProducts": { "$ref": "#/$defs/requestedProducts" },
+    "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/source" } },
+    "browser": { "$ref": "#/$defs/browser" },
+    "monitoring": { "$ref": "#/$defs/monitoring" },
+    "freshness": { "$ref": "#/$defs/freshness" },
+    "activity": { "$ref": "#/$defs/activity" },
+    "queue": { "$ref": "#/$defs/queue" },
+    "identity": { "$ref": "#/$defs/identity" },
+    "ranking": { "$ref": "#/$defs/ranking" }
+  },
+  "$defs": {
+    "point": { "type": "array", "prefixItems": [{ "type": "number", "minimum": -180, "maximum": 180 }, { "type": "number", "minimum": -90, "maximum": 90 }], "items": false },
+    "area": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "label", "south", "west", "north", "east"], "properties": { "kind": { "const": "rectangle" }, "label": { "type": "string", "minLength": 1 }, "south": { "type": "number", "minimum": -90, "maximum": 90 }, "west": { "type": "number", "minimum": -180, "maximum": 180 }, "north": { "type": "number", "minimum": -90, "maximum": 90 }, "east": { "type": "number", "minimum": -180, "maximum": 180 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "label", "coordinates"], "properties": { "kind": { "const": "polygon" }, "label": { "type": "string", "minLength": 1 }, "coordinates": { "type": "array", "minItems": 3, "items": { "$ref": "#/$defs/point" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "label", "anchors", "boundary", "bufferMeters", "unresolvedPolicy"], "properties": { "kind": { "const": "station-anchors" }, "label": { "type": "string", "minLength": 1 }, "anchors": { "type": "array", "minItems": 3, "items": { "type": "object", "additionalProperties": false, "required": ["label", "point"], "properties": { "label": { "type": "string", "minLength": 1 }, "sourceId": { "type": "string" }, "point": { "$ref": "#/$defs/point" } } } }, "boundary": { "const": "convex-hull" }, "bufferMeters": { "type": "number", "minimum": 0, "maximum": 10000 }, "unresolvedPolicy": { "const": "fail-closed" } } }
+      ]
+    },
+    "product": { "type": "object", "additionalProperties": false, "required": ["productKey", "family", "variant", "variantKey", "aliases"], "properties": { "productKey": { "type": "string", "pattern": "^[A-Z0-9_]+$" }, "family": { "const": "AI_95" }, "variant": { "enum": ["BASE", "BRANDED", "PREMIUM"] }, "variantKey": { "type": "string", "minLength": 1 }, "aliases": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } },
+    "requestedProducts": { "type": "object", "additionalProperties": false, "required": ["mode", "products", "includeUnrecognizedAi95Variants"], "properties": { "mode": { "const": "UNION" }, "products": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/product" } }, "includeUnrecognizedAi95Variants": { "type": "boolean" } } },
+    "source": { "type": "object", "additionalProperties": false, "required": ["id", "enabled", "order", "provenanceGroup"], "properties": { "id": { "enum": ["yandex", "gdebenz", "2gis"] }, "enabled": { "type": "boolean" }, "order": { "type": "integer", "minimum": 1 }, "provenanceGroup": { "type": "string", "minLength": 1 } } },
+    "browser": { "type": "object", "additionalProperties": false, "required": ["executable", "idleTimeoutMs", "adapterTimeoutMs", "cleanupReserveMs", "allowedDomains"], "properties": { "executable": { "type": "string", "minLength": 1 }, "idleTimeoutMs": { "const": 10000 }, "adapterTimeoutMs": { "type": "integer", "minimum": 5000, "maximum": 120000 }, "cleanupReserveMs": { "type": "integer", "minimum": 5000, "maximum": 30000 }, "allowedDomains": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } },
+    "monitoring": { "type": "object", "additionalProperties": false, "required": ["intervalMinutes", "waitChunkSeconds", "compactAfterEmptyTicks"], "properties": { "intervalMinutes": { "const": 15 }, "waitChunkSeconds": { "type": "integer", "minimum": 1, "maximum": 50 }, "compactAfterEmptyTicks": { "type": "integer", "minimum": 1 } } },
+    "freshness": { "type": "object", "additionalProperties": false, "required": ["freshMinutes", "recentMinutes", "staleMinutes", "expireMinutes", "futureSkewSeconds", "conflictWindowMinutes"], "properties": { "freshMinutes": { "type": "number", "exclusiveMinimum": 0 }, "recentMinutes": { "type": "number", "exclusiveMinimum": 0 }, "staleMinutes": { "type": "number", "exclusiveMinimum": 0 }, "expireMinutes": { "type": "number", "exclusiveMinimum": 0 }, "futureSkewSeconds": { "type": "number", "minimum": 0 }, "conflictWindowMinutes": { "type": "number", "exclusiveMinimum": 0 } } },
+    "activity": { "type": "object", "additionalProperties": false, "required": ["quietGapMinutes", "resumeWindowMinutes", "minimumEvents", "strongSignalCountPerHour"], "properties": { "quietGapMinutes": { "type": "number", "exclusiveMinimum": 0 }, "resumeWindowMinutes": { "type": "number", "exclusiveMinimum": 0 }, "minimumEvents": { "type": "integer", "minimum": 1 }, "strongSignalCountPerHour": { "type": "integer", "minimum": 1 } } },
+    "queue": { "type": "object", "additionalProperties": false, "required": ["ordinalMaxVehicles", "unknownPosition"], "properties": { "ordinalMaxVehicles": { "type": "object", "additionalProperties": false, "required": ["NONE", "SHORT", "MEDIUM", "LONG"], "properties": { "NONE": { "type": "number", "minimum": 0 }, "SHORT": { "type": "number", "minimum": 0 }, "MEDIUM": { "type": "number", "minimum": 0 }, "LONG": { "type": "number", "minimum": 0 } } }, "unknownPosition": { "const": "AFTER_KNOWN" } } },
+    "member": { "type": "object", "additionalProperties": false, "required": ["source", "sourceStationId"], "properties": { "source": { "enum": ["yandex", "gdebenz", "2gis"] }, "sourceStationId": { "type": "string", "minLength": 1 } } },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxCoordinateDriftMeters", "ambiguityMargin", "brandAliases", "streetDictionary", "manualOverrides"],
+      "properties": {
+        "maxCoordinateDriftMeters": { "type": "number", "minimum": 1, "maximum": 500 },
+        "ambiguityMargin": { "type": "number", "minimum": 0, "maximum": 1 },
+        "brandAliases": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+        "streetDictionary": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+        "manualOverrides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["stationKey", "members"],
+            "properties": {
+              "stationKey": { "type": "string", "minLength": 1 },
+              "members": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/member" } }
+            }
+          }
+        }
+      }
+    },
+    "ranking": { "type": "object", "additionalProperties": false, "required": ["sourcePriority"], "properties": { "referencePoint": { "$ref": "#/$defs/point" }, "sourcePriority": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["yandex", "gdebenz", "2gis"] } } } }
+  }
+}

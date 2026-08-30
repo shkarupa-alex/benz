@@ -1,0 +1,5 @@
+# Health: gpt56solhigh
+
+- route: codex-sdk
+- healthy: true
+- detail: ping ok

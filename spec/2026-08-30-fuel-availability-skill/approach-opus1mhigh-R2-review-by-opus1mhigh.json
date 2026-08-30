@@ -1,0 +1,81 @@
+{
+  "target_id": "proposal-2",
+  "approval_score": 7,
+  "would_adopt": true,
+  "summary": "This revision fixed every round-1 finding I raised except one, and fixed a hazard nobody flagged. The unreachable identity threshold is gone (three plain predicates at 150 m with brand conflict as a hard reject), the linear rank blend that let queue override availability is replaced by a zero-weight lexicographic comparator that transcribes the requirement literally, the distance penalty is demoted to a harmless tie-break, usr_* id heterogeneity is acknowledged and excluded from persistence, GAS now fails loudly, and the chunked wait removes the tool-timeout risk. Replacing the unfalsifiable float with an enumerable decision table is the right retreat. I still broke it in four places: the short-page pagination stop loses 38 of 130 stations (29% of the city) because pages 4 and 5 are both short yet page 5 yields 24 new oids; gdebenz grade-blind 'no' maps to OUT_OF_STOCK while grade-blind 'yes' correctly maps to UNCERTAIN, an asymmetry that lets a community 'нет' fire Rule 2 and suppress a station Yandex reports as having 95+; Rule 2 preempting Rule 3 with no margin makes ПРОТИВОРЕЧИВО reachable only when the positive side is newer, so identical evidence gaps flip verdict on sign; and the 'unmasked implies OUT_OF_STOCK' closure catches AI95_PREMIUM, which the source cannot express. All four are bounded edits to a sound skeleton. Adopt with these changes.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "major",
+      "area": "yandex pagination termination",
+      "description": "Verified by walking pages 1-7 on 2026-08-30: businesses per page are 25/25/25/24/24/14/0 and cumulative unique oids are 25/47/70/92/116/130/130. The rule in 3.8 - 'stop on zero new oids or a short page' - fires the short-page condition at page 4 (24 < pageSize 25) and stops, collecting 92 of 130 stations and silently losing the 38 on pages 5-6. The refusal to trust totalResultCount is correct (it reads 51/100/132/99 across pages), but the replacement termination condition is wrong.",
+      "required_change": "Terminate only on zero businesses or zero new oids, bounded by maxPages; raise maxPages to about 10 and emit a TRUNCATED diagnostic when the cap binds while new oids are still arriving. Record pagesFetched, uniqueOids, and the per-page totalResultCount sequence in diagnostics."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "gdebenz status semantics / false negatives",
+      "description": "Section 3.8 rightly insists that 'yes' with fmask == 0 yields UNCERTAIN because a grade-blind positive says nothing about a specific grade, then maps 'no' to OUT_OF_STOCK for watched grades with no equivalent qualification. Measured: 66 of 208 rows carry status 'no', and only 31 of 208 carry any fuel list at all, so most negatives are equally grade-blind. Fed into Rule 2 ('a non-stale OUT_OF_STOCK newer than every non-stale IN_STOCK yields НЕТ', first match wins), a grade-blind community 'нет' suppresses a station that Yandex reports as having 95+, emitting verdict НЕТ with no conflict marker - exactly the class of actionable wrong answer the proposal is otherwise designed to prevent.",
+      "required_change": "Apply grade-blindness symmetrically: a gdebenz status with fmask == 0 / empty fuels_now yields UNCERTAIN for specific grades regardless of sign. It may still contribute a station row and queue signal, but must not be eligible to fire Rule 2."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "verdict decision table ordering",
+      "description": "Rule 2 fires whenever the OUT_OF_STOCK observation is newer at all, with no margin, and precedes Rule 3 under first-match-wins. Rule 3 ('neither clearly newer, within conflictWindowMinutes 30') is therefore reachable only when the IN_STOCK side is the newer one. Concretely: Yandex IN_STOCK at 40 min plus gdebenz 'no' at imputed 45 min yields ПРОТИВОРЕЧИВО, while Yandex IN_STOCK at 50 min plus gdebenz 'no' at 45 min yields НЕТ. A five-minute sign flip changes the verdict entirely, conflictWindowMinutes becomes a one-sided tunable, and the ПРОТИВОРЕЧИВО bucket featured in the sample output will rarely populate.",
+      "required_change": "Move the conflict-window check ahead of Rule 2 so it applies symmetrically. Better: adopt proposal 1's BOUNDED_AGE interval model instead of collapsing each band to a single minute value, and define 'clearly newer' as non-overlapping intervals - this removes the asymmetry structurally rather than adding a tunable."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "grade vocabulary closure",
+      "description": "Section 3.8's rule 'yes/queue with fmask > 0 gives IN_STOCK for masked grades, OUT_OF_STOCK for unmasked ones' catches AI95_PREMIUM, which is not in the five-bit vocabulary at all and so is permanently unmasked. The same station therefore emits an inferred IN_STOCK for 95+ (from the 95 bit) and a direct OUT_OF_STOCK for 95+ (from the closure). Tracing the table: Rule 2 no (equal ages), Rule 3 no (same source), Rules 4-5 no (no direct IN_STOCK), Rule 6 no (a direct OOS exists), so Rule 7 gives НЕТ_ДАННЫХ for every gdebenz station carrying a fuel list.",
+      "required_change": "Scope the 'unmasked implies OUT_OF_STOCK' closure to grades inside the source's declared vocabulary; grades a source cannot express must yield no direct observation at all."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "gdebenz field typing",
+      "description": "Round-1 finding unfixed. StationObservation types conflict as boolean and 3.3 says 'gdebenz conflict: true demotes confidence one step', but the endpoint is not specified. Measured: /api/stations.conflict is a string enum taking null | 'no' | 'yes' | 'queue' | 'low' (it carries the conflicting report's status, not a flag), while /api/comments.conflict is boolean true | null. Reading the former with a truthiness test silently demotes every station whose conflict value is the string 'no'. Proposal 1 types this correctly as string | null.",
+      "required_change": "Pin which endpoint supplies conflict, type it per endpoint (string enum for /api/stations, boolean for /api/comments), and add a fixture test covering the string 'no' case."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "identity / duplicates",
+      "description": "The usr_* class is now correctly labeled and excluded from the persisted map, but 37 of 208 rows are user-submitted points that plausibly duplicate real OSM stations within gdebenz, and Stage 1 forbids intra-source merging outright, so one forecourt can render as two rows from a single source. Separately, 58 rows carry brand: null and 16 carry no address, and Stage 2 condition 3 requires either a brand match or street-token Jaccard >= 0.5, so those rows can never merge with Yandex either.",
+      "required_change": "Permit a narrow intra-source exception for usr_* rows against OSM rows under the same 150 m + brand-conflict rules, and have the renderer flag suspected duplicates so two rows are not read as two stations."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "fmask self-check trigger",
+      "description": "The per-run cross-validation is empirically sound - I measured 30/30 exact agreement between decoded fmask and fuels_now on every informative row, so my concern about a false-positive demotion every run is not realized today. But 'on any mismatch, drop gdebenz to grade-blind registry for that run' is a hair-trigger: one row containing a token outside csvNames (a future ГАЗ, say) disables grade evidence city-wide.",
+      "required_change": "Make the check per-row (discard grade claims for the mismatching row) and demote the whole source only above a mismatch-rate threshold; log the validated sample size, since only about 30 of 118 rows are informative enough to validate."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "unread feature flag / expectation setting",
+      "description": "GET /api/cfg returns {\"live\": false, ...} - a feature flag neither proposal reads, which may gate the live-status semantics the whole design rests on. Separately, the '2-3x coverage' framing overstates gdebenz's contribution to the default watch target: only 13 of 208 stations carry explicit 95 evidence and zero carry any premium-95 concept, so gdebenz contributes no direct evidence to AI95_PREMIUM at all.",
+      "required_change": "Read /api/cfg at startup and surface it in source health; state in SKILL.md that gdebenz is primarily a registry/gazetteer plus a plain-AI-95 corroborator, and that premium-95 verdicts are single-source by construction."
+    }
+  ],
+  "assumptions": [
+    "I re-verified all source behaviour by read-only GET this session rather than asking; measurements above are from 2026-08-30.",
+    "I assumed 'stop on a short page' means a page returning fewer than pageSize items, which is what makes the page-4 truncation fire.",
+    "I assumed conflict would be read from /api/stations unless the design says otherwise, since that is where the station rows come from.",
+    "I treated the /api/cfg 'live: false' flag as an unresolved unknown rather than assuming a specific meaning.",
+    "I judged confidence-before-queue in the lexicographic comparator as acceptable, reading confidence as part of 'the probability that suitable fuel is actually available' rather than as a criterion inserted between the two stated ones."
+  ],
+  "round": 2,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

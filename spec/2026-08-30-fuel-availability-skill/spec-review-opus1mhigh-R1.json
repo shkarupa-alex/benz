@@ -1,0 +1,160 @@
+{
+  "target_id": "spec-review",
+  "approval_score": 6,
+  "would_adopt": false,
+  "summary": "Architecturally sound and epistemically unusually careful — the separation of fetch time from observation time, categorical verdicts instead of fake probabilities, refusal to treat Yandex and gdebenz as independent, lexicographic ranking, conservative identity policy, and the ephemeral-browser cleanup discipline all survived deliberate attack, and I verified against the installed agent-browser 0.35.1 that the assumed CLI surface (--namespace, --idle-timeout, session list --json, eval, close --all) genuinely exists. But the document claims to be the implementation source of truth and is not yet one: the central adapter return type SourceResult is never defined, the 'finite and exhaustively tested' verdict/confidence table is absent, identity matching has no numeric thresholds, the config.json/config.schema.json it references have no content, the ledger-adopted per-source capability matrix appears nowhere in the body, and the 500 m hull buffer, Yandex URL/pagination scheme, timestamp/timezone parsing, 502 detection and eval output limits are all left to the implementer. Two issues are design-level rather than documentation-level: the user's top-ranked TRANSACTIONS_RESUMED heuristic requires an event timeline that the only working source (lastSignalTimestamp + signalsCountPerHour, possibly station-level rather than grade-scoped) apparently does not expose and that 15-minute sampling cannot reconstruct, and the monitoring loop's 'check for user input between 50-second chunks' has no implementable mechanism, which also puts the guaranteed-cleanup promise at risk. Close those and this is an 8+.",
+  "phase": "spec-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "Activity heuristic / ranking",
+      "description": "TRANSACTIONS_RESUMED is ranking criterion #1 and the user's strongest stated signal, but it is defined as '>=2 new events within 20 minutes after a >=60-minute gap' over ActivityEvidence.eventTimes[], while the only empirically working source exposes one lastSignalTimestamp plus a rolling signalsCountPerHour. Two events in a 20-minute window cannot be reconstructed from 15-minute sampling, and if signalsCountPerHour is station-level the spec's own grade-blind rule disqualifies it from proving AI-95. Result: criterion #1 silently never fires, ranking collapses to criteria 2-5, and the feature the user cared most about ships inert.",
+      "required_change": "Define the exact derivation of precedingGapMinutes and resumption from the fields actually observed (lastSignalTimestamp delta, signalsCountPerHour delta) with a stated inequality; state explicitly whether the source's activity data is grade-scoped and what the heuristic degrades to when it is not; state that cold on-demand runs cannot claim resumption; add a test that fails loudly when the grade-scoped activity field disappears."
+    },
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "Monitoring lifecycle",
+      "description": "'Wait in foreground chunks <=50s, checking for new user input or a stop request between chunks' specifies no mechanism. An agent mid-turn has no API to poll queued user messages; if the real mechanism is harness interruption, the chunking buys nothing and the top-level finally cleanup may not run on interrupt - producing exactly the orphaned browser the user forbade. There is also no bound on monitoring duration and no handling of context exhaustion/compaction during an open-ended loop.",
+      "required_change": "Specify a concrete, testable stop path: a sentinel file (e.g. <runtimeDir>/STOP) written by the user or by SKILL.md instructions and checked at every chunk boundary, plus harness interrupt as a secondary path; specify what cleanup runs on each path; state behaviour on context compaction (state file survives, loop re-entry procedure) and whether any maximum tick count applies."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Contracts / data model",
+      "description": "SourceAdapter.collect returns Promise<SourceResult> and SourceResult is never defined; CollectorRequest, CollectContext, ReadyCondition, BrowserSnapshot and BrowserSession are likewise undefined. The snapshot file written by collect.mjs, the monitoring state file, and the CLI contracts (flags, stdout shape, exit codes) of collect.mjs/report.mjs/resolve-area.mjs have no schemas. Parallel implementers will produce incompatible shapes.",
+      "required_change": "Add full type definitions for every referenced interface, a JSON schema (or TS type) for the snapshot and monitoring state files, and an explicit CLI contract table for the three entry scripts including exit codes for OK / PARTIAL / degraded / cleanup-failed."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Verdict engine",
+      "description": "The spec asserts 'the full verdict/confidence table is finite and exhaustively tested' but the table is absent. The prose rules do not determine outputs for mixed cases (e.g. fresh direct LIMITED plus recent family-only IN_STOCK from a dependent provenance group), and terms like 'a configured strong signal count' and 'meaningfully independent' are undefined.",
+      "required_change": "Enumerate the verdict x confidence table as an explicit decision table over (evidence directness, status, freshness band, source count, independence group, conflict window), define the strong-signal threshold and the independence-group config format, and define how a BOUNDED_AGE range straddling two freshness bands is classified (recommend: use maxMinutes)."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Station identity",
+      "description": "Matching is described only qualitatively: 'geographic distance plus normalized brand/name/address', 'one-to-one assignment', 'a clear margin over the second-best candidate', 'highest match-confidence tier'. No distance ceiling, string metric or similarity threshold, margin value, tier definitions, or assignment algorithm is given - in the very area the user flagged as dangerous (distinct stations 50-100 m apart).",
+      "required_change": "Specify the distance ceiling, the normalization pipeline and string-similarity metric with a numeric threshold, the numeric second-best margin, the definition of each match-confidence tier, and the assignment algorithm (greedy vs optimal), with fixture tests covering two real stations 60 m apart under different brands and under the same brand."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Traceability / capability matrix",
+      "description": "The Decision Ledger marks 'Add per-source capability matrix and completeness invariants' as adopted, but only the completeness invariants appear in the body. No capability matrix exists, yet the grade-blind evidence rules, the zero-weight rule for static catalogue data, queue-kind handling and activity terminology all depend on it.",
+      "required_change": "Add a per-source capability matrix (products representable, status vocabulary, timestamp kind/precision, queue kind, activity terminology, grade-scoping yes/no, expected coverage) and reference it from the verdict and ranking sections."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Configuration",
+      "description": "config/config.json and config/config.schema.json are architectural components with no specified content. Thresholds are scattered through prose (45/180/360 min, 60-min gap, 2 events/20 min, 30-min conflict window, two-tick confirmation, four-tick degraded summary, default AI-95 variant aliases, per-source enablement, independence groups, reference point) with no key names, types, or defaults, and no default enablement per source is stated despite every source having a kill switch.",
+      "required_change": "Include a complete example config.json with every key referenced anywhere in the spec plus its default value, and a field-by-field description that config.schema.json must enforce; state the V1 default enabled/disabled status of each of the three sources."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Geometry",
+      "description": "'Convex hull expanded outward by 500 metres' has no algorithm. At 48.72N, 500 m is 0.00449 deg latitude but 0.00682 deg longitude; radial vertex offset from the centroid is not a 500 m buffer and yields different corner inclusion than a Minkowski sum. 'Implausibly large areas' has no numeric threshold. The two supplied interior control points and the eight hull vertices are not wired into the test plan.",
+      "required_change": "Pin the buffering algorithm (project to local ENU metres at a stated origin, Minkowski-sum with an N-segment circle with N specified, reproject, boundary-inclusive ray casting), give a numeric maximum area, and name Angarskaya 8A, Rokossovskogo 4B, the three interior anchors and the eight hull vertices as required geometry fixtures."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Browser transport details",
+      "description": "Three concrete transport gaps: (1) --idle-timeout 10s risks killing the daemon mid-run whenever the gap between CLI invocations exceeds 10 s, surfacing as spurious source failure; (2) agent-browser open exposes no HTTP status and no --timeout, so the required 502 detection and per-source timeouts have no defined mechanism, and shell 'timeout' is unavailable on macOS; (3) --max-output truncation of a large eval payload is not addressed, so TRUNCATED/BODY_TOO_LARGE have no detection rule and a clipped station list could be parsed as complete data.",
+      "required_change": "Raise the idle timeout above the maximum expected inter-command gap (or justify 10 s with a measured bound) and rely on explicit close; define 502/HTTP-status detection (page-text heuristic and/or network requests inspection); mandate Node child_process timeouts rather than shell timeout, with per-source and per-run numeric budgets; define eval payload chunking, an explicit size cap, and a sentinel-based truncation check."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Cleanup / orphan handling",
+      "description": "Namespaces are unique per run (fuel-watch-<runId>), so 'close orphaned sessions in its own namespace' can never find cross-run orphans, and there is no defined registry or enumeration mechanism for previously owned namespaces, nor a TTL for stale runtime directories after a hard kill.",
+      "required_change": "Add an owned-namespace registry file in the runtime dir, cleaned on start and stop, plus a stale-runtime-dir TTL sweep at start; state explicitly that the 10 s daemon idle timeout is the backstop for hard kills."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Time handling",
+      "description": "Every verdict derives from now minus lastSignalTimestamp, yet the timestamp format contract (epoch seconds vs milliseconds vs offset-bearing string), the report display timezone, and the rule for ambiguous or offset-less timestamps are unspecified. Volgograd's UTC+4/UTC+3 history makes naive local parsing a real correctness hazard.",
+      "required_change": "State the accepted timestamp formats per source, mandate conversion to epoch UTC with explicit rejection (ObservationTime UNKNOWN) of offset-less values, state the report display timezone, and add parsing fixtures including an offset-less and a millisecond-epoch case."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Scope / YAGNI",
+      "description": "Empirically 2GIS CAPTCHAs (yielding only zero-weight static catalogue data) and gdebenz 502s, so V1 is effectively single-source, yet the spec funds cross-source identity matching, one-to-one assignment, independence groups and multi-source confidence boosting that cannot be exercised or validated on day one - while re-triggering the 2GIS challenge every 15 minutes for no availability value.",
+      "required_change": "Declare a V1a slice (Yandex adapter plus full verdict/ranking/monitoring/cleanup machinery, other adapters implemented against the interface but default-disabled), and state the cross-source machinery is validated by fixtures until a second source proves usable."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Area resolution dependency",
+      "description": "Anchor geocoding was performed via browser-mediated Nominatim, and resolve-area.mjs is said to use 'the browser adapters' which may all be blocked or down. The geocoder appears in no architecture diagram, config, kill-switch list, or legal posture, despite Nominatim's usage policy and OSM attribution requirements.",
+      "required_change": "Declare the geocoding dependency explicitly as a fourth, resolve-time-only adapter with its own config entry, rate limit, attribution note and fail-closed behaviour, or specify manual coordinate entry as the supported fallback."
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Reporting noise",
+      "description": "A full report is published every 15 minutes; the compact degraded summary triggers only after four ticks with no fresh grade-specific observation from any source, not when nothing has changed. Open question 3 defers the format, but the default (changes plus top five) should be stated as normative to avoid an implementer shipping full reports."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Duplicates in output",
+      "description": "The conservative identity policy deliberately produces duplicate rows for unmatched records, but the output section never says the report flags suspected duplicates, so the user may read two rows as two stations with independent evidence."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Anti-flap interaction",
+      "description": "The two-tick confirmation rule governs availability-run resets but does not state whether an unconfirmed flip suppresses the station from the primary recommendation list or only from the appearance-time claim."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Ranking criterion 2",
+      "description": "'Number and quality of services currently supporting availability' is a two-dimensional comparison inside a strictly lexicographic ordering with no stated tiebreak between count and quality."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Concurrency",
+      "description": "No lock file or state-dir keying prevents an on-demand run from colliding with an active monitoring session, or two monitoring sessions from sharing a runtime directory."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Test expectations",
+      "description": "'RSS does not trend upward beyond a defined tolerance' and 'implementation must re-verify anchor coordinates' are TBDs outside the Open Questions section; test items are listed as categories rather than assertions with expected values."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "Ledger phrasing",
+      "description": "Two ledger rows state the option rather than the decision ('Use direct HTTP as the primary runtime transport' / 'Use official 2GIS API in V1'), making the Status column read inconsistently against positively-phrased adopted rows."
+    }
+  ],
+  "assumptions": [
+    "I treated the installed agent-browser 0.35.1 CLI on this machine as the target runtime and validated the spec's CLI assumptions against its --help output and a read-only 'session list --json' probe in an unused namespace; I made no network requests to Yandex, 2GIS or gdebenz.",
+    "I assumed signalsCountPerHour and lastSignalTimestamp as described in the task are the complete activity data Yandex exposes, since no event-list field was reported in the empirical observations.",
+    "I assumed 'the active agent checks for user input between wait chunks' has no first-class harness API available, since none is described in the spec or the task.",
+    "I assumed the report is rendered in Russian based on the example row and verdict vocabulary, since no language configuration is specified.",
+    "I did not read any prior council artifacts under spec/**, per instructions; my review is based solely on the task text and the specification quoted above."
+  ],
+  "round": 1,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

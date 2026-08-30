@@ -1,0 +1,130 @@
+{
+  "target_id": "proposal-2",
+  "approval_score": 3,
+  "would_adopt": false,
+  "summary": "Proposal 2 improves explainability and gives 2GIS a more defensible official-API path, but it still violates core requirements and retains several known correctness bugs. Monitoring terminates without user instruction, the default area is invented, waits are too long, Yandex pagination still stops on the demonstrated intermediate short page, multi-product ranking is undefined, unknown queue is assigned an invented rank, and unverified configuration can promote 2GIS to an availability source. It requires substantial redesign before implementation.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "monitoring lifecycle",
+      "description": "Monitoring terminates after fixed budgets or four failed cycles instead of continuing until the user explicitly stops it.",
+      "required_change": "Remove default duration, run-count, and outage termination; continue degraded summaries and retries until explicit stop or unavoidable host/task termination."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "monitor responsiveness",
+      "description": "The proposed wait blocks for up to 240 seconds.",
+      "required_change": "Yield or poll at intervals no longer than 60 seconds and define use of the current task's durable continuation mechanism."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "area configuration",
+      "description": "The design silently substitutes a Volgograd-wide bbox for the missing user-configured acceptable area.",
+      "required_change": "Fail closed until an area is configured; retain the city bounds only as an explicit example."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Yandex pagination",
+      "description": "Stopping on a short page would omit the observed third page after the observed 24-item second page.",
+      "required_change": "Remove short-page termination and stop on validated last-page metadata, empty/repeated pages, zero-new-ID criteria, deadline, or hard cap."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "bounded-time verdicts",
+      "description": "Freshness bands are reduced to one imputed age, allowing approximate evidence to become decisively newer and produce НЕТ.",
+      "required_change": "Retain minimum and maximum ages and apply decisive-newer rules only when interval ordering proves the required conflict-window separation."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "multi-product ranking",
+      "description": "The comparator expects one station verdict, but no aggregation rule exists for the default AI95 plus premium/branded query.",
+      "required_change": "Assess concrete products independently, select the best eligible exact product for the union query, and display that product as the cause of rank."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "queue ordering",
+      "description": "Unknown queue is assigned 1.5 and therefore receives an invented relative position.",
+      "required_change": "Compare queue only when both candidates have fresh comparable queue observations."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "fuel semantics",
+      "description": "Generic AI95 is cloned into premium evidence and absent undocumented fmask grades become OUT_OF_STOCK.",
+      "required_change": "Keep family-only evidence at the family-query level, never project it into premium variants, and treat absent mask grades as unknown without independently verified closed-world semantics."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "2GIS capability",
+      "description": "Configuration can promote an unverified registry adapter to availability, while the adapter itself is deferred to V2.",
+      "required_change": "Implement the key-gated registry adapter in V1 with fixed code-declared capabilities; require validated schemas, freshness semantics, fixtures, and code changes before enabling availability."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "required scope",
+      "description": "Named-anchor resolution and 2GIS integration are deferred while V1 is described as the complete requirement.",
+      "required_change": "Include both capabilities in V1, even if 2GIS normally reports MISSING_CREDENTIAL or unavailable."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "state and diagnostics",
+      "description": "Mutable state and automatic raw-body dumps remain beneath the installed skill.",
+      "required_change": "Move runtime state to a configurable external directory and make sanitized raw-body capture opt-in."
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "credentials",
+      "description": "The 2GIS API key is stored directly in config.local.json.",
+      "required_change": "Prefer an environment-variable name or protected credential store and redact the key from every diagnostic path."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "identity",
+      "description": "Distance-sorted greedy matching is still described more strongly than its one-to-one guarantees justify.",
+      "required_change": "Require reciprocal-best matches or document and test second-choice assignment behavior."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "output semantics",
+      "description": "Phrases such as 'fuel ended' can turn loss of support or freshness into a confirmed stock-out.",
+      "required_change": "Use 'no longer supported by current evidence' unless a fresh direct negative observation caused the transition."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "adapter errors",
+      "description": "The must-never-reject contract can hide programming defects.",
+      "required_change": "Return expected operational failures as data but classify unexpected exceptions at the pipeline boundary."
+    }
+  ],
+  "assumptions": [
+    "A documented 2GIS API key may be unavailable, but the adapter can still exist and report MISSING_CREDENTIAL.",
+    "An adapter capability cannot safely be elevated solely by configuration.",
+    "The original explicit-stop requirement overrides the proposal's preferred monitoring safety budgets."
+  ],
+  "round": 3,
+  "reviewer": "gpt56solhigh",
+  "judge": {
+    "slug": "gpt56solhigh",
+    "model": "gpt-5.6-sol",
+    "route": "codex-sdk",
+    "effort": "high"
+  }
+}

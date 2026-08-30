@@ -1,0 +1,21 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { diffSnapshots } from "../../scripts/lib/diff.mjs";
+import { updateAvailabilityRuns } from "../../scripts/lib/state.mjs";
+
+test("scope change suppresses station diffs", () => {
+  assert.deepEqual(diffSnapshots({areaHash:"a",queryHash:"q",assessments:[]},{areaHash:"b",queryHash:"q",assessments:[]})[0].type, "SCOPE_CHANGED");
+});
+
+test("availability run opens factual transition only after prior negative", () => {
+  const previous = { fetchedAt: "2026-08-30T10:00:00Z", assessments: [{stationKey:"s",verdict:"NOT_AVAILABLE"}] };
+  const runs = updateAvailabilityRuns([], [{stationKey:"s",verdict:"AVAILABLE",confidence:"MEDIUM"}], previous, "2026-08-30T10:15:00Z");
+  assert.equal(runs[0].basis, "OBSERVED_TRANSITION");
+  assert.deepEqual(runs[0].transitionWindow, { after: previous.fetchedAt, atOrBefore: "2026-08-30T10:15:00Z" });
+});
+
+test("one negative tick does not close established run", () => {
+  const old = [{stationKey:"s",productKey:"AI95_UNION",state:"AVAILABLE",firstObservedAt:"2026-08-30T09:00:00Z",lastConfirmedAt:"2026-08-30T10:00:00Z"}];
+  const runs = updateAvailabilityRuns(old, [{stationKey:"s",verdict:"NOT_AVAILABLE",confidence:"MEDIUM"}], {assessments:[]}, "2026-08-30T10:15:00Z");
+  assert.equal(runs[0].state, "AVAILABLE");
+});

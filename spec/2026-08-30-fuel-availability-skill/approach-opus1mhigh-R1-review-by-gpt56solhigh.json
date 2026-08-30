@@ -1,0 +1,102 @@
+{
+  "target_id": "proposal-2",
+  "approval_score": 4,
+  "would_adopt": false,
+  "summary": "Proposal 2 contains valuable source research, especially the gdebenz JSON endpoints, OSM IDs, fmask checks, and Yandex pagination observations, but the proposed system should not be adopted as written. It directly violates the monitoring stopping condition, silently invents a broad default area, contains a pagination algorithm contradicted by its own measurements, permits queue and arbitrary center distance to override availability, and turns reverse-engineered missing fields into potentially unsafe negative or variant-specific evidence.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "monitoring lifecycle",
+      "description": "Monitoring automatically stops after 12 hours, 48 runs, or four consecutive all-source failures, contrary to the requirement to continue until the user asks to stop.",
+      "required_change": "Disable automatic duration, run-count, and outage termination by default; continue publishing degraded health summaries and retry until explicit stop or unavoidable host/task termination."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "area configuration",
+      "description": "The design silently uses a Volgograd-wide bounding box when the user has not configured an acceptable area.",
+      "required_change": "Fail closed until an area is configured; provide the discovered city bounds only as an explicit example the user may choose."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "Yandex pagination",
+      "description": "Stopping on a short page would terminate after the observed 24-item second page and miss the observed third page.",
+      "required_change": "Stop on zero new IDs, an empty or repeated page, or a hard page cap; do not stop after a single short page."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "ranking",
+      "description": "A 25% queue term, a synthetic median score for unknown queues, and distance from an arbitrary area center can reorder stations against the requested availability-first priority.",
+      "required_change": "Use lexicographic availability bands and confidence/freshness, compare queues only among comparable stations with known queue data, and omit distance unless the user configures an origin."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "fuel semantics",
+      "description": "Missing grades in an undocumented fmask become reduced-weight OUT_OF_STOCK evidence, and generic 95 evidence is projected toward premium 95 despite the source lacking variant semantics.",
+      "required_change": "Treat missing or family-only undocumented data as unknown or family-union evidence until closed-world semantics are validated; never use it as variant-specific agreement."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "fuel taxonomy",
+      "description": "AI100 is modeled as premiumOf AI98, which can silently broaden an AI98 request to a distinct octane grade.",
+      "required_change": "Keep AI98 and AI100 as distinct fuel families; model branded variants independently from octane families."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "parser safety",
+      "description": "An unrestricted recursive walk for business nodes can accept unrelated or stale embedded objects, while default raw-body dumps can retain sensitive or personalized response state.",
+      "required_change": "Bound extraction to validated result containers and query geometry; make sanitized debug capture opt-in and store it outside the installed skill."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "runtime state",
+      "description": "Snapshots, identity maps, debug bodies, and watch state are stored beneath the installed skill directory.",
+      "required_change": "Move mutable runtime data to a configurable OS-appropriate state/cache directory and keep the skill directory limited to code, schemas, and user-editable configuration."
+    }
+  ],
+  "non_blocking_findings": [
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "source identity",
+      "description": "Calling gdebenz OSM IDs an identity spine overstates their cross-source authority.",
+      "required_change": "Use OSM IDs as preferred canonical keys when present while retaining explicit conservative cross-source matching semantics."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "error handling",
+      "description": "The adapter must-not-throw contract risks converting programming defects into ordinary source degradation.",
+      "required_change": "Return expected operational failures as data, but classify unexpected defects at the pipeline boundary with visible internal-error diagnostics."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "2GIS",
+      "description": "Disabling 2GIS by default weakens the claim that all requested sources are supported.",
+      "required_change": "Keep a genuine best-effort adapter and visible health state, potentially polling it less frequently because it is registry-only."
+    }
+  ],
+  "assumptions": [
+    "The proposal's live observations are accurate for 2026-08-30 but do not establish stable upstream contracts.",
+    "The semantics of missing fmask bits and fresh_band values remain unverified.",
+    "The user-configured area is authoritative and must not be replaced by a larger inferred boundary."
+  ],
+  "round": 1,
+  "reviewer": "gpt56solhigh",
+  "judge": {
+    "slug": "gpt56solhigh",
+    "model": "gpt-5.6-sol",
+    "route": "codex-sdk",
+    "effort": "high"
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "target_id": "proposal-2",
+  "approval_score": 7,
+  "would_adopt": true,
+  "summary": "Materially the stronger proposal: I independently reproduced essentially every empirical claim it makes (Yandex 200/676 KB with 25/25 businesses carrying per-grade fuelAvailability and oids; gdebenz /api/stations 200 with 208 stations; /api/comments 116 rows with fmask distribution consistent with the [92,95,98,100,DT] bit order; 2GIS hostile), and its source-role inversion, never-throwing adapter contract, EMPTY_RESULT vs PARSE_SHAPE_CHANGED distinction, GET/HEAD-only allowlist, and agent-driven blocking-wait loop are all correct and well-motivated. But I broke it in three concrete places: the identity matcher's arithmetic makes the 0.72 threshold unreachable beyond ~56 m even with a perfect brand+address match (and effectively impossible for the 58/208 gdebenz rows with null brand, a case the spec never defines), which destroys the cross-source corroboration its confidence formula depends on; the linear rank blend lets a station with 16 points lower availability win on queue alone, contradicting the stated ranking requirement; and the undeclared distance-from-center penalty reaches -0.25 across Volgograd, dominating both queue and availability. Also: 37 of 208 osm_ids are usr_* pseudo-stations, not stable OSM ids, so the 'identity spine' will emit duplicates that Stage-1 rules forbid merging.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "station identity matching",
+      "description": "matchScore = 0.60*geoScore + 0.25*brandScore + 0.15*addrScore with geoScore = max(0, 1 - d/120) and accept at >= 0.72 is unreachable in practice. Perfect brand AND perfect address gives a fixed 0.40, requiring geoScore >= 0.533, i.e. d <= 56 m. Alias brand + perfect address requires d <= 46 m. With brand null (58 of 208 gdebenz rows; the spec defines brandScore only for exact/alias/conflicting and never for null) a 0 score requires d <= 6 m. The advertised 250 m hard reject is dead code. Yandex-vs-OSM forecourt coordinates routinely differ by 30-80 m, so Yandex and gdebenz will systematically fail to merge, every station degrades to single-source, and confidence (defined as agreement) collapses city-wide.",
+      "required_change": "Re-derive thresholds with a worked (distance, brand, address) -> accept/reject table. Suggested: geoScore = max(0, 1 - d/300) with the 250 m hard reject actually binding; brandScore 0.5 for null/unknown; keep 'conflicting brand => hard reject' as a separate boolean gate rather than encoding it as score 0."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "ranking",
+      "description": "rank = 0.75*(p*(0.5+0.5*conf)) + 0.25*queueScore - 0.01*distanceKm makes queue a co-equal criterion, not a tiebreak. With the proposal's own constants: A (p=0.76, conf=0.5, queue HIGH) = 0.4775 versus B (p=0.60, conf=0.5, queue NONE) = 0.5875, so B outranks A on queue alone despite 16 points less availability. The task specifies ranking by availability probability and, where data exists, by smallest queue.",
+      "required_change": "Replace the linear blend with banded lexicographic ordering: descending availability band (e.g. 5 pp), then ascending queue score when both queues are fresh and known, then exact probability, then deterministic tie-breaks. Queue must never change the availability estimate or cross a band boundary."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "ranking / undeclared criterion",
+      "description": "distancePenaltyPerKm 0.01 against distance-from-bbox-center is not requested anywhere in the task and dominates the model: Volgograd is ~60 km end to end, so a 25 km station takes -0.25, exceeding the entire queue range. It also actively fights the anchor mode - if the user names the outermost acceptable stations, those explicitly acceptable stations receive the maximum penalty.",
+      "required_change": "Remove the distance penalty from rankScore. If proximity matters, expose it as an explicit opt-in filter or a separately displayed column, not a hidden ranking term."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "gdebenz identity spine",
+      "description": "Verified: of 208 stations, 37 carry usr_* ids (user-submitted pseudo-stations, e.g. usr_m5K5ULWxY7Y) and 13 carry w* OSM way ids alongside bare node ids. stationKey 'osm:<id>' as the primary spine therefore treats a user-created duplicate of a real forecourt as a distinct station, and Stage 1 explicitly forbids fuzzy-merging within a source, so nothing will ever reconcile them.",
+      "required_change": "Use a synthetic stationKey with osm_id and Yandex oid as attributes in a persisted crosswalk; allow intra-source merging specifically for usr_* rows against OSM rows, and record the id namespace (node/way/user) explicitly."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "gdebenz evidence quality / self-check",
+      "description": "Verified: fmask == 0 on 87 of 116 comment rows (75%), status == null on 83 of 208 stations, and the sampled status:'yes' station had fuels_now:'' with fmask:0. So gdebenz grade-level evidence exists for a small minority, and the advertised 'cross-validate decoded fmask against fuels_now on every run' self-check is vacuous on most rows (both empty). A silent bit rotation would be caught only by ~29 rows. Additionally, the conflict field is typed differently across endpoints - strings 'yes'/'no' in /api/stations versus boolean true/null in /api/comments - so the declared conflict?: boolean will mark every station conflicted via truthiness on the string 'no'.",
+      "required_change": "Report the fmask cross-validation sample size in diagnostics and downgrade gdebenz grade weight when it falls below a floor; normalize the conflict field per endpoint with explicit parsing and a fixture test for the 'no' string case."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "scoring priors",
+      "description": "statusPrior.UNKNOWN = 0.35 encodes 'we have no information' as mild evidence of absence, with no stated justification. Combined with verdictThresholds this pushes genuinely-unknown stations toward 'unlikely', implying negative knowledge the data does not support - the exact failure mode the confidence/freshness requirement exists to prevent. Separately, fresh_band direction (3 = freshest) remains unverified and band 1 does occur (8 of 116 rows), so an inverted mapping would make stale data look fresh.",
+      "required_change": "Set UNKNOWN to a neutral 0.5 (or exclude it from the weighted blend entirely while letting it show in evidence[]). Until fresh_band direction is empirically calibrated against co-located Yandex lastSignalTimestamp values, collapse all bands to one low-precision class rather than assuming an ordering."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "lifecycle robustness / scope",
+      "description": "watch.mjs wait blocks up to 15 minutes, which may exceed the host tool-call timeout; stderr heartbeats do not reset every harness's timer. Separately, 2GIS ships enabled:false - the reasoning is sound and I agree on the merits, but the task explicitly names it as a requested source, so this is a scope reduction requiring the user's assent rather than a default. Minor gaps: canonical grade GAS has no entry in either sourceMap (permanent silent 'unknown'); render output language is hardcoded Russian with no config key; state/ lives inside the skill directory so a reinstall wipes the identity map and snapshot history.",
+      "required_change": "Add --max-block-seconds with a distinct 'not yet due' exit code so the agent re-polls under host timeouts; surface the 2GIS disable decision as an explicit approval item; drop GAS from canonical or map it; expose render language in config; move state/ outside the skill directory or document the reinstall consequence."
+    }
+  ],
+  "assumptions": [
+    "I independently re-ran the source probes rather than trusting the proposal's report; all numbers I cite are from my own read-only GETs on 2026-08-30.",
+    "I assumed 'rank by probability and, where data exists, by smallest queue' means probability is primary and queue is a tiebreak, which is what makes the linear blend a requirement violation.",
+    "I assumed cross-source coordinate discrepancies of 30-80 m between Yandex and OSM are typical for petrol stations, which is what makes the 56 m effective matching cutoff a blocking defect.",
+    "I did not verify the fresh_band ordering or the exact meaning of prices_now.n, and treated both as uncalibrated."
+  ],
+  "round": 1,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

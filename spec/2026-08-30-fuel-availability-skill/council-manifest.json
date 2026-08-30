@@ -1,0 +1,375 @@
+{
+  "schemaVersion": 1,
+  "runId": "71e8bb50-2375-4fe6-89b2-fec8972a5fcb",
+  "projectRoot": "/Users/alex/Develop/benz",
+  "datedTaskSlug": "2026-08-30-fuel-availability-skill",
+  "judges": [
+    {
+      "slug": "gpt56solhigh",
+      "model": "gpt-5.6-sol",
+      "route": "codex-sdk",
+      "effort": "high"
+    },
+    {
+      "slug": "opus1mhigh",
+      "model": "opus[1m]",
+      "route": "claude-agent-sdk",
+      "effort": "high"
+    }
+  ],
+  "createdAt": "2026-08-30T12:16:51.261Z",
+  "finalizedAt": "2026-08-30T15:35:26.906Z",
+  "fileCount": 70,
+  "files": [
+    {
+      "path": "2026-08-30-fuel-availability-skill-council-brainstorm.md",
+      "size": 48973,
+      "sha256": "c367cae5f8e85caca5174e992bc704b4ff332dada86c33c672ce45ea739e45c4"
+    },
+    {
+      "path": "approach-gpt56solhigh-R0-proposal.md",
+      "size": 31632,
+      "sha256": "2179aa5c678b0d51cd7be195ad4c3140354d56d8d68ebf0be5cebb417e5f32da"
+    },
+    {
+      "path": "approach-gpt56solhigh-R1-proposal.md",
+      "size": 41342,
+      "sha256": "13c9f1c851bed4827e6077c39c133505ce127d892ca1eef99ba5fda306f4b283"
+    },
+    {
+      "path": "approach-gpt56solhigh-R1-review-by-gpt56solhigh.json",
+      "size": 3540,
+      "sha256": "d269a7522222be396313155874e3a1551ef498e26d51710b613f0f42f540ef3b"
+    },
+    {
+      "path": "approach-gpt56solhigh-R1-review-by-gpt56solhigh.md",
+      "size": 15573,
+      "sha256": "a74a6689ede79bf61375b9306f18fff6c783784340e14691d9d84eb60c21bcc1"
+    },
+    {
+      "path": "approach-gpt56solhigh-R1-review-by-opus1mhigh.json",
+      "size": 5468,
+      "sha256": "a85ac177e3e85162b696b680760e06fdabcb779d19118da032a882c46537cc77"
+    },
+    {
+      "path": "approach-gpt56solhigh-R1-review-by-opus1mhigh.md",
+      "size": 25561,
+      "sha256": "456f638c8dfcc1c61c9005e98e57ef3c34265bee9305c43ae2d04b67fc96039b"
+    },
+    {
+      "path": "approach-gpt56solhigh-R2-proposal.md",
+      "size": 42194,
+      "sha256": "b961afce3cb235074ac7377767270e4e78df46c7719df16f3ecf53395dee611e"
+    },
+    {
+      "path": "approach-gpt56solhigh-R2-review-by-gpt56solhigh.json",
+      "size": 3819,
+      "sha256": "042f8c88aff20071465729de450dcc03a29f14583bec72384b249fe9435589b3"
+    },
+    {
+      "path": "approach-gpt56solhigh-R2-review-by-gpt56solhigh.md",
+      "size": 16902,
+      "sha256": "6efae160e998a1ffb0ae27c0c53f5b6e642c180cf306cfe02bd4521dda886bc2"
+    },
+    {
+      "path": "approach-gpt56solhigh-R2-review-by-opus1mhigh.json",
+      "size": 7887,
+      "sha256": "4d94c7843ffde8b4bfc7e9bc9a5dffc27dd931ec7d924719cf102d264a0a8d66"
+    },
+    {
+      "path": "approach-gpt56solhigh-R2-review-by-opus1mhigh.md",
+      "size": 29743,
+      "sha256": "3f75773afda3b9d2c4b56023ca3f09f0d94c039299604215bcb96023ce9e6478"
+    },
+    {
+      "path": "approach-gpt56solhigh-R3-review-by-gpt56solhigh.json",
+      "size": 3888,
+      "sha256": "0352290e159334ae0fec315f0876fc1289c270f5504759808d6ebddc71a09988"
+    },
+    {
+      "path": "approach-gpt56solhigh-R3-review-by-gpt56solhigh.md",
+      "size": 15448,
+      "sha256": "4534dffc3521debddb6024d30cc1cebaa29dafedc88b4485e0ded87cd644f163"
+    },
+    {
+      "path": "approach-gpt56solhigh-R3-review-by-opus1mhigh.json",
+      "size": 7108,
+      "sha256": "e7722801dd358a940d9f2de90ea321825790cd4be0cdabb253f399af228805e2"
+    },
+    {
+      "path": "approach-gpt56solhigh-R3-review-by-opus1mhigh.md",
+      "size": 26554,
+      "sha256": "8a922f346bf0d0b824d8cdd44d266d6ed05a2577bf36209c692f547fc368056c"
+    },
+    {
+      "path": "approach-opus1mhigh-R0-proposal.md",
+      "size": 34573,
+      "sha256": "c46f1891324ac6ef3b29448b6a787716f5835f1e9c48eab8ee94819eb4e97844"
+    },
+    {
+      "path": "approach-opus1mhigh-R1-proposal.md",
+      "size": 40791,
+      "sha256": "8982fefbe683250f7666214677a6e52eee265503354cea04fd1343cf0389c57e"
+    },
+    {
+      "path": "approach-opus1mhigh-R1-review-by-gpt56solhigh.json",
+      "size": 5792,
+      "sha256": "f48dd5b80a7fd718cab6c6014b3350974cc129956aa8842b5483d0e6e9819e79"
+    },
+    {
+      "path": "approach-opus1mhigh-R1-review-by-gpt56solhigh.md",
+      "size": 17965,
+      "sha256": "796b462e53b7087c497c7edb77ad39eef0c6d4e572fc40955d76904ce5e7b738"
+    },
+    {
+      "path": "approach-opus1mhigh-R1-review-by-opus1mhigh.json",
+      "size": 8924,
+      "sha256": "f6c7bb2f7607533e4922e356ba72f5254f378f4e3d224bbc37669ba73b2dc756"
+    },
+    {
+      "path": "approach-opus1mhigh-R1-review-by-opus1mhigh.md",
+      "size": 29076,
+      "sha256": "1f6d18fedb55abe3f882413ca7596048dd6fb15ab0b9f20b484817df9925bb22"
+    },
+    {
+      "path": "approach-opus1mhigh-R2-proposal.md",
+      "size": 45247,
+      "sha256": "e75a5a1ed9a01ef5480880ba79b85074dec245137257a12364db985ac6938ca4"
+    },
+    {
+      "path": "approach-opus1mhigh-R2-review-by-gpt56solhigh.json",
+      "size": 6899,
+      "sha256": "38a383fb1b48bd25375608ac938098491dca60c8c98c6cc5545f879415726f27"
+    },
+    {
+      "path": "approach-opus1mhigh-R2-review-by-gpt56solhigh.md",
+      "size": 20206,
+      "sha256": "a65a6b0f3e314ac6129fb9d2ba49e32d8abf38bf7133f40f17d6c4e869923489"
+    },
+    {
+      "path": "approach-opus1mhigh-R2-review-by-opus1mhigh.json",
+      "size": 9867,
+      "sha256": "1af748ec1eb25d8adda5606c58e5627135a50628180741ce943972a37571d91b"
+    },
+    {
+      "path": "approach-opus1mhigh-R2-review-by-opus1mhigh.md",
+      "size": 31782,
+      "sha256": "f725d739172b6643751ece4f27d43ac084f18bb765987e8a48e5965f50ee3a9f"
+    },
+    {
+      "path": "approach-opus1mhigh-R3-review-by-gpt56solhigh.json",
+      "size": 6689,
+      "sha256": "45eec005c7bf7fbc065c6683eaa5a57add95a5e3b462c2757fb1ea80fdb984d3"
+    },
+    {
+      "path": "approach-opus1mhigh-R3-review-by-gpt56solhigh.md",
+      "size": 18473,
+      "sha256": "9a7cbba63574823f4cbe4ec09447ab878eccab250cfbe226490c69c92f794934"
+    },
+    {
+      "path": "approach-opus1mhigh-R3-review-by-opus1mhigh.json",
+      "size": 9810,
+      "sha256": "62cb670210fc08f0eafe696bcd8ba2043203cfe32bf309be1749ae34053033b9"
+    },
+    {
+      "path": "approach-opus1mhigh-R3-review-by-opus1mhigh.md",
+      "size": 29315,
+      "sha256": "900c61c7ebdb72ebf126b3ab8f742c211e62afec0d40032f509ce99950299633"
+    },
+    {
+      "path": "council-checkpoint.json",
+      "size": 76613,
+      "sha256": "de413b5d3e86ab19d5f65688cb1e8584f4d6fac66f53f0a3c98eb69dd2181e17"
+    },
+    {
+      "path": "council-daemon.log",
+      "size": 5849,
+      "sha256": "09f51caa4bf05ce580f422d3b71f59fda31d7007ddf0f3a59b4679862fc205f9"
+    },
+    {
+      "path": "council-events.log",
+      "size": 5849,
+      "sha256": "09f51caa4bf05ce580f422d3b71f59fda31d7007ddf0f3a59b4679862fc205f9"
+    },
+    {
+      "path": "council-report.md",
+      "size": 130135,
+      "sha256": "fa521de909930bab0991243f17dc48ddca0b6ca8f6ccd9431d10985617c72b8c"
+    },
+    {
+      "path": "health-gpt56solhigh.json",
+      "size": 94,
+      "sha256": "cd9a4fb7c4629a40ac0eaf5de4880d9a8d9ba6da9b3731a08b3deb3fba38823b"
+    },
+    {
+      "path": "health-gpt56solhigh.md",
+      "size": 77,
+      "sha256": "9bf2ca3bc9df05b7ba413f142894b0b485f2549a40f9168d5eeb1fc07fe37524"
+    },
+    {
+      "path": "health-opus1mhigh.json",
+      "size": 99,
+      "sha256": "2abdf31bbcd08911ab285c06e5b7487562848fe667f34b9fa0a99e5e479fb24c"
+    },
+    {
+      "path": "health-opus1mhigh.md",
+      "size": 82,
+      "sha256": "1d958aaff0aec7c398d3cb014c1a0aa65cd3688ca7b7c955ece2fb43a98758e6"
+    },
+    {
+      "path": "premortem-gpt56solhigh.md",
+      "size": 5118,
+      "sha256": "335a4c2362e7ba1fb3162b8b3da03f6e83bf49db135f39e5acc259b42448b4e4"
+    },
+    {
+      "path": "premortem-opus1mhigh.md",
+      "size": 12595,
+      "sha256": "e3bfbb0fd3b5beae5649a75179437f9fa830ca275e8ed58aecb2e2e2b47223b9"
+    },
+    {
+      "path": "sessions/author_gpt56solhigh.jsonl",
+      "size": 203783,
+      "sha256": "1f3751d8adbe8ce3d68cbb5b51389a6ce29c7ff78ce7b0c2b9e47fdcdf670e53"
+    },
+    {
+      "path": "sessions/author_opus1mhigh.jsonl",
+      "size": 209171,
+      "sha256": "04057b87b8ccddc7a8287da0d14a19ca4f15fee010c13c46027f47a06df51e8d"
+    },
+    {
+      "path": "sessions/health_gpt56solhigh.jsonl",
+      "size": 105,
+      "sha256": "291c02fd3449c0725651e1a6812467ecafa262eb923cf3a05d45e00ddfe7bdf6"
+    },
+    {
+      "path": "sessions/health_opus1mhigh.jsonl",
+      "size": 105,
+      "sha256": "69424ce28ad41e9af416fb53473457297835601a3f009e0a1046db2cf79b00f7"
+    },
+    {
+      "path": "sessions/premortem_gpt56solhigh.jsonl",
+      "size": 29145,
+      "sha256": "d2a28a5fac219311e27ecc337ba62a9a2faa7572dfed3cb0f290ddc99ffe1ee3"
+    },
+    {
+      "path": "sessions/premortem_opus1mhigh.jsonl",
+      "size": 36698,
+      "sha256": "432403dd1b96c31c244f02c39d638079494aacb9a37532406616ae7405013cff"
+    },
+    {
+      "path": "sessions/reviewer_gpt56solhigh.jsonl",
+      "size": 327552,
+      "sha256": "d131908a18d287518f8b5ff2dd39a1750d69f1b686bd291c7bf8257f67bd69e6"
+    },
+    {
+      "path": "sessions/reviewer_opus1mhigh.jsonl",
+      "size": 370587,
+      "sha256": "833a6902e45509ac501eff65a0f60c2b0a553b206d8782e90a3d873839f6cbd4"
+    },
+    {
+      "path": "sessions/spec-author_gpt56solhigh.jsonl",
+      "size": 237220,
+      "sha256": "571e99eeea00f9a3d889c4dd4eb633cb3f91dddf32d92843b4682ba8f1193c55"
+    },
+    {
+      "path": "sessions/spec-reviewer_gpt56solhigh.jsonl",
+      "size": 250913,
+      "sha256": "438fa984f2b55ec69c08eaa7a5c823837b8dcf3174ddf1d5da6bb53b30d5dd0d"
+    },
+    {
+      "path": "sessions/spec-reviewer_opus1mhigh.jsonl",
+      "size": 314602,
+      "sha256": "6239d26aa22adc3c104131ba6384b39c4dcbac8386bdb13577476484208111fd"
+    },
+    {
+      "path": "source-research/2gis.har",
+      "size": 919482,
+      "sha256": "bc1b2b9d13a3f3628c16fc0e51f186a8da7947936ed44680d5e7f1ad39d95239"
+    },
+    {
+      "path": "source-research/gdebenz.har",
+      "size": 6043,
+      "sha256": "6cde9c6656e8533465f39e1f35a850f850248fdf6968b348566dc215789d78c1"
+    },
+    {
+      "path": "source-research/yandex.har",
+      "size": 6089999,
+      "sha256": "f30c1e1b220a5fc88812505db4ff58e7f9915a75e482d989ef60b73aade6a9ca"
+    },
+    {
+      "path": "spec-review-gpt56solhigh-R1.json",
+      "size": 6176,
+      "sha256": "908c361cf863e15a3ce097d4395bd0b24f3b0b9cc3762dffc2f6959862a0b9be"
+    },
+    {
+      "path": "spec-review-gpt56solhigh-R1.md",
+      "size": 18367,
+      "sha256": "6b1ad80dc42d1988f98014a3163f709c738da90675fd387355dc3ed8e969f249"
+    },
+    {
+      "path": "spec-review-gpt56solhigh-R2.json",
+      "size": 6349,
+      "sha256": "acd42ec0c14ed75f3c548539abed11c593c35f91c673ecfeb36193d05af09e90"
+    },
+    {
+      "path": "spec-review-gpt56solhigh-R2.md",
+      "size": 17655,
+      "sha256": "743ed36cd541f1751eb5d623851681d0afd5909820dba6e89aa69f82c5bc848b"
+    },
+    {
+      "path": "spec-review-gpt56solhigh-R3.json",
+      "size": 6262,
+      "sha256": "bb539edaba9f09e99ae575dbd90f78b48b1c1c1317d634e263e1a13b2b38f8b8"
+    },
+    {
+      "path": "spec-review-gpt56solhigh-R3.md",
+      "size": 18700,
+      "sha256": "b3e24b7d51799af03a2c74d09a15060ce4c96e320f24c48422880d72251d7173"
+    },
+    {
+      "path": "spec-review-opus1mhigh-R1.json",
+      "size": 16740,
+      "sha256": "d4007d0a56277aedee715b4f422562754146d61b79f788c3fb08937053407074"
+    },
+    {
+      "path": "spec-review-opus1mhigh-R1.md",
+      "size": 37451,
+      "sha256": "1d0571281cb1d84451c43698019271b5772abfced4d6606e2362d768cd26b637"
+    },
+    {
+      "path": "spec-review-opus1mhigh-R2.json",
+      "size": 16894,
+      "sha256": "1e04cfbff073c2839d8d23c164c582d7b45bef0066a95e2f47e52d5c950cdee4"
+    },
+    {
+      "path": "spec-review-opus1mhigh-R2.md",
+      "size": 40052,
+      "sha256": "66835c47e964d6fb4deab904e649448e13879a77409e2e5ef9eaccdb4a87b82a"
+    },
+    {
+      "path": "spec-review-opus1mhigh-R3.json",
+      "size": 16724,
+      "sha256": "67ab1ffdd46b8d182f402da84ec74dfed64ffb062ea6f1043372e146eb043890"
+    },
+    {
+      "path": "spec-review-opus1mhigh-R3.md",
+      "size": 40885,
+      "sha256": "731a5c5c84e6384bc9ae16b5fac64ce6222f91af0f9b857cab035fee5ad8a9e9"
+    },
+    {
+      "path": "spec-review.md",
+      "size": 73852,
+      "sha256": "d664c7cf10343a70d6eb4d8b6c0534a91708603809a9fd872364f813bba81ff9"
+    },
+    {
+      "path": "synthesis.md",
+      "size": 30672,
+      "sha256": "02fe91380b2c6ff0f29dd18d019c6e3a045a27426dc236a0eda689abb801df65"
+    },
+    {
+      "path": "task-description.md",
+      "size": 4352,
+      "sha256": "e05190b3e573d46e4ef5c2fd72e92bf11ac3909b090139ceeb3314d54e4f25f3"
+    }
+  ]
+}

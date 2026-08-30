@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+node_modules/
+coverage/
+*.tmp
+
+# Browser recordings can contain cookies, authorization headers, and bodies.
+*.har
+
+# Council runtime artifacts and full model transcripts are not source files.
+*.log
+spec/**/sessions/

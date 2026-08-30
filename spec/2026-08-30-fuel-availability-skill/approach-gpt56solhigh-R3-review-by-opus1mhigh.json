@@ -1,0 +1,59 @@
+{
+  "target_id": "proposal-1",
+  "approval_score": 4,
+  "would_adopt": false,
+  "summary": "This round genuinely fixed the pagination critical - and I confirmed the fix is the only viable one, because the Yandex state-view payload advertises no last page and no next-page link at all, so the sequential rules (stop on empty page, stop when every station id was already seen, hard cap) necessarily govern. It also added real safety in timeQuality.unknown = 0 so a gdebenz status without its freshness join contributes nothing, and it correctly types gdebenz conflict as string|null, which the live data vindicates and proposal 2 still gets wrong. But the single blocking finding is unchanged for the third consecutive round: section 12 still specifies a foreground NDJSON child process AND agent waits of no more than 60 seconds AND the agent publishing each snapshot AND the agent sending SIGINT, four mutually exclusive things, still justified by a learn.chatgpt.com /goal link that is not evidence of a Codex primitive. The new MONITORING_HOST_UNSUPPORTED gate improves how monitoring declines to start without specifying how it runs. Add unflagged fresh_band direction, UNKNOWN still inflating coverage, and a 2GIS catalogue subsystem that I re-verified will always hit a 302 /museum interstitial while anchor resolution still depends on it, and one of the two required user-facing modes cannot be built from this document.",
+  "phase": "approach-review",
+  "confidence": "high",
+  "blocking_findings": [
+    {
+      "id": "",
+      "severity": "critical",
+      "area": "monitoring lifecycle",
+      "description": "Unchanged across three rounds. Section 12 simultaneously specifies step 4 'launch one foreground monitor --ndjson child process', step 9 'use waits no longer than 60 seconds so user steering remains responsive', step 10 'publish each snapshot as a complete commentary update', and step 11 'abort current requests; send SIGINT'. If the agent is blocked inside a foreground exec it can do none of steps 9-11. The durable-goal mechanism is still asserted via a ChatGPT consumer documentation link. The newly added host-capability check and exit code 5 govern the decline path only; the happy path remains unimplementable as written.",
+      "required_change": "Rewrite section 12 around a buildable primitive: a non-spawning command that blocks for a bounded interval (<= 240 s), polls a stop sentinel, and exits with a status code so the agent itself loops, collects, and publishes each summary. Remove the unverified durable-goal dependency or demonstrate the primitive exists on the target host."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "gdebenz freshness semantics",
+      "description": "Section 3.2 presents the fresh_band table ('less than one hour' / 'within three hours' / 'today') as source semantics, and section 20 flags fmask as unverified while saying nothing about fresh_band. Nothing observable establishes the ordering. If it is inverted, the design treats the freshest reports as expired and the stalest as current - a silent failure in the unsafe direction, and one that fully determines gdebenz's contribution since band 2 already scores near zero under the 20/90/240 defaults.",
+      "required_change": "Add fresh_band direction to section 20's assumptions, and add the free calibration path: 118 comment rows join cleanly to stations by osm_id and Yandex supplies exact lastSignalTimestamp for co-located stations. Until measured, collapse all bands into one low-precision class rather than assuming an ordering."
+    },
+    {
+      "id": "",
+      "severity": "major",
+      "area": "2GIS dead machinery",
+      "description": "Re-verified this session: https://2gis.ru/volgograd 302-redirects an automated client with a full desktop UA to /museum?return_url=..., so the catalogue adapter will return CHALLENGE on every attempt and the 24-hour cache can never populate. Yet the design still specifies 12-page pagination, concurrency 2, cacheTtlMinutes 1440, monitorRefreshMinutes 360, a 2gis-catalog.json file, six fixture categories, and makes anchor resolution depend on it ('name-only discovery uses Yandex and 2GIS city search'). Note that robots.txt is served (HTTP 200, 1193 bytes) and does NOT disallow the search path for User-agent *, so this is not a policy violation - it simply cannot work.",
+      "required_change": "Reduce 2GIS to a disabled config stub; move anchor resolution entirely onto gdebenz's 208-row registry, which supplies name, brand, addr, lat and lon and needs no key. If 2GIS is wanted, adopt the official key-gated catalog.api.2gis.com Places API path instead of the web surface."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "confidence formula",
+      "description": "Third round unresolved. Section 8 gives UNKNOWN a likelihood of 0.50 (zero logit contribution) while section 9's coverage = 1 - product(1 - independentGroupWeight) still does not exclude zero-information observations. A source explicitly reporting 'no information' with a known fresh timestamp therefore raises confidence without moving the availability estimate - and the rule 'if fuels_now lists only other grades, the requested grade remains UNKNOWN' now generates such observations systematically.",
+      "required_change": "State explicitly that UNKNOWN, and any status whose logit contribution is zero, is excluded from the coverage term."
+    },
+    {
+      "id": "",
+      "severity": "minor",
+      "area": "pagination concurrency",
+      "description": "With maximumPages 16 and concurrency 4, the adapter cannot know page 7 is empty until it issues it. If the wave loop does not re-evaluate termination between waves it issues all 16 pages; if it does, it issues 9 to discover a tail that begins at 7. Measured reality is 130 stations across 6 pages with page 7 empty. Either way this is 1.3-2.3x the necessary request volume against a source the design is explicitly trying not to provoke, and the document never states which behaviour applies.",
+      "required_change": "Specify that termination conditions are evaluated between concurrency waves, and size the wave so the empty-tail discovery costs one extra wave rather than four."
+    }
+  ],
+  "assumptions": [
+    "I re-verified all source behaviour by read-only GET this session rather than asking; measurements are from 2026-08-30.",
+    "I assumed the target host is a Codex skill environment where tool calls are request/response, so an agent blocked in a foreground exec cannot publish intermediate output or send signals.",
+    "I assumed 'advertised last page or next-page link' cannot refer to totalResultCount, since that value is demonstrably unstable; I searched the payload and found no genuine pagination metadata, so the sequential fallback governs.",
+    "I treated /api/cfg 'live: false' as an unresolved unknown rather than assuming a specific meaning."
+  ],
+  "round": 3,
+  "reviewer": "opus1mhigh",
+  "judge": {
+    "slug": "opus1mhigh",
+    "model": "opus[1m]",
+    "route": "claude-agent-sdk",
+    "effort": "high"
+  }
+}

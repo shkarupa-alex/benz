@@ -1,0 +1,56 @@
+import { haversineMeters } from "./geometry.mjs";
+import { sha256 } from "./util.mjs";
+
+export function reconcileStations(stations, config) {
+  const overrides = overrideIndex(config.identity.manualOverrides);
+  const groups = new Map();
+  for (const station of stations) {
+    const member = `${station.source}:${station.sourceStationId ?? ""}`;
+    const manual = overrides.get(member);
+    const key = manual ? `manual:${manual}` : station.sourceStationId ? `source:${station.source}:${station.sourceStationId}` : fallbackKey(station);
+    const existing = groups.get(key);
+    if (existing) existing.members.push(station);
+    else groups.set(key, { stationKey: key, members: [station], matchConfidence: manual ? "MANUAL" : "SOURCE_ID" });
+  }
+  const values = [...groups.values()];
+  for (let i = 0; i < values.length; i++) {
+    for (let j = i + 1; j < values.length; j++) {
+      const a = values[i], b = values[j];
+      if (!a || !b || a.members[0].source === b.members[0].source) continue;
+      const score = matchScore(a.members[0], b.members[0], config.identity.maxCoordinateDriftMeters);
+      if (score >= 0.82 && score - secondBestScore(values, i, j, config) >= config.identity.ambiguityMargin) {
+        const members = [...a.members, ...b.members];
+        const stationKey = `merged:${sha256(members.map(m => `${m.source}:${m.sourceStationId}`).sort()).slice(0, 20)}`;
+        values[i] = { stationKey, members, matchConfidence: "HIGH" };
+        values[j] = null;
+      }
+    }
+  }
+  return values.filter(Boolean).map(group => canonicalize(group, config.ranking.sourcePriority));
+}
+
+function matchScore(a, b, maxMeters) {
+  if (a.brand && b.brand && normalizeText(a.brand) !== normalizeText(b.brand)) return -Infinity;
+  const distance = haversineMeters(a.coordinate, b.coordinate);
+  if (distance > maxMeters) return -Infinity;
+  const addressA = normalizeText(a.address), addressB = normalizeText(b.address);
+  const titleA = normalizeText(a.title), titleB = normalizeText(b.title);
+  const addressScore = tokenSimilarity(addressA, addressB);
+  const titleScore = tokenSimilarity(titleA, titleB);
+  const numberA = addressA.match(/\b\d+[а-яa-z]?\b/u)?.[0], numberB = addressB.match(/\b\d+[а-яa-z]?\b/u)?.[0];
+  if (numberA && numberB && numberA !== numberB) return -Infinity;
+  return 0.45 * (1 - distance / maxMeters) + 0.4 * addressScore + 0.15 * titleScore;
+}
+function secondBestScore(values, ai, bj, config) {
+  const target = values[ai].members[0];
+  return Math.max(0, ...values.map((g, index) => index === ai || index === bj || !g || g.members[0].source === target.source ? -Infinity : matchScore(target, g.members[0], config.identity.maxCoordinateDriftMeters)));
+}
+function canonicalize(group, priority) {
+  const members = [...group.members].sort((a, b) => priority.indexOf(a.source) - priority.indexOf(b.source) || a.source.localeCompare(b.source));
+  const best = members[0];
+  return { stationKey: group.stationKey, title: best.title || best.brand || best.address || "АЗС", brand: best.brand, address: best.address, coordinate: best.coordinate, members, matchConfidence: group.matchConfidence };
+}
+function overrideIndex(overrides) { const out = new Map(); for (const o of overrides) for (const m of o.members) out.set(`${m.source}:${m.sourceStationId}`, o.stationKey); return out; }
+function fallbackKey(s) { return `anon:${sha256(`${normalizeText(s.brand)}|${normalizeText(s.address)}|${s.coordinate.join(",")}`).slice(0, 20)}`; }
+function normalizeText(v) { return String(v ?? "").normalize("NFKC").toLowerCase().replaceAll("ё", "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
+function tokenSimilarity(a, b) { if (!a || !b) return 0; const aa = new Set(a.split(" ")), bb = new Set(b.split(" ")); const common = [...aa].filter(x => bb.has(x)).length; return common / new Set([...aa, ...bb]).size; }

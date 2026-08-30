@@ -1,0 +1,8 @@
+{
+  "fixtureVersion": 1,
+  "redacted": true,
+  "stations": [{ "id": "ya-1", "coordinate": [44.5, 48.7], "title": "Fixture АЗС", "address": "Fixture street, 1" }],
+  "observations": [{ "stationId": "ya-1", "fuel": "АИ-95", "status": "есть", "observedAt": "2026-08-30T10:00:00Z", "signalsPerHour": 5 }],
+  "queues": [{ "stationId": "ya-1", "value": "короткая", "observedAt": "2026-08-30T10:00:00Z" }],
+  "activity": []
+}
