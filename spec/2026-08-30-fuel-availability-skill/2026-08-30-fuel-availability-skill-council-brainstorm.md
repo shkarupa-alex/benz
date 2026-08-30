@@ -551,7 +551,7 @@ Example row:
    источник: Яндекс · статус обновлён 16:15
 ```
 
-Every rendered station address is a Yandex Maps link: use the reconciled `[lon, lat]` as an exact map pin when available and a URL-encoded Volgograd address search only as fallback. This applies to ranked recommendations, forecasts, and changed-station rows. No availability claim is rendered without confidence and freshness information. Repeat-report diffs compare verdict, confidence, and queue transitions, not rank movement or harmless age drift inside the same freshness band.
+Every rendered station address is a Yandex Maps link: use the reconciled `[lon, lat]` as an exact map pin when available and a strict RFC3986-encoded Volgograd address search only as fallback, including percent-encoding parentheses that would otherwise terminate a Markdown destination. This applies to ranked recommendations, forecasts, and changed-station rows. No availability claim is rendered without confidence and freshness information. Repeat-report diffs compare verdict, confidence, and queue transitions, not rank movement or harmless age drift inside the same freshness band.
 
 ## Failure isolation
 

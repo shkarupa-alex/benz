@@ -140,3 +140,13 @@ test("history recovers legacy locks left by a crashed reclaimer process", async 
   await assert.rejects(readFile(`${path}.lock`,"utf8"),error=>error.code==="ENOENT");
   await assert.rejects(readFile(`${path}.lock.reclaim`,"utf8"),error=>error.code==="ENOENT");
 });
+
+test("compromised history lock fails closed without throwing from the heartbeat callback", async () => {
+  const config=await loadConfig();
+  const dir=await mkdtemp(join(tmpdir(),"fuel-history-compromised-test-"));
+  const path=join(dir,"history.json");
+  const lock=async (_path,options)=>{ options.onCompromised(Object.assign(new Error("heartbeat lost ownership"),{code:"ECOMPROMISED"})); return async()=>{ throw Object.assign(new Error("already released"),{code:"ERELEASED"}); }; };
+  const snapshot={fetchedAt:"2026-08-31T00:00:00Z",areaHash:"area",queryHash:"query",assessments:[]};
+  await assert.rejects(recordHistory(path,snapshot,config,{lock}),error=>error.code==="HISTORY_LOCK_COMPROMISED");
+  await assert.rejects(readFile(path,"utf8"),error=>error.code==="ENOENT");
+});

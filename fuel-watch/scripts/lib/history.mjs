@@ -13,8 +13,8 @@ export function defaultHistoryPath(env = process.env) {
   return join(stateRoot, "fuel-watch", "history.json");
 }
 
-export async function recordHistory(path, snapshot, config) {
-  return withHistoryLock(path, async () => {
+export async function recordHistory(path, snapshot, config, { lock = properLockfile.lock } = {}) {
+  return withHistoryLock(path, async assertLockHealthy => {
     const now = new Date(snapshot.fetchedAt);
     if (!Number.isFinite(now.getTime())) throw new Error("snapshot fetchedAt is invalid");
     const retentionDays = config.history.retentionDays;
@@ -28,26 +28,34 @@ export async function recordHistory(path, snapshot, config) {
     ticks.sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt));
     const history = { schemaVersion: 1, retentionDays, updatedAt: ticks.at(-1)?.fetchedAt ?? snapshot.fetchedAt, ticks };
     const forecast = buildForecast(history, snapshot, config);
+    assertLockHealthy();
     await writeJsonAtomic(path, history);
+    assertLockHealthy();
     return { history, forecast };
-  });
+  }, lock);
 }
 
-async function withHistoryLock(path, operation) {
+async function withHistoryLock(path, operation, lock) {
   const lockPath = `${path}.lock`;
   const reclaimPath = `${lockPath}.reclaim`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await recoverLegacyFileLock(reclaimPath);
   await recoverLegacyFileLock(lockPath);
   let release;
+  let compromised;
+  const assertLockHealthy = () => { if (compromised) throw Object.assign(new Error(`History lock was compromised: ${compromised.message ?? compromised}`), { code: "HISTORY_LOCK_COMPROMISED", cause: compromised }); };
   try {
-    release = await properLockfile.lock(path, { realpath: false, stale: 30000, update: 10000, retries: { retries: 250, factor: 1, minTimeout: 20, maxTimeout: 20, randomize: false } });
+    release = await lock(path, { realpath: false, stale: 30000, update: 10000, retries: { retries: 250, factor: 1, minTimeout: 20, maxTimeout: 20, randomize: false }, onCompromised: error => { compromised ??= error; } });
   } catch (error) {
     if (error.code === "ELOCKED") throw Object.assign(new Error(`Timed out waiting for history lock: ${lockPath}`), { code: "HISTORY_LOCK_TIMEOUT", cause: error });
     throw error;
   }
-  try { return await operation(); }
-  finally { await release(); }
+  try { assertLockHealthy(); return await operation(assertLockHealthy); }
+  finally {
+    try { await release(); }
+    catch (error) { if (!compromised || !["ERELEASED", "ENOTACQUIRED"].includes(error.code)) throw error; }
+    finally { assertLockHealthy(); }
+  }
 }
 
 async function recoverLegacyFileLock(path) {

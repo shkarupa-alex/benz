@@ -51,10 +51,11 @@ function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c
 function stationHeading(station) { return `${station.title}${station.address ? ` · [${escapeMarkdown(station.address)}](${yandexMapsUrl(station)})` : ""}`; }
 function yandexMapsUrl(station) {
   const coordinate = Array.isArray(station.coordinate) && station.coordinate.length === 2 && station.coordinate.every(Number.isFinite) ? station.coordinate : undefined;
-  if (coordinate) { const point = `${coordinate[0]},${coordinate[1]}`; return `https://yandex.ru/maps/?ll=${encodeURIComponent(point)}&z=17&pt=${encodeURIComponent(`${point},pm2rdm`)}`; }
-  return `https://yandex.ru/maps/38/volgograd/search/${encodeURIComponent(`${station.address}, Волгоград`)}/`;
+  if (coordinate) { const point = `${coordinate[0]},${coordinate[1]}`; return `https://yandex.ru/maps/?ll=${encodeUrlComponent(point)}&z=17&pt=${encodeUrlComponent(`${point},pm2rdm`)}`; }
+  return `https://yandex.ru/maps/38/volgograd/search/${encodeUrlComponent(`${station.address}, Волгоград`)}/`;
 }
 function escapeMarkdown(value) { return String(value).replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]"); }
+function encodeUrlComponent(value) { return encodeURIComponent(value).replace(/[!'()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`); }
 function formatTime(value) { return new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function freshnessText(observations = []) { const usable = observations.filter(isCurrentPositiveObservation); if (!usable.length) return "возраст неизвестен"; const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0]; const min = Math.round(freshest.ageMinutes); return `${freshest.approximate ? "≈" : ""}${min < 1 ? "только что" : `${min} мин`}`; }
 function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(isCurrentPositiveObservation).map(o => o.source))]; return values.length ? values.join(", ") : "нет свежей текущей поддержки"; }

@@ -41,3 +41,10 @@ test("report always includes the seven-day forecast section with timing and unce
   assert.match(markdown,/per-grade rolling-count бензиновых сигналов/);
   assert.match(markdown,/До трёх прогнозов пока не хватает/);
 });
+
+test("search fallback percent-encodes markdown-significant parentheses", () => {
+  const item={stationKey:"s",title:"АЗС",address:"ул. Мира (у рынка), 5",verdict:"AVAILABLE",confidence:"MEDIUM",observations:[],activity:[],productAssessments:{}};
+  const snapshot={fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",requestedProducts:[],rankedStationKeys:["s"],assessments:[item],sourceHealth:[],warnings:[],changes:[]};
+  const {markdown}=renderReport(snapshot);
+  assert.match(markdown,/\[ул\. Мира \(у рынка\), 5\]\(https:\/\/yandex\.ru\/maps\/38\/volgograd\/search\/[^\s()]*%28[^\s()]*%29[^\s()]*\/\)/);
+});
