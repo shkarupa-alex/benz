@@ -42,7 +42,7 @@ fuel-watch/
     └── live/
 ```
 
-Configuration is intentionally stored beside the scripts, as requested. The skill keeps no long-term monitoring history: an on-demand run leaves no state, while active monitoring keeps only the previous tick and the current availability-run state in a temporary runtime directory. That directory is deleted when monitoring stops. Manual station identity overrides belong in adjacent configuration, not in an accumulating history database.
+Configuration is intentionally stored beside the scripts, as requested. Temporary monitoring state still contains only the previous tick and current availability runs and is deleted when monitoring stops. Separately, every successful on-demand or monitoring collection appends a compact, automatically pruned seven-day forecast history in the user state directory. It contains neither raw pages nor full observations. Manual station identity overrides remain adjacent configuration rather than learned mutable identity data.
 
 ## Responsibilities
 
@@ -235,11 +235,17 @@ interface ActivityEvidence {
   source: SourceId;
   sourceStationId: string;
   product?: FuelProduct;
-  kind: "TRANSACTIONS_RESUMED" | "TRANSACTIONS_ONGOING" | "RECENT_SIGNAL" | "NONE";
+  gradeLabel?: string;
+  kind: "TRANSACTIONS_RESUMED" | "TRANSACTIONS_ONGOING" | "RECENT_SIGNAL" | "ROLLING_SIGNAL_COUNT" | "PETROL_STATUS_SNAPSHOT" | "NONE";
+  status?: AvailabilityStatus;
   eventTimes: string[];
+  observedAt?: string;
+  latestEventAt?: string;
+  windowMinutes?: number;
+  count?: number;
   precedingGapMinutes?: number;
   gradeSpecific: boolean;
-  sourceTerminology: "TRANSACTION" | "REPORT" | "SIGNAL";
+  sourceTerminology: "TRANSACTION" | "REPORT" | "SIGNAL" | "STATUS";
 }
 
 interface NormalizedQueue {
@@ -442,7 +448,7 @@ Where a service exposes recent grade-specific transactions, reports, or signals,
 
 For the requested grade, `TRANSACTIONS_RESUMED` means a configurable long quiet gap (default 60 minutes) followed by at least two new events inside a short window (default 20 minutes). This is the strongest positive heuristic: fuel was apparently unavailable or inactive, then grade-specific activity restarted and may not yet have accumulated a large queue. `TRANSACTIONS_ONGOING` is weaker but still stronger than a status-only claim. Aggregate station activity that cannot be tied to AI-95 may support freshness or demand context but cannot prove AI-95 availability.
 
-During monitoring, a change from zero recent grade-specific events to new events can establish the resumption window even if the source exposes only a rolling count and latest timestamp. In an on-demand cold run, resumption is claimed only when the current page itself exposes enough event history to demonstrate the preceding gap.
+Across either monitoring ticks or repeated on-demand runs, a change from zero recent grade-specific events to new events can establish the resumption window even if the source exposes only a rolling count and latest timestamp. A single cold run cannot establish the preceding gap. Monitoring is not required for persistence, but its 15-minute cadence is recommended because sparse manual runs can miss rolling-count transitions.
 
 Rolling summaries are represented separately from event timelines: `{observedAt, windowMinutes, count, latestEventAt, product, observationRefs}`. A `0 → positive` change can establish resumption only when consecutive summaries have the same source/station/product/window and the prior window spans the configured quiet gap; otherwise it is merely `RECENT_SIGNAL`. Future timestamps beyond the configured skew are rejected, and all derived activity retains links to the underlying observations.
 
@@ -509,9 +515,9 @@ interface MonitorState {
 }
 ```
 
-Outside the temporary monitor directory, `collect.mjs` maintains a compact seven-day status history in the user's state directory (or an explicit `--history` path). It stores only timestamp, scope hashes, stable station identity/metadata, union verdict/confidence, and compact per-product verdicts. Raw pages, HARs, and full observations are not retained. Entries older than seven days are removed on every successful collection, and duplicate retries for the same `fetchedAt`/scope replace rather than duplicate a tick.
+Outside the temporary monitor directory, `collect.mjs` maintains a compact seven-day history in the user's state directory (or an explicit `--history` path) for both on-demand and monitoring runs. It stores only timestamp, scope hashes, stable station identity/metadata, union/per-product verdicts, and grade labels plus rolling window/count/latest-event summaries. Raw pages, HARs, and full observations are not retained. Entries older than seven days are removed on every successful collection, and duplicate retries for the same `fetchedAt`/scope replace rather than duplicate a tick.
 
-Forecast training uses only observed `NOT_AVAILABLE → AVAILABLE` transitions, or `LIKELY_AVAILABLE` with at least medium confidence, without a monitoring gap longer than three tick intervals. For a currently negative station, the expected end of the outage is derived from completed outage durations in this order: same station, same normalized brand, configured area. The report gives a point estimate, interquartile window, basis, sample size, and confidence. It emits no invented time when the seven-day cold-start history has no qualifying episode.
+Forecast training uses general petrol-delivery candidates from gasoline grades 92/95/98/100. Diesel is explicitly excluded because its near-continuous availability would bias the sought petrol-restocking pattern; LPG and unrecognized grades are excluded as well. A true per-grade rolling-summary event has highest priority and requires the same source/station/grade/window in consecutive samples, a previous zero count whose window spans the configured quiet gap, and a current count of at least two with a recent latest-event timestamp. A station-level aggregate count must never be copied onto grades or used to raise a grade's confidence: live Yandex evidence on 2026-08-30 showed `signalsCountPerHour` and `lastSignalTimestamp` only on the `fuelAvailability` container, while each 92/95/98/100/DIESEL row contained only `fuelType`, `localizedName`, and `status`; the aggregate is therefore ineligible because diesel cannot be removed from it. With the current source shape, the primary available delivery candidate is a sampled petrol-status transition `OUT_OF_STOCK → IN_STOCK/LIMITED`; multiple gasoline grades changing in one tick raise confidence. Observed union `NOT_AVAILABLE → AVAILABLE` transitions provide a weaker outage-duration fallback. All event types remain tanker-arrival heuristics and do not prove the delivered product mix. The forecast estimates typical Moscow-local time of day from at least two events, in order of same station, normalized brand, then area. Gaps longer than three tick intervals break transition continuity. The report gives a point estimate, interquartile window, signal type, scope, sample size, and confidence, and emits no invented time without enough history.
 
 `report.mjs` alone creates `reportId = sha256(monitorId + generation + snapshotHash)` and renders the report. Then `monitor.mjs prepare --report-id ...` writes an immutable pending next-state file without changing committed state. After the active agent posts that report into this task, `monitor.mjs commit --report-id ...` atomically advances the generation. Recovery re-renders a pending report with the same ID and labels it “повтор после восстановления”; it never invents a new ID. `collect.mjs` does not derive or commit monitor state. A changes section is suppressed whenever `areaHash` or `queryHash` differs from the previous snapshot.
 
@@ -589,7 +595,7 @@ When extraction fails because a page changed, development mode may record a reda
 | Use native current-task heartbeat every 15 minutes | rejected | User explicitly prefers the active agent to perform the wait | synthesis superseded by user |
 | Use an agent-driven loop with wait chunks no longer than 50 seconds | adopted | Keeps delivery in the active task without one long sleep or a background browser | user |
 | Store editable settings beside scripts | adopted | Explicit user preference | user |
-| Retain only previous-tick temporary state during active monitoring | adopted | User does not want a stored history; minimum state is needed for transitions and diffs | user |
+| Retain compact seven-day forecast history outside temporary monitoring state | superseded/adopted | Later user requirement explicitly asks for delivery-time learning from both manual runs and monitoring; raw data and unbounded history remain rejected | user |
 | Keep AI-95 base and premium variants separate internally | adopted | Prevents grade-blind false positives and negatives | both proposals/reviews |
 | Default query includes base AI-95 and all configured premium variants | adopted | Explicit requirement | user |
 | Use categorical auditable confidence instead of pseudo-probability | adopted | No ground-truth calibration supports a percentage | proposal 2 + synthesis |

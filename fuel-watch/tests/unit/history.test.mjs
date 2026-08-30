@@ -43,5 +43,40 @@ test("low-confidence likely tick cannot become a completed delivery episode", as
   const snapshot={fetchedAt:"2026-08-30T08:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
   const forecast=buildForecast(history,snapshot,config);
   assert.equal(forecast.completedEpisodeCount,1);
-  assert.equal(forecast.items[0].expectedAt,"2026-08-30T09:00:00.000Z");
+  assert.equal(forecast.items.length,0);
+});
+
+test("per-grade gasoline rolling activity predicts the station's typical tanker time", async () => {
+  const config=await loadConfig();
+  const rolling=(count,latestEventAt)=>({source:"yandex",gradeLabel:"АИ-92",observedAt:latestEventAt,latestEventAt,windowMinutes:60,count,gradeSpecific:true,sourceTerminology:"SIGNAL"});
+  const activityTick=(fetchedAt,count,latestEventAt)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling(count,latestEventAt)]}]});
+  const history={schemaVersion:1,ticks:[
+    activityTick("2026-08-28T06:45:00Z",0,"2026-08-28T05:30:00Z"),
+    activityTick("2026-08-28T07:00:00Z",3,"2026-08-28T06:58:00Z"),
+    activityTick("2026-08-29T06:45:00Z",0,"2026-08-29T05:30:00Z"),
+    activityTick("2026-08-29T07:00:00Z",4,"2026-08-29T06:58:00Z"),
+    activityTick("2026-08-30T06:30:00Z",0,"2026-08-30T05:00:00Z")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T06:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.activityEventCount,2);
+  assert.equal(forecast.items[0].signalBasis,"ROLLING_ACTIVITY");
+  assert.equal(forecast.items[0].basis,"STATION");
+  assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:58:00.000Z");
+});
+
+test("synchronized petrol status transitions predict delivery while diesel is absent", async () => {
+  const config=await loadConfig();
+  const status=(gradeLabel,value)=>({source:"yandex",gradeLabel,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
+  const statusTick=(fetchedAt,value)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("92",value),status("95",value)]}]});
+  const history={schemaVersion:1,ticks:[
+    statusTick("2026-08-28T05:45:00Z","OUT_OF_STOCK"),statusTick("2026-08-28T06:00:00Z","IN_STOCK"),
+    statusTick("2026-08-29T05:45:00Z","OUT_OF_STOCK"),statusTick("2026-08-29T06:00:00Z","IN_STOCK"),
+    statusTick("2026-08-30T05:30:00Z","OUT_OF_STOCK")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.petrolStatusEventCount,2);
+  assert.equal(forecast.items[0].signalBasis,"PETROL_STATUS_PATTERN");
+  assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:00:00.000Z");
 });

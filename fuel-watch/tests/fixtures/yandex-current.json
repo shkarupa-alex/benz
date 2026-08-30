@@ -4,5 +4,5 @@
   "stations": [{ "id": "ya-1", "coordinate": [44.5, 48.7], "title": "Fixture АЗС", "address": "Fixture street, 1" }],
   "observations": [{ "stationId": "ya-1", "fuel": "АИ-95", "status": "есть", "observedAt": "2026-08-30T10:00:00Z", "signalsPerHour": 5 }],
   "queues": [{ "stationId": "ya-1", "value": "короткая", "observedAt": "2026-08-30T10:00:00Z" }],
-  "activity": []
+  "activity": [{ "stationId": "ya-1", "fuel": "АИ-92", "gradeLabel": "АИ-92", "kind": "ROLLING_SIGNAL_COUNT", "observedAt": "2026-08-30T10:00:00Z", "latestEventAt": "2026-08-30T10:00:00Z", "count": 5, "windowMinutes": 60, "gradeSpecific": true, "sourceTerminology": "SIGNAL" }]
 }

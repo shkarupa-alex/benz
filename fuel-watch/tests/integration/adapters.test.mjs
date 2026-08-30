@@ -16,6 +16,9 @@ test("Yandex adapter normalizes fake BrowserRunner output", async () => {
   const result = await yandex.collect(request(config),{browser,config});
   assert.equal(result.health.status,"OK");
   assert.equal(result.observations[0].status,"IN_STOCK");
+  assert.equal(result.activity[0].gradeLabel,"АИ-92");
+  assert.equal(result.activity[0].product,undefined);
+  assert.equal(result.activity[0].count,5);
 });
 
 test("2GIS challenge is explicit and never evaluated", async () => {
@@ -67,14 +70,18 @@ test("gdebenz falls back to DOM when a nonempty API payload has no compatible st
   assert.equal(result.stations.length,1);
 });
 
-test("Yandex page extractor reads live fuelAvailability shape", () => {
-  const payload={stack:[{results:{items:[{id:"1089357396",coordinates:[44.502992,48.723609],title:"АЗС",fuelAvailability:{fuel:[{fuelType:"AI95",localizedName:"95",status:"IN_STOCK"}],signalsCountPerHour:3,lastSignalTimestamp:1788076800,queueStatus:"MEDIUM",localizedQueueSize:"Средняя"}}]}}]};
+test("Yandex extractor keeps aggregate counts out of grade confidence and excludes diesel activity", () => {
+  const payload={stack:[{results:{items:[{id:"1089357396",coordinates:[44.502992,48.723609],title:"АЗС",fuelAvailability:{fuel:[{fuelType:"AI92",localizedName:"92",status:"IN_STOCK"},{fuelType:"AI95",localizedName:"95",status:"IN_STOCK"},{fuelType:"DIESEL",localizedName:"ДТ",status:"IN_STOCK"}],signalsCountPerHour:3,lastSignalTimestamp:1788076800,queueStatus:"MEDIUM",localizedQueueSize:"Средняя"}}]}}]};
   const document={scripts:[{textContent:JSON.stringify(payload)}],querySelectorAll:()=>[]};
   const raw=Function("window","document","location",`return ${yandex.YANDEX_EXTRACTOR}`)({},document,{href:"https://yandex.ru/maps"});
   assert.equal(raw.stations[0].id,"1089357396");
   assert.equal(raw.observations[0].status,"IN_STOCK");
-  assert.equal(raw.observations[0].signalsPerHour,3);
+  assert.equal(raw.observations[0].signalsPerHour,undefined);
   assert.match(raw.observations[0].observedAt,/^2026-/);
+  assert.equal(raw.activity.length,2);
+  assert.equal(raw.activity.some(value=>value.gradeLabel==="ДТ"),false);
+  assert.equal(raw.activity[0].kind,"PETROL_STATUS_SNAPSHOT");
+  assert.equal(raw.activity[0].gradeLabel,"92");
   assert.equal(raw.queues[0].ordinal,"MEDIUM");
 });
 

@@ -36,6 +36,7 @@ export async function collect(request, ctx) {
 export const YANDEX_EXTRACTOR = String.raw`(() => {
   const stationMap = new Map(), observations = [], queues = [], activity = [];
   const isoTime = value => { if (value == null || value === '') return undefined; const numeric = Number(value); const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(value); return Number.isFinite(date.getTime()) ? date.toISOString() : undefined; };
+  const isGasoline = value => /(?:^|[^\p{L}\p{N}])(?:аи|ai)?[-\s]?(?:92|95|98|100)(?:\+)?(?:[^\p{L}\p{N}]|$)/iu.test(String(value || ''));
   const add = (raw, fallback = {}) => {
     if (!raw || typeof raw !== 'object') return;
     const id = String(raw.id || raw.businessId || raw.oid || raw.uri || fallback.id || '');
@@ -44,7 +45,15 @@ export const YANDEX_EXTRACTOR = String.raw`(() => {
     if (id && Array.isArray(coords) && coords.length >= 2) stationMap.set(id, { id, coordinate: coords, title: raw.title || raw.name || fallback.title, address: raw.address || raw.subtitle || raw.properties?.CompanyMetaData?.address, brand: raw.brand, url: raw.uri || location.href });
     if (id && fuels) {
       const rows = Array.isArray(fuels?.fuel) ? fuels.fuel : Array.isArray(fuels) ? fuels : Object.entries(fuels).filter(([,value]) => value == null || typeof value !== 'object' || !Array.isArray(value)).map(([fuel, value]) => typeof value === 'object' ? { fuel, ...value } : { fuel, status: value });
-      for (const f of rows) observations.push({ stationId: id, fuel: f.localizedName || f.fuelType || f.fuel || f.name || f.title || f.grade, status: f.status || f.availability || f.value, observedAt: isoTime(f.lastSignalTimestamp || f.updatedAt || f.timestamp || fuels.lastSignalTimestamp), signalsPerHour: f.signalsCountPerHour ?? fuels.signalsCountPerHour, url: location.href });
+      for (const f of rows) {
+        const fuel = f.localizedName || f.fuelType || f.fuel || f.name || f.title || f.grade;
+        const observedAt = isoTime(f.lastSignalTimestamp || f.updatedAt || f.timestamp || fuels.lastSignalTimestamp);
+        const perGradeSignals = f.signalsCountPerHour == null ? NaN : Number(f.signalsCountPerHour);
+        observations.push({ stationId: id, fuel, status: f.status || f.availability || f.value, observedAt, signalsPerHour: Number.isFinite(perGradeSignals) ? perGradeSignals : undefined, url: location.href });
+        if (isGasoline(fuel)) activity.push({ stationId: id, fuel, gradeLabel: fuel, kind: 'PETROL_STATUS_SNAPSHOT', status: f.status || f.availability || f.value, gradeSpecific: true, sourceTerminology: 'STATUS' });
+        const perGradeObservedAt = isoTime(f.lastSignalTimestamp || f.updatedAt || f.timestamp);
+        if (isGasoline(fuel) && perGradeObservedAt && Number.isFinite(perGradeSignals)) activity.push({ stationId: id, fuel, gradeLabel: fuel, kind: 'ROLLING_SIGNAL_COUNT', observedAt: perGradeObservedAt, latestEventAt: perGradeObservedAt, count: perGradeSignals, windowMinutes: 60, gradeSpecific: true, sourceTerminology: 'SIGNAL' });
+      }
       if (fuels.queueStatus || fuels.localizedQueueSize) queues.push({ stationId: id, value: fuels.localizedQueueSize || fuels.queueStatus, ordinal: fuels.queueStatus, observedAt: isoTime(fuels.lastSignalTimestamp) });
     }
     const q = raw.queue || raw.queueStatus || raw.properties?.queue;

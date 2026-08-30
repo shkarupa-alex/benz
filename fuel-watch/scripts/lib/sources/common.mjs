@@ -19,8 +19,8 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
   const activity = (raw.activity ?? []).flatMap(a => {
     const sourceStationId = String(a.stationId ?? a.sourceStationId ?? "");
     if (!stationIds.has(sourceStationId)) return [];
-    const product = a.product ?? (a.fuel ? classifyFuelLabel(a.fuel, request.requestedProducts) : undefined);
-    return [{ source, sourceStationId, product, kind: a.kind ?? "RECENT_SIGNAL", eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? product), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
+    const product = a.product ?? (a.fuel ? classifyFuelLabel(a.fuel, request.requestedProducts) : undefined) ?? undefined;
+    return [{ source, sourceStationId, product, gradeLabel: String(a.gradeLabel ?? a.fuel ?? product?.displayLabel ?? "").trim() || undefined, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? undefined : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? product), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
   });
   const unlocatedStationIds = enumerated.filter(s => !validCoordinate(s.coordinate)).map(s => s.sourceStationId);
   const partial = raw.partial || unlocatedStationIds.length > 0;
@@ -53,6 +53,7 @@ function normalizeTime(o) { if (o.observedAt || o.timestamp) { const value = new
 function normalizeQueueKind(q) { if (Number.isFinite(q.vehicleCount)) return "VEHICLES"; if (normalizeOrdinal(q.ordinal ?? q.value)) return "ORDINAL"; if (q.present === true) return "PRESENCE"; return "TEXT"; }
 function normalizeOrdinal(value) { const text = String(value ?? "").toLowerCase(); if (/very.?long|очень.*(длин|бол)/u.test(text)) return "VERY_LONG"; if (/long|больш|длин/u.test(text)) return "LONG"; if (/medium|сред/u.test(text)) return "MEDIUM"; if (/short|мал|корот/u.test(text)) return "SHORT"; if (/none|нет|без/u.test(text)) return "NONE"; return undefined; }
 function finite(value) { const n = Number(value); return Number.isFinite(n) ? n : undefined; }
+function iso(value) { if (!value) return undefined; const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toISOString() : undefined; }
 function coverageMetrics(stations, observations, raw) {
   const ids = stations.map(s => s.sourceStationId);
   const unique = new Set(ids);
