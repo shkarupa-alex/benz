@@ -27,4 +27,6 @@ test("report excludes catalog and expired observations from supporting sources",
   assert.doesNotMatch(markdown,/источники:.*2gis/);
   assert.doesNotMatch(markdown,/источники:.*yandex/);
   assert.match(markdown,/впервые увидели вероятный сигнал/);
+  assert.match(markdown,/низкая, 10 мин/);
+  assert.doesNotMatch(markdown,/низкая, 1 мин/);
 });

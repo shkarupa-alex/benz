@@ -9,7 +9,10 @@ export function updateAvailabilityRuns(previousRuns = [], assessments, previousS
     const old = runs.get(key);
     if (currentPositive) {
       if (old?.state === "AVAILABLE") { old.lastConfirmedAt = fetchedAt; old.confidence = assessment.confidence; old.negativeTicks = 0; runs.set(key, old); }
-      else runs.set(key, { stationKey: assessment.stationKey, productKey, state: "AVAILABLE", verdict: assessment.verdict, confidence: assessment.confidence, firstObservedAt: fetchedAt, lastConfirmedAt: fetchedAt, transitionWindow: oldVerdict === "NOT_AVAILABLE" ? { after: previousSnapshot.fetchedAt, atOrBefore: fetchedAt } : undefined, basis: oldVerdict === "NOT_AVAILABLE" ? "OBSERVED_TRANSITION" : "FIRST_SEEN", negativeTicks: 0 });
+      else {
+        const mayOpenTransition = oldVerdict === "NOT_AVAILABLE" && (assessment.verdict === "AVAILABLE" || ["MEDIUM", "HIGH"].includes(assessment.confidence));
+        runs.set(key, { stationKey: assessment.stationKey, productKey, state: "AVAILABLE", verdict: assessment.verdict, confidence: assessment.confidence, firstObservedAt: fetchedAt, lastConfirmedAt: fetchedAt, transitionWindow: mayOpenTransition ? { after: previousSnapshot.fetchedAt, atOrBefore: fetchedAt } : undefined, basis: mayOpenTransition ? "OBSERVED_TRANSITION" : "FIRST_SEEN", negativeTicks: 0 });
+      }
     } else if (assessment.verdict === "NOT_AVAILABLE" && old?.state === "AVAILABLE") {
       old.negativeTicks = (old.negativeTicks ?? 0) + 1;
       if (old.negativeTicks >= 2) { old.state = "NOT_AVAILABLE"; old.lastConfirmedAt = fetchedAt; }

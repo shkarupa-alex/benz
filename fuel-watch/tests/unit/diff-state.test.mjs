@@ -32,3 +32,11 @@ test("low-confidence likely tick is retained as cautious first-seen", () => {
   assert.equal(runs[0].verdict,"LIKELY_AVAILABLE");
   assert.equal(runs[0].confidence,"LOW");
 });
+
+test("low-confidence likely tick after negative cannot open an observed transition", () => {
+  const previous={fetchedAt:"2026-08-30T13:00:00Z",assessments:[{stationKey:"s",verdict:"NOT_AVAILABLE"}]};
+  const runs=updateAvailabilityRuns([], [{stationKey:"s",verdict:"LIKELY_AVAILABLE",confidence:"LOW"}], previous, "2026-08-30T13:15:00Z");
+  assert.equal(runs[0].basis,"FIRST_SEEN");
+  assert.equal(runs[0].transitionWindow,undefined);
+  assert.equal(runs[0].verdict,"LIKELY_AVAILABLE");
+});
