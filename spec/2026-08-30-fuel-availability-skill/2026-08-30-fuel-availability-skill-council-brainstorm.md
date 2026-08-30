@@ -545,13 +545,13 @@ Each summary contains:
 Example row:
 
 ```text
-1. Лукойл · ул. Рокоссовского, 1Р
+1. Лукойл · [ул. Рокоссовского, 1Р](https://yandex.ru/maps/38/volgograd/search/%D1%83%D0%BB.%20%D0%A0%D0%BE%D0%BA%D0%BE%D1%81%D1%81%D0%BE%D0%B2%D1%81%D0%BA%D0%BE%D0%B3%D0%BE%2C%201%D0%A0%2C%20%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4/)
    95: ЕСТЬ (средняя, 8 мин) · 95+: НЕТ (средняя, 12 мин)
    очередь: большая · 95 появился между 15:45 и 16:00 (средняя уверенность)
    источник: Яндекс · статус обновлён 16:15
 ```
 
-No availability claim is rendered without confidence and freshness information. Repeat-report diffs compare verdict, confidence, and queue transitions, not rank movement or harmless age drift inside the same freshness band.
+Every rendered station address is a Yandex Maps link: use the reconciled `[lon, lat]` as an exact map pin when available and a URL-encoded Volgograd address search only as fallback. This applies to ranked recommendations, forecasts, and changed-station rows. No availability claim is rendered without confidence and freshness information. Repeat-report diffs compare verdict, confidence, and queue transitions, not rank movement or harmless age drift inside the same freshness band.
 
 ## Failure isolation
 

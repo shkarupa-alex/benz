@@ -171,7 +171,7 @@ function forecastFromActivity(assessment, negativeStartedAt, selected, nowMs) {
   let windowEndMs = expectedMs + (high - middle) * 60000;
   if (windowEndMs <= nowMs) { expectedMs += 86400000; windowStartMs += 86400000; windowEndMs += 86400000; }
   const strong = selected.values.filter(value => value.confidence === "MEDIUM").length;
-  return { stationKey: assessment.stationKey, title: assessment.title, address: assessment.address, brand: assessment.brand, negativeStartedAt, expectedAt: new Date(expectedMs).toISOString(), windowStartAt: new Date(Math.max(windowStartMs, nowMs)).toISOString(), windowEndAt: new Date(windowEndMs).toISOString(), confidence: selected.basis === "STATION" && selected.values.length >= 3 && strong >= 2 ? "MEDIUM" : "LOW", basis: selected.basis, signalBasis: selected.values[0].signalBasis, sampleSize: selected.values.length };
+  return { stationKey: assessment.stationKey, title: assessment.title, address: assessment.address, coordinate: assessment.coordinate, brand: assessment.brand, negativeStartedAt, expectedAt: new Date(expectedMs).toISOString(), windowStartAt: new Date(Math.max(windowStartMs, nowMs)).toISOString(), windowEndAt: new Date(windowEndMs).toISOString(), confidence: selected.basis === "STATION" && selected.values.length >= 3 && strong >= 2 ? "MEDIUM" : "LOW", basis: selected.basis, signalBasis: selected.values[0].signalBasis, sampleSize: selected.values.length };
 }
 
 function forecastFromStatus(assessment, negativeStartedAt, selected, nowMs) {
@@ -181,7 +181,7 @@ function forecastFromStatus(assessment, negativeStartedAt, selected, nowMs) {
   const expectedMs = startMs + expectedMinutes * 60000, windowStartMs = startMs + lowMinutes * 60000, windowEndMs = startMs + highMinutes * 60000;
   if (windowEndMs <= nowMs) return null;
   const confidence = selected.basis === "STATION" && durations.length >= 3 ? "MEDIUM" : "LOW";
-  return { stationKey: assessment.stationKey, title: assessment.title, address: assessment.address, brand: assessment.brand, negativeStartedAt, expectedAt: new Date(Math.max(expectedMs, nowMs)).toISOString(), windowStartAt: new Date(Math.max(windowStartMs, nowMs)).toISOString(), windowEndAt: new Date(windowEndMs).toISOString(), confidence, basis: selected.basis, signalBasis: "STATUS_TRANSITION", sampleSize: durations.length };
+  return { stationKey: assessment.stationKey, title: assessment.title, address: assessment.address, coordinate: assessment.coordinate, brand: assessment.brand, negativeStartedAt, expectedAt: new Date(Math.max(expectedMs, nowMs)).toISOString(), windowStartAt: new Date(Math.max(windowStartMs, nowMs)).toISOString(), windowEndAt: new Date(windowEndMs).toISOString(), confidence, basis: selected.basis, signalBasis: "STATUS_TRANSITION", sampleSize: durations.length };
 }
 
 function completedEpisodes(ticks, maxGapMinutes, identity) {

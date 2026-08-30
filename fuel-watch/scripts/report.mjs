@@ -24,7 +24,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   lines.push("", "Куда ехать:");
   if (!ranked.length) lines.push("Свежих положительных данных нет; это не означает, что бензина нет во всей зоне.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
-    lines.push(`${index + 1}. ${item.title}${item.address ? ` · ${item.address}` : ""}`);
+    lines.push(`${index + 1}. ${stationHeading(item)}`);
     lines.push(`   АИ-95: ${VERDICT[item.verdict]} (${CONFIDENCE[item.confidence]}, ${freshnessText(item.observations)}) · очередь: ${item.queue?.displayText ?? "нет данных"}`);
     const grades = gradeText(item, snapshot.requestedProducts);
     if (grades) lines.push(`   ${grades}`);
@@ -34,7 +34,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   const forecasts = snapshot.forecast?.items ?? [];
   if (!forecasts.length) lines.push("Пока недостаточно повторных наблюдений массового возобновления сигналов или подтверждённых переходов статуса; история продолжает накапливаться.");
   for (const [index, forecast] of forecasts.slice(0, 3).entries()) {
-    lines.push(`${index + 1}. ${forecast.title}${forecast.address ? ` · ${forecast.address}` : ""} — около ${formatTime(forecast.expectedAt)}`);
+    lines.push(`${index + 1}. ${stationHeading(forecast)} — около ${formatTime(forecast.expectedAt)}`);
     lines.push(`   окно ${formatTime(forecast.windowStartAt)} — ${formatTime(forecast.windowEndAt)} · уверенность ${CONFIDENCE[forecast.confidence]} · сигнал: ${forecastSignalBasis(forecast.signalBasis)} · основа: ${forecastBasis(forecast.basis)}, ${forecast.sampleSize} эп.`);
   }
   if (forecasts.length > 0 && forecasts.length < 3) lines.push("До трёх прогнозов пока не хватает 7-дневной статистики.");
@@ -47,7 +47,14 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
 }
 
 function healthText(h) { return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`; }
-function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${c.current.title}: появилась в выборке`; if (c.type === "REMOVED") return `${c.previous.title}: исчезла из выборки`; return `${c.current.title}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
+function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${stationHeading(c.current)}: появилась в выборке`; if (c.type === "REMOVED") return `${stationHeading(c.previous)}: исчезла из выборки`; return `${stationHeading(c.current)}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
+function stationHeading(station) { return `${station.title}${station.address ? ` · [${escapeMarkdown(station.address)}](${yandexMapsUrl(station)})` : ""}`; }
+function yandexMapsUrl(station) {
+  const coordinate = Array.isArray(station.coordinate) && station.coordinate.length === 2 && station.coordinate.every(Number.isFinite) ? station.coordinate : undefined;
+  if (coordinate) { const point = `${coordinate[0]},${coordinate[1]}`; return `https://yandex.ru/maps/?ll=${encodeURIComponent(point)}&z=17&pt=${encodeURIComponent(`${point},pm2rdm`)}`; }
+  return `https://yandex.ru/maps/38/volgograd/search/${encodeURIComponent(`${station.address}, Волгоград`)}/`;
+}
+function escapeMarkdown(value) { return String(value).replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]"); }
 function formatTime(value) { return new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function freshnessText(observations = []) { const usable = observations.filter(isCurrentPositiveObservation); if (!usable.length) return "возраст неизвестен"; const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0]; const min = Math.round(freshest.ageMinutes); return `${freshest.approximate ? "≈" : ""}${min < 1 ? "только что" : `${min} мин`}`; }
 function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(isCurrentPositiveObservation).map(o => o.source))]; return values.length ? values.join(", ") : "нет свежей текущей поддержки"; }
