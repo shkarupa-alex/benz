@@ -83,7 +83,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
     sourceCoverage: Object.fromEntries(results.filter(r => r.coverage).map(r => [r.source, r.coverage])),
     coverageBaselines: nextCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt),
     warnings,
-    runtime: { browserNamespace: runner.namespace, health: runtimeHealth, cleanup },
+    runtime: { browserNamespace: runner.namespace, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup },
     changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), adapterContractHash, assessments })
   };
   if (outputPath) await writeJsonAtomic(outputPath, snapshot);

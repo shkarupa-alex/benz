@@ -13,7 +13,7 @@ export async function collect(request, ctx) {
     return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
-function is502(opened) { return /^\s*502\s+bad gateway\b/iu.test(opened.pageTitle ?? "") || /^\s*502\s+bad gateway\b/iu.test(opened.pageTextPrefix ?? ""); }
+function is502(opened) { return /^\s*(?:error\s+)?502(?:\s*-?\s*bad gateway)?\s*$/iu.test(opened.pageTitle ?? "") || /^\s*502\s*-?\s*bad gateway\b/iu.test(opened.pageTextPrefix ?? ""); }
 const GDEBENZ_EXTRACTOR = String.raw`(() => {
   const stations = [], observations = [], queues = [], activity = [], seen = new Set();
   const consume = raw => {

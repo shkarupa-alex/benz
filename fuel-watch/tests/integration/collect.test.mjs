@@ -16,6 +16,7 @@ test("all-source degradation is not rendered as no fuel and cleanup failure retu
   assert.equal(result.snapshot.assessments.length,0);
   assert.ok(result.snapshot.sourceHealth.every(h=>h.status!=="OK"));
   assert.ok(result.snapshot.warnings.some(w=>w.code==="CLEANUP_FAILED"));
+  assert.equal(result.snapshot.runtime.browserMode,"HEADED");
 });
 
 test("shared browser failure is reported once as common-mode failure", async () => {

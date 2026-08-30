@@ -14,7 +14,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   const snapshotHash = sha256(snapshot);
   const reportId = monitorId ? sha256(`${monitorId}${generation}${snapshotHash}`) : sha256(snapshotHash);
   const ranked = snapshot.rankedStationKeys.map(key => snapshot.assessments.find(a => a.stationKey === key)).filter(Boolean);
-  const lines = [`## Наличие АИ-95 — ${formatTime(snapshot.fetchedAt)}`, `Зона: ${snapshot.areaLabel}. Запрошены базовый АИ-95 и настроенные премиальные варианты.`, "", `Источники: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
+  const lines = [`## Наличие АИ-95 — ${formatTime(snapshot.fetchedAt)}`, `Зона: ${snapshot.areaLabel}. Запрошены базовый АИ-95 и настроенные премиальные варианты.`, "", `Браузер: ${snapshot.runtime?.browserMode ?? "режим неизвестен"}. Источники: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
   if (recovered) lines.push(`Повтор после восстановления · reportId: ${reportId.slice(0, 12)}.`);
   for (const warning of snapshot.warnings ?? []) lines.push(`⚠ ${warning.code}: ${warning.message}`);
   if (!compact && snapshot.changes?.length) {

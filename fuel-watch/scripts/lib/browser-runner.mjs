@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import { delimiter, isAbsolute } from "node:path";
 import { clampText, uniqueId } from "./util.mjs";
 
-const SAFE_ENV = ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SHELL", "USER", "LOGNAME", "XDG_RUNTIME_DIR"];
+const SAFE_ENV = ["PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "SHELL", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"];
 
 export class BrowserRunner {
   constructor(config, options = {}) {
@@ -97,11 +97,12 @@ export class BrowserRunner {
   async close() {
     const warnings = [];
     await this.closeSessionBestEffort(warnings);
-    let remaining = await this.sessionsRemaining();
+    const startedAt = Date.now();
+    let remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs / 2);
     if (remaining > 0) {
       const fallback = await this.commandJson(["close", "--all", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs });
       if (fallback.exitCode !== 0) warnings.push(`namespace close --all failed: ${clampText(fallback.stderr || fallback.stdout)}`);
-      remaining = await this.sessionsRemaining();
+      remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs);
     }
     this.started = false;
     if (remaining > 0) warnings.push(`${remaining} owned session(s) remain`);
@@ -121,6 +122,15 @@ export class BrowserRunner {
     return sessions.length;
   }
 
+  async waitForNoSessions(deadline) {
+    let remaining = await this.sessionsRemaining();
+    while (remaining > 0 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+      remaining = await this.sessionsRemaining();
+    }
+    return remaining;
+  }
+
   environment() {
     const env = {};
     for (const key of SAFE_ENV) if (process.env[key]) env[key] = process.env[key];
@@ -131,7 +141,8 @@ export class BrowserRunner {
   }
 
   async commandJson(args, options = {}) {
-    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, "--namespace", this.namespace, "--session", this.sessionName, ...args], { env: this.environment(), timeoutMs: options.timeoutMs, input: options.input });
+    const launchMode = this.config.browser.headed ? ["--headed"] : [];
+    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, ...launchMode, "--namespace", this.namespace, "--session", this.sessionName, ...args], { env: this.environment(), timeoutMs: options.timeoutMs, input: options.input });
     let json;
     try { json = result.stdout.trim() ? JSON.parse(result.stdout) : null; } catch { json = null; }
     return { ...result, json };

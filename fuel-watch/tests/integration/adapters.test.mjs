@@ -43,3 +43,11 @@ test("gdebenz retries and reports the actual 502 Bad Gateway signature", async (
   assert.equal(result.health.code,"HTTP_ERROR_PAGE");
   assert.equal(evaluated,false);
 });
+
+test("gdebenz recognizes the observed Error 502 headed-vs-headless response", async () => {
+  const config=await loadConfig(); let opens=0;
+  const browser={open:async()=>{opens++;return{finalUrl:"https://gdebenz.ru/",pageTitle:"Error 502",pageTextPrefix:"502 - Bad Gateway . That's an error."};},waitReady:async()=>{},evalJson:async()=>{throw new Error("must not evaluate an error page");}};
+  const result=await gdebenz.collect(request(config),{browser,config});
+  assert.equal(opens,2);
+  assert.equal(result.health.code,"HTTP_ERROR_PAGE");
+});
