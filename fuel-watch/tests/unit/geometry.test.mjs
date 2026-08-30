@@ -7,6 +7,8 @@ test("Volgograd hull includes all anchors and control stations", async () => {
   const config = await loadConfig();
   const area = resolveArea(config.area);
   for (const anchor of config.area.anchors) assert.equal(isInsideArea(anchor.point, area), true, anchor.label);
+  assert.deepEqual(config.area.anchors.find(anchor => anchor.label === "ул. Рокоссовского, 80А")?.point, [44.530817, 48.733956]);
+  assert.deepEqual(config.area.anchors.find(anchor => anchor.label === "ул. Рокоссовского, 175")?.point, [44.525837, 48.748086]);
   assert.equal(isInsideArea([44.4940448, 48.7150466], area), true);
   assert.equal(isInsideArea([44.4925455, 48.7101139], area), true);
 });

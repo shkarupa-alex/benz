@@ -333,7 +333,7 @@ type AreaConfig =
 
 Rectangle is the simple editing format. When the user supplies outermost acceptable stations, `resolve-area.mjs` looks them up through the browser adapters, presents the resolved coordinates for confirmation, then writes schema-valid `point: [lon, lat]` anchors. At least three unique non-collinear anchors are required. Runtime area construction pins `@turf/turf` 7.2.0 and applies `convex(featureCollection(points))`, then `buffer(hull, 0.5, {units: "kilometers", steps: 16})`; membership uses `booleanPointInPolygon(point, polygon, {ignoreBoundary: false})`. Coordinates are rounded only for display, never before geometry.
 
-The initial Volgograd default uses the eleven user-provided stations below and `bufferMeters: 500`. A preliminary read-only geocoding pass produced these `[lon, lat]` coordinates; implementation must re-verify them against at least one target map before committing the final config:
+The initial Volgograd default uses the thirteen user-provided stations below and `bufferMeters: 500`. Read-only Yandex Maps resolution produced these `[lon, lat]` coordinates; implementation revalidates them fail-closed before any later rewrite:
 
 ```json
 [
@@ -343,6 +343,8 @@ The initial Volgograd default uses the eleven user-provided stations below and `
   { "label": "ул. Хорошева, 65А", "point": [44.4760565, 48.7362504] },
   { "label": "просп. Маршала Жукова, 94А", "point": [44.4925045, 48.7393615] },
   { "label": "ул. Рокоссовского, 129Ж", "point": [44.5238774, 48.7307008] },
+  { "label": "ул. Рокоссовского, 80А", "point": [44.530817, 48.733956] },
+  { "label": "ул. Рокоссовского, 175", "point": [44.525837, 48.748086] },
   { "label": "ул. Пархоменко, 57А", "point": [44.5262303, 48.7235710] },
   { "label": "Глубокоовражная ул., 25", "point": [44.4975444, 48.7076565] },
   { "label": "Симбирская ул., 1Б", "point": [44.4961665, 48.7060969] },
@@ -351,7 +353,7 @@ The initial Volgograd default uses the eleven user-provided stations below and `
 ]
 ```
 
-Eight of the eleven points form the convex hull. Череповецкая 5А, Глубокоовражная 25, and Симбирская 1Б are interior control anchors. All eleven remain in config for traceability and later revalidation.
+The convex hull is derived from all thirteen points. Interior anchors remain in config for traceability and later revalidation rather than being discarded after hull construction.
 
 Two additional test stations were checked through `agent-browser`. The supplied 2GIS pages returned CAPTCHA, so coordinates were resolved through browser-mediated Nominatim and compared with the unbuffered hull:
 
@@ -646,7 +648,7 @@ When extraction fails because a page changed, development mode may record a reda
 - Grade-specific transaction/activity resumption is the strongest heuristic, followed by multi-source support, directness/confidence, freshness, optional queue data, availability-run age, and distance.
 - CAPTCHA and every degraded source are named in the user-facing report.
 - On-demand and monitoring modes remove temporary run state but retain only the rolling compact seven-day forecast history in the user state directory.
-- Default area is the 11-anchor Volgograd convex hull with a 500-metre outward buffer.
+- Default area is the 13-anchor Volgograd convex hull with a 500-metre outward buffer.
 - Personal, read-only frequency is at most one collection per 15 minutes during monitoring.
 
 ## Operational decisions
