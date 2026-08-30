@@ -58,7 +58,7 @@ Configuration is intentionally stored beside the scripts, as requested. The skil
 ### Common browser contract
 
 ```ts
-type SourceId = "yandex" | "gdebenz" | "2gis";
+type SourceId = "yandex" | "gdebenz" | "2gis" | "benzonavt";
 
 interface BrowserRunner {
   ensureRunSession(): Promise<BrowserSession>;
@@ -165,7 +165,15 @@ Grade-blind positive or negative reports never become direct evidence for a spec
 
 The official 2GIS API is deferred because the user chose one unified `agent-browser` transport. It can be reconsidered later as an optional adapter if the user prefers a registered API key and a stable contract.
 
-All three adapters are enabled by default in order `yandex`, `gdebenz`, `2gis`, so the strongest expected evidence is collected first under the shared deadline. A source can be disabled in adjacent config. Before release, live feasibility records every required first-party/resource domain for each adapter; a missing allowlisted CDN/resource is `RESOURCE_BLOCKED`, not `SCHEMA_CHANGED`.
+### Benzonavt
+
+1. Navigate to `https://benzonavt.ru/` in its ephemeral browser session.
+2. Use browser-evaluated same-origin `GET /api/v1/stations?bbox=…`, which is the transport used by the loaded page; do not add an external HTTP client.
+3. Normalize stable numeric station ID, coordinates, brand/address, `st.status`, `st.fuels_now`, `st.updated_at`, and queue metadata.
+4. Treat an explicit current `95` token as exact current-grade evidence. Treat `st.status=no` as family-wide negative evidence. Static `fuels` assortment and prices never prove current availability.
+5. Keep Benzonavt in the same default `crowd-shared` provenance group as Yandex/gdebenz so correlated crowd data cannot manufacture independent-source confidence.
+
+All four adapters are enabled by default in order `yandex`, `gdebenz`, `2gis`, `benzonavt`, so the strongest expected evidence is collected first under the shared deadline. A source can be disabled in adjacent config. Before release, live feasibility records every required first-party/resource domain for each adapter; a missing allowlisted CDN/resource is `RESOURCE_BLOCKED`, not `SCHEMA_CHANGED`.
 
 ## Data model
 
@@ -501,6 +509,10 @@ interface MonitorState {
 }
 ```
 
+Outside the temporary monitor directory, `collect.mjs` maintains a compact seven-day status history in the user's state directory (or an explicit `--history` path). It stores only timestamp, scope hashes, stable station identity/metadata, union verdict/confidence, and compact per-product verdicts. Raw pages, HARs, and full observations are not retained. Entries older than seven days are removed on every successful collection, and duplicate retries for the same `fetchedAt`/scope replace rather than duplicate a tick.
+
+Forecast training uses only observed `NOT_AVAILABLE → AVAILABLE` transitions, or `LIKELY_AVAILABLE` with at least medium confidence, without a monitoring gap longer than three tick intervals. For a currently negative station, the expected end of the outage is derived from completed outage durations in this order: same station, same normalized brand, configured area. The report gives a point estimate, interquartile window, basis, sample size, and confidence. It emits no invented time when the seven-day cold-start history has no qualifying episode.
+
 `report.mjs` alone creates `reportId = sha256(monitorId + generation + snapshotHash)` and renders the report. Then `monitor.mjs prepare --report-id ...` writes an immutable pending next-state file without changing committed state. After the active agent posts that report into this task, `monitor.mjs commit --report-id ...` atomically advances the generation. Recovery re-renders a pending report with the same ID and labels it “повтор после восстановления”; it never invents a new ID. `collect.mjs` does not derive or commit monitor state. A changes section is suppressed whenever `areaHash` or `queryHash` differs from the previous snapshot.
 
 After four consecutive ticks with no fresh grade-specific observation from any source, monitoring remains active to respect the requested cadence but switches repeated null reports to a compact degraded summary. It never floods the task with a full identical empty report.
@@ -515,7 +527,8 @@ Each summary contains:
 4. ranked positive and likely-positive stations;
 5. conflicting/indirect evidence;
 6. counts of negative and no-fresh-data stations;
-7. an unconditional warning that reports are crowdsourced/page-derived and may be delayed.
+7. up to three nearest forecasted appearances from the seven-day history, or an explicit cold-start/insufficient-data message;
+8. an unconditional warning that reports are crowdsourced/page-derived and may be delayed.
 
 Example row:
 
@@ -622,7 +635,7 @@ When extraction fails because a page changed, development mode may record a reda
 - The primary recommendation list contains only stations with positive current evidence for a requested product.
 - Grade-specific transaction/activity resumption is the strongest heuristic, followed by multi-source support, directness/confidence, freshness, optional queue data, availability-run age, and distance.
 - CAPTCHA and every degraded source are named in the user-facing report.
-- On-demand mode leaves no state. Monitoring retains only one previous tick and active-run state, deleting both on stop.
+- On-demand and monitoring modes remove temporary run state but retain only the rolling compact seven-day forecast history in the user state directory.
 - Default area is the 11-anchor Volgograd convex hull with a 500-metre outward buffer.
 - Personal, read-only frequency is at most one collection per 15 minutes during monitoring.
 
@@ -641,7 +654,7 @@ When extraction fails because a page changed, development mode may record a reda
 - Native heartbeat automation: rejected in favor of an active-agent wait loop.
 - One 15-minute `sleep`: rejected because the wait must remain interruptible and bounded.
 - Persistent browser sessions between ticks: rejected because of memory/resource risk.
-- Long-term snapshot/history storage: rejected because the chat already provides the human-visible history.
+- Unbounded or raw snapshot/history storage: rejected. A compact, automatically pruned seven-day verdict history is adopted for the user-requested forecasts.
 - Probability percentages: rejected until real outcome calibration exists.
 - Automatic station merge based on coordinate proximity alone: rejected because distinct stations can be 50–100 metres apart.
 - 2GIS official API: deferred as an optional future transport; V1 uses the unified browser path.

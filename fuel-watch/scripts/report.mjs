@@ -30,6 +30,14 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
     if (grades) lines.push(`   ${grades}`);
     lines.push(`   ${activityText(item.activity)}${runText(item.availabilityRun)}источники: ${supportingSources(item)}`);
   }
+  lines.push("", `Прогноз ближайшего появления (история ${snapshot.forecast?.retentionDays ?? 7} дней):`);
+  const forecasts = snapshot.forecast?.items ?? [];
+  if (!forecasts.length) lines.push("Пока недостаточно подтверждённых переходов NOT_AVAILABLE → AVAILABLE; история продолжает накапливаться.");
+  for (const [index, forecast] of forecasts.slice(0, 3).entries()) {
+    lines.push(`${index + 1}. ${forecast.title}${forecast.address ? ` · ${forecast.address}` : ""} — около ${formatTime(forecast.expectedAt)}`);
+    lines.push(`   окно ${formatTime(forecast.windowStartAt)} — ${formatTime(forecast.windowEndAt)} · уверенность ${CONFIDENCE[forecast.confidence]} · основа: ${forecastBasis(forecast.basis)}, ${forecast.sampleSize} эп.`);
+  }
+  if (forecasts.length > 0 && forecasts.length < 3) lines.push("До трёх прогнозов пока не хватает 7-дневной статистики.");
   const conflictCount = snapshot.assessments.filter(a => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
   const negativeCount = snapshot.assessments.filter(a => a.verdict === "NOT_AVAILABLE").length;
   const emptyCount = snapshot.assessments.filter(a => a.verdict === "NO_FRESH_DATA").length;
@@ -45,6 +53,7 @@ function freshnessText(observations = []) { const usable = observations.filter(i
 function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(isCurrentPositiveObservation).map(o => o.source))]; return values.length ? values.join(", ") : "нет свежей текущей поддержки"; }
 function runText(run) { if (!run) return "время появления неизвестно · "; const confidence = CONFIDENCE[run.confidence] ?? "уверенность неизвестна"; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) · `; if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `впервые увидели вероятный сигнал ${formatTime(run.firstObservedAt)} (${confidence}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} (${confidence}) · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} (${confidence}) · `; }
 function activityText(activity = []) { if (activity.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "активность возобновилась (эвристика) · "; if (activity.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "активность продолжается (эвристика) · "; return ""; }
+function forecastBasis(value) { return ({ STATION: "прошлые периоды этой АЗС", BRAND: "прошлые периоды этого бренда", AREA: "прошлые периоды в зоне" })[value] ?? "история зоны"; }
 function gradeText(item, requested = []) {
   const assessments = item.productAssessments ?? {};
   const base = assessments.AI95_BASE;

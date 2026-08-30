@@ -47,11 +47,11 @@ test("each enabled source uses a sequential isolated browser session", async () 
     };
   };
   const result=await collectSnapshot({browserFactory,now:new Date("2026-08-30T10:00:00Z")});
-  assert.equal(created,3);
-  assert.equal(closed,3);
+  assert.equal(created,4);
+  assert.equal(closed,4);
   assert.equal(maxActive,1);
   assert.equal(active,0);
-  assert.equal(result.snapshot.runtime.browserNamespaces.length,3);
+  assert.equal(result.snapshot.runtime.browserNamespaces.length,4);
 });
 
 test("adapter-level network-control failure retries the source once degraded", async () => {
@@ -73,7 +73,7 @@ test("adapter-level network-control failure retries the source once degraded", a
     };
   };
   const result=await collectSnapshot({browserFactory,now:new Date("2026-08-30T10:00:00Z")});
-  assert.equal(created,4);
+  assert.equal(created,5);
   assert.equal(result.snapshot.sourceHealth.find(value=>value.source==="gdebenz").code,"HTTP_ERROR_PAGE");
   assert.ok(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")));
 });
@@ -108,8 +108,8 @@ test("all source runners and retries share one collection cleanup reserve", asyn
   };
   const result=await collectSnapshot({browserFactory,now:new Date("2026-08-30T10:00:00Z"),cleanupNow:()=>cleanupClock});
   const cleanup=result.snapshot.runtime.cleanup;
-  assert.equal(created,4);
-  assert.equal(closes.length,4);
+  assert.equal(created,5);
+  assert.equal(closes.length,5);
   assert.ok(closes.every(value=>value.deadline===cleanup.budgetMs));
   assert.equal(cleanupClock,cleanup.budgetMs);
   assert.equal(cleanup.spentMs,cleanup.budgetMs);
@@ -134,7 +134,7 @@ test("about-blank page loss never disables network controls", async () => {
     };
   };
   const result=await collectSnapshot({browserFactory,now:new Date("2026-08-30T10:00:00Z")});
-  assert.equal(created,3);
+  assert.equal(created,4);
   assert.equal(result.snapshot.sourceHealth.find(value=>value.source==="gdebenz").code,"PAGE_LOST");
   assert.equal(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")),false);
 });

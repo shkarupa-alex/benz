@@ -3,7 +3,7 @@
   "$id": "https://local.invalid/fuel-watch/config.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["area", "requestedProducts", "sources", "browser", "monitoring", "freshness", "activity", "queue", "identity", "ranking"],
+  "required": ["area", "requestedProducts", "sources", "browser", "monitoring", "history", "freshness", "activity", "queue", "identity", "ranking"],
   "properties": {
     "$schema": { "type": "string" },
     "area": { "$ref": "#/$defs/area" },
@@ -11,6 +11,7 @@
     "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/source" } },
     "browser": { "$ref": "#/$defs/browser" },
     "monitoring": { "$ref": "#/$defs/monitoring" },
+    "history": { "$ref": "#/$defs/history" },
     "freshness": { "$ref": "#/$defs/freshness" },
     "activity": { "$ref": "#/$defs/activity" },
     "queue": { "$ref": "#/$defs/queue" },
@@ -28,13 +29,14 @@
     },
     "product": { "type": "object", "additionalProperties": false, "required": ["productKey", "family", "variant", "variantKey", "aliases"], "properties": { "productKey": { "type": "string", "pattern": "^[A-Z0-9_]+$" }, "family": { "const": "AI_95" }, "variant": { "enum": ["BASE", "BRANDED", "PREMIUM"] }, "variantKey": { "type": "string", "minLength": 1 }, "aliases": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } },
     "requestedProducts": { "type": "object", "additionalProperties": false, "required": ["mode", "products", "includeUnrecognizedAi95Variants"], "properties": { "mode": { "const": "UNION" }, "products": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/product" } }, "includeUnrecognizedAi95Variants": { "type": "boolean" } } },
-    "source": { "type": "object", "additionalProperties": false, "required": ["id", "enabled", "order", "provenanceGroup"], "properties": { "id": { "enum": ["yandex", "gdebenz", "2gis"] }, "enabled": { "type": "boolean" }, "order": { "type": "integer", "minimum": 1 }, "provenanceGroup": { "type": "string", "minLength": 1 } } },
+    "source": { "type": "object", "additionalProperties": false, "required": ["id", "enabled", "order", "provenanceGroup"], "properties": { "id": { "enum": ["yandex", "gdebenz", "2gis", "benzonavt"] }, "enabled": { "type": "boolean" }, "order": { "type": "integer", "minimum": 1 }, "provenanceGroup": { "type": "string", "minLength": 1 } } },
     "browser": { "type": "object", "additionalProperties": false, "required": ["executable", "configPath", "headed", "idleTimeoutMs", "adapterTimeoutMs", "cleanupReserveMs", "allowedDomains"], "properties": { "executable": { "type": "string", "minLength": 1 }, "configPath": { "type": "string", "minLength": 1 }, "headed": { "const": true }, "idleTimeoutMs": { "const": 10000 }, "adapterTimeoutMs": { "type": "integer", "minimum": 5000, "maximum": 120000 }, "cleanupReserveMs": { "type": "integer", "minimum": 5000, "maximum": 30000 }, "allowedDomains": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } } } },
     "monitoring": { "type": "object", "additionalProperties": false, "required": ["intervalMinutes", "waitChunkSeconds", "compactAfterEmptyTicks"], "properties": { "intervalMinutes": { "const": 15 }, "waitChunkSeconds": { "type": "integer", "minimum": 1, "maximum": 50 }, "compactAfterEmptyTicks": { "type": "integer", "minimum": 1 } } },
+    "history": { "type": "object", "additionalProperties": false, "required": ["retentionDays", "forecastCount"], "properties": { "retentionDays": { "const": 7 }, "forecastCount": { "const": 3 } } },
     "freshness": { "type": "object", "additionalProperties": false, "required": ["freshMinutes", "recentMinutes", "staleMinutes", "expireMinutes", "futureSkewSeconds", "conflictWindowMinutes"], "properties": { "freshMinutes": { "type": "number", "exclusiveMinimum": 0 }, "recentMinutes": { "type": "number", "exclusiveMinimum": 0 }, "staleMinutes": { "type": "number", "exclusiveMinimum": 0 }, "expireMinutes": { "type": "number", "exclusiveMinimum": 0 }, "futureSkewSeconds": { "type": "number", "minimum": 0 }, "conflictWindowMinutes": { "type": "number", "exclusiveMinimum": 0 } } },
     "activity": { "type": "object", "additionalProperties": false, "required": ["quietGapMinutes", "resumeWindowMinutes", "minimumEvents", "strongSignalCountPerHour"], "properties": { "quietGapMinutes": { "type": "number", "exclusiveMinimum": 0 }, "resumeWindowMinutes": { "type": "number", "exclusiveMinimum": 0 }, "minimumEvents": { "type": "integer", "minimum": 1 }, "strongSignalCountPerHour": { "type": "integer", "minimum": 1 } } },
     "queue": { "type": "object", "additionalProperties": false, "required": ["ordinalMaxVehicles", "unknownPosition"], "properties": { "ordinalMaxVehicles": { "type": "object", "additionalProperties": false, "required": ["NONE", "SHORT", "MEDIUM", "LONG"], "properties": { "NONE": { "type": "number", "minimum": 0 }, "SHORT": { "type": "number", "minimum": 0 }, "MEDIUM": { "type": "number", "minimum": 0 }, "LONG": { "type": "number", "minimum": 0 } } }, "unknownPosition": { "const": "AFTER_KNOWN" } } },
-    "member": { "type": "object", "additionalProperties": false, "required": ["source", "sourceStationId"], "properties": { "source": { "enum": ["yandex", "gdebenz", "2gis"] }, "sourceStationId": { "type": "string", "minLength": 1 } } },
+    "member": { "type": "object", "additionalProperties": false, "required": ["source", "sourceStationId"], "properties": { "source": { "enum": ["yandex", "gdebenz", "2gis", "benzonavt"] }, "sourceStationId": { "type": "string", "minLength": 1 } } },
     "identity": {
       "type": "object",
       "additionalProperties": false,
@@ -58,6 +60,6 @@
         }
       }
     },
-    "ranking": { "type": "object", "additionalProperties": false, "required": ["sourcePriority"], "properties": { "referencePoint": { "$ref": "#/$defs/point" }, "sourcePriority": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["yandex", "gdebenz", "2gis"] } } } }
+    "ranking": { "type": "object", "additionalProperties": false, "required": ["sourcePriority"], "properties": { "referencePoint": { "$ref": "#/$defs/point" }, "sourcePriority": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["yandex", "gdebenz", "2gis", "benzonavt"] } } } }
   }
 }

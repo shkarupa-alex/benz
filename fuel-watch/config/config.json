@@ -36,7 +36,8 @@
   "sources": [
     { "id": "yandex", "enabled": true, "order": 1, "provenanceGroup": "crowd-shared" },
     { "id": "gdebenz", "enabled": true, "order": 2, "provenanceGroup": "crowd-shared" },
-    { "id": "2gis", "enabled": true, "order": 3, "provenanceGroup": "2gis" }
+    { "id": "2gis", "enabled": true, "order": 3, "provenanceGroup": "2gis" },
+    { "id": "benzonavt", "enabled": true, "order": 4, "provenanceGroup": "crowd-shared" }
   ],
   "browser": {
     "executable": "agent-browser",
@@ -45,12 +46,13 @@
     "idleTimeoutMs": 10000,
     "adapterTimeoutMs": 45000,
     "cleanupReserveMs": 20000,
-    "allowedDomains": ["yandex.ru", "*.yandex.ru", "yandex.net", "*.yandex.net", "gdebenz.ru", "*.gdebenz.ru", "2gis.ru", "*.2gis.ru", "2gis.com", "*.2gis.com"]
+    "allowedDomains": ["yandex.ru", "*.yandex.ru", "yandex.net", "*.yandex.net", "gdebenz.ru", "*.gdebenz.ru", "2gis.ru", "*.2gis.ru", "2gis.com", "*.2gis.com", "benzonavt.ru", "*.benzonavt.ru"]
   },
   "monitoring": { "intervalMinutes": 15, "waitChunkSeconds": 45, "compactAfterEmptyTicks": 4 },
+  "history": { "retentionDays": 7, "forecastCount": 3 },
   "freshness": { "freshMinutes": 45, "recentMinutes": 180, "staleMinutes": 360, "expireMinutes": 360, "futureSkewSeconds": 120, "conflictWindowMinutes": 30 },
   "activity": { "quietGapMinutes": 60, "resumeWindowMinutes": 20, "minimumEvents": 2, "strongSignalCountPerHour": 4 },
   "queue": { "ordinalMaxVehicles": { "NONE": 0, "SHORT": 5, "MEDIUM": 12, "LONG": 25 }, "unknownPosition": "AFTER_KNOWN" },
   "identity": { "maxCoordinateDriftMeters": 100, "ambiguityMargin": 0.18, "brandAliases": {}, "streetDictionary": {}, "manualOverrides": [] },
-  "ranking": { "sourcePriority": ["yandex", "gdebenz", "2gis"] }
+  "ranking": { "sourcePriority": ["yandex", "gdebenz", "2gis", "benzonavt"] }
 }

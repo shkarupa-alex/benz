@@ -30,3 +30,12 @@ test("report excludes catalog and expired observations from supporting sources",
   assert.match(markdown,/низкая, 10 мин/);
   assert.doesNotMatch(markdown,/низкая, 1 мин/);
 });
+
+test("report always includes the seven-day forecast section with timing and uncertainty", () => {
+  const snapshot={fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",requestedProducts:[],rankedStationKeys:[],assessments:[],sourceHealth:[],warnings:[],changes:[],forecast:{retentionDays:7,items:[{stationKey:"s",title:"АЗС",address:"Адрес",expectedAt:"2026-08-30T12:00:00Z",windowStartAt:"2026-08-30T11:30:00Z",windowEndAt:"2026-08-30T12:30:00Z",confidence:"LOW",basis:"AREA",sampleSize:2}]}};
+  const {markdown}=renderReport(snapshot);
+  assert.match(markdown,/Прогноз ближайшего появления \(история 7 дней\)/);
+  assert.match(markdown,/АЗС · Адрес — около/);
+  assert.match(markdown,/основа: прошлые периоды в зоне, 2 эп\./);
+  assert.match(markdown,/До трёх прогнозов пока не хватает/);
+});

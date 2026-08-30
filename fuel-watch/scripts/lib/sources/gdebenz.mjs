@@ -9,7 +9,7 @@ export async function collect(request, ctx) {
     if (is502(opened)) { opened = await ctx.browser.open("https://gdebenz.ru/"); if (is502(opened)) return healthResult(id, "HTTP_ERROR", "HTTP_ERROR_PAGE", "Fixture-validated 502 error page"); }
     await ctx.browser.waitReady({ anyOfSelectors: ["#map", "[class*=map]", "script"], urlRejectPatterns: ["captcha", "challenge"], timeoutMs: Math.min(20000, ctx.config.browser.adapterTimeoutMs) });
     let raw = await ctx.browser.evalJson(gdebenzApiExtractor(nearbyUrl(request.area.polygon)));
-    if (raw.apiUnavailable) {
+    if (raw.apiUnavailable || raw.schemaChanged) {
       const fallback = await ctx.browser.evalJson(GDEBENZ_EXTRACTOR);
       raw = fallback.schemaChanged ? { ...fallback, message: `${raw.message}; ${fallback.message}` } : fallback;
     }
@@ -37,8 +37,8 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
       if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
       stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.addr, url: location.href });
       const detail = String(row.detail || '');
-      const listed = String(row.fuels_now || '') + ' ' + detail;
-      const hasAi95 = /(?:^|[^\p{L}\p{N}])(?:аи[-\s]?)?95(?:\+)?(?:[^\p{L}\p{N}]|$)/iu.test(listed);
+      const listed = String(row.fuels_now || '') + ',' + detail.split('·')[0];
+      const hasAi95 = /(?:^|[\s,;/])(?:аи[-\s]?|ai[-\s]?)?95\+?(?=$|[\s,;/])/iu.test(listed);
       const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);
       observations.push({ stationId: id, fuel: 'АИ-95', status: familyUnavailable ? 'нет топлива' : hasAi95 ? 'есть топливо' : 'нет данных о топливе', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
       const queue = detail.match(/очередь\s*([^·,;]*)/iu)?.[1]?.trim();
@@ -47,7 +47,9 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
         queues.push({ stationId: id, value: queue, ordinal, present: true, observedAt: isoTime(row.last_at) });
       }
     }
-    return { stations, observations, queues, activity: [], schemaChanged: stations.length === 0, partial: false, freshnessExpected: true, naturalTermination: true, message: stations.length ? undefined : 'gdebenz nearby API rows lacked station identity or coordinates' };
+    const hasFreshness = observations.some(observation => observation.observedAt);
+    const noFreshnessMetadata = observations.length > 0 && !hasFreshness;
+    return { stations, observations, queues, activity: [], apiUnavailable: stations.length === 0, schemaChanged: stations.length === 0, partial: noFreshnessMetadata, code: noFreshnessMetadata ? 'NO_FRESHNESS_METADATA' : undefined, freshnessExpected: hasFreshness, naturalTermination: true, message: stations.length === 0 ? 'gdebenz nearby API rows lacked station identity or coordinates' : noFreshnessMetadata ? 'gdebenz nearby API exposes no observation timestamps' : undefined };
   } catch (error) {
     return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API could not be read: ' + error.message };
   }

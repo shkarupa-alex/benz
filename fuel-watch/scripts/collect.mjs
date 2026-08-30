@@ -7,6 +7,7 @@ import { deriveActivityEvidence } from "./lib/activity.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { diffSnapshots } from "./lib/diff.mjs";
 import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
+import { defaultHistoryPath, recordHistory } from "./lib/history.mjs";
 import { reconcileStations } from "./lib/identity.mjs";
 import { normalizeQueues } from "./lib/queue.mjs";
 import { rankAssessments } from "./lib/ranking.mjs";
@@ -16,10 +17,11 @@ import { assessRequestedUnion } from "./lib/verdict.mjs";
 const adapters = {
   yandex: () => import("./lib/sources/yandex.mjs"),
   gdebenz: () => import("./lib/sources/gdebenz.mjs"),
-  "2gis": () => import("./lib/sources/twogis.mjs")
+  "2gis": () => import("./lib/sources/twogis.mjs"),
+  benzonavt: () => import("./lib/sources/benzonavt.mjs")
 };
 
-export async function collectSnapshot({ configPath, outputPath, previousPath, browserFactory = config => new BrowserRunner(config), now = new Date(), cleanupNow = Date.now } = {}) {
+export async function collectSnapshot({ configPath, outputPath, previousPath, historyPath, browserFactory = config => new BrowserRunner(config), now = new Date(), cleanupNow = Date.now } = {}) {
   const config = await loadConfig(configPath);
   const area = resolveArea(config.area);
   const previous = previousPath ? await readJson(previousPath) : undefined;
@@ -127,6 +129,10 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
     runtime: { browserNamespace: browserNamespaces[0], browserNamespaces, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup },
     changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), adapterContractHash, assessments })
   };
+  if (historyPath) {
+    try { snapshot.forecast = (await recordHistory(historyPath, snapshot, config)).forecast; }
+    catch (error) { warnings.push({ code: "HISTORY_UNAVAILABLE", message: `7-day history could not be updated: ${error.message}` }); snapshot.forecast = { generatedAt: fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: 0, completedEpisodeCount: 0, items: [] }; }
+  }
   if (outputPath) await writeJsonAtomic(outputPath, snapshot);
   return { snapshot, exitCode: warnings.some(w => w.code === "CLEANUP_FAILED") ? 75 : assessments.length || results.some(r => r.health.status === "OK") ? 0 : 2 };
 }
@@ -134,7 +140,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
 function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
 function isNetworkControlsHealth(health) { return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message)); }
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
+async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
 function baselineKey(source, areaHash, contractHash) { return `${source}:${areaHash}:${contractHash}`; }
 export function enforceCompleteness(results, previous, areaHash, contractHash, fetchedAt, warnings) {
   const cutoff = new Date(fetchedAt).getTime() - 90 * 86400000;
@@ -166,11 +172,11 @@ async function main() {
   const onSigterm = () => { interrupted = "SIGTERM"; };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: args.previous });
+  const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: args.previous, historyPath: args.history ?? defaultHistoryPath() });
   process.removeListener("SIGINT", onSigint);
   process.removeListener("SIGTERM", onSigterm);
   process.stdout.write(`${stableJson({ snapshot: result.snapshot, exitCode: result.exitCode })}\n`);
   process.exitCode = interrupted === "SIGINT" ? 130 : interrupted === "SIGTERM" ? 143 : result.exitCode;
 }
-function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--config", "--output", "--previous"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else throw new Error(`Unknown argument: ${arg}`); } return out; }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });
+function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--config", "--output", "--previous", "--history"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else throw new Error(`Unknown argument: ${arg}`); } return out; }
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });
