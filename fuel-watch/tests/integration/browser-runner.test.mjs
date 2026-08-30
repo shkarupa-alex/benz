@@ -47,6 +47,36 @@ test("page loss is explicit and cannot become an empty parser result", async () 
   await assert.rejects(runner.open("https://yandex.ru/maps"), error => error.code === "PAGE_LOST");
 });
 
+test("initial redirect may land on another allowed host", async () => {
+  const config=await loadConfig();
+  const landed="https://maps.yandex.ru/captcha";
+  const exec=async(command,args)=>{
+    if(args.includes("open"))return{exitCode:0,stdout:JSON.stringify({data:{url:landed}}),stderr:""};
+    if(args.includes("url"))return{exitCode:0,stdout:JSON.stringify({data:{url:landed}}),stderr:""};
+    if(args.includes("title"))return{exitCode:0,stdout:JSON.stringify({data:{title:"Captcha"}}),stderr:""};
+    if(args.includes("text"))return{exitCode:0,stdout:JSON.stringify({data:{text:"captcha"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  const opened=await runner.open("https://yandex.ru/maps");
+  assert.equal(opened.finalUrl,landed);
+});
+
+test("initial redirect may cross between configured 2GIS domains", async () => {
+  const config=await loadConfig();
+  const landed="https://2gis.com/volgograd/search/%D0%90%D0%97%D0%A1";
+  const exec=async(command,args)=>{
+    if(args.includes("open"))return{exitCode:0,stdout:JSON.stringify({data:{url:landed}}),stderr:""};
+    if(args.includes("url"))return{exitCode:0,stdout:JSON.stringify({data:{url:landed}}),stderr:""};
+    if(args.includes("title"))return{exitCode:0,stdout:JSON.stringify({data:{title:"2GIS"}}),stderr:""};
+    if(args.includes("text"))return{exitCode:0,stdout:JSON.stringify({data:{text:"АЗС"}}),stderr:""};
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  const opened=await runner.open("https://2gis.ru/volgograd/search/%D0%90%D0%97%D0%A1");
+  assert.equal(opened.finalUrl,landed);
+});
+
 test("cleanup never invokes close --all outside owned namespace", async () => {
   const config = await loadConfig();
   let listCount = 0;

@@ -45,7 +45,7 @@ export class BrowserRunner {
     const opened = commandPayload(result.json);
     const reportedUrl = String(opened?.url ?? opened?.finalUrl ?? "");
     this.expectedUrl = reportedUrl || url;
-    if (reportedUrl) assertSameOrigin(url, reportedUrl);
+    if (reportedUrl) assertAllowedLanding(reportedUrl, this.config.browser.allowedDomains);
     const snapshot = await this.snapshot();
     return { finalUrl: snapshot.url, pageTextPrefix: snapshot.textPrefix };
   }
@@ -166,6 +166,13 @@ function assertSameOrigin(expected, actual) {
     if (actualUrl.protocol === "about:" || expectedUrl.origin !== actualUrl.origin) throw new Error();
   } catch { throw new BrowserError("PAGE_LOST", `Browser page changed unexpectedly: expected ${expected}, got ${actual || "empty URL"}`); }
 }
+function assertAllowedLanding(actual, allowedDomains) {
+  try {
+    const url = new URL(actual);
+    if (!["http:", "https:"].includes(url.protocol) || !allowedDomains.some(pattern => domainMatches(url.hostname, pattern))) throw new Error();
+  } catch { throw new BrowserError("RESOURCE_BLOCKED", `Browser landed outside allowed domains: ${actual || "empty URL"}`); }
+}
+function domainMatches(hostname, pattern) { const host = hostname.toLowerCase(), allowed = pattern.toLowerCase(); return allowed.startsWith("*.") ? host.endsWith(allowed.slice(1)) && host !== allowed.slice(2) : host === allowed; }
 function isBrowserLevelFailure(result) { return /daemon|connection|browser.*closed|target.*closed|socket|econn/i.test(`${result.stderr} ${result.stdout}`); }
 function classifyCommandFailure(result, operation) {
   const text = `${result.stderr} ${result.stdout}`;

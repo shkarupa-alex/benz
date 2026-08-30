@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { loadConfig } from "./lib/config.mjs";
@@ -9,10 +9,13 @@ import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
 import { readJson, stableJson, writeJsonAtomic } from "./lib/util.mjs";
 import { renderReport } from "./report.mjs";
 
+const MONITOR_ROOT = resolve(tmpdir(), "fuel-watch");
+const OWNER_FILE = "owner.json";
+
 export async function monitorCommand(command, args = {}) {
   if (command === "init") return init(args);
   const stateDir = requireStateDir(args);
-  if (command === "cleanup") { await rm(stateDir, { recursive: true, force: true }); return { cleaned: true, stateDir }; }
+  if (command === "cleanup") { await assertOwnedStateDir(stateDir); await rm(stateDir, { recursive: true, force: false }); return { cleaned: true, stateDir }; }
   const state = await readJson(join(stateDir, "state.json"));
   if (command === "recover") return recover(stateDir, state);
   if (command === "status") return { stateDir, state, stopped: await exists(join(stateDir, "STOP")) };
@@ -27,13 +30,16 @@ export async function monitorCommand(command, args = {}) {
 async function init(args) {
   const config = await loadConfig(args.config);
   const monitorId = args["monitor-id"] ?? randomUUID();
-  const stateDir = resolve(args["state-dir"] ?? join(tmpdir(), "fuel-watch", monitorId));
-  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  const stateDir = requireSafeLocation(resolve(args["state-dir"] ?? join(MONITOR_ROOT, monitorId)));
+  await mkdir(MONITOR_ROOT, { recursive: true, mode: 0o700 });
+  await mkdir(stateDir, { mode: 0o700 });
+  await assertRealLocation(stateDir);
   const leasePath = join(stateDir, "lease.json");
   const lease = { monitorId, refreshedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 2 * config.monitoring.intervalMinutes * 60000).toISOString() };
   await writeFile(leasePath, `${JSON.stringify(lease)}\n`, { flag: "wx", mode: 0o600 });
   const state = { schemaVersion: 1, monitorId, generation: 0, dueAt: new Date().toISOString(), availabilityRuns: [], consecutiveEmptyTicks: 0, configPath: args.config ? resolve(args.config) : undefined };
   await writeJsonAtomic(join(stateDir, "state.json"), state);
+  await writeFile(join(stateDir, OWNER_FILE), `${JSON.stringify({ kind: "fuel-watch-monitor", schemaVersion: 1, monitorId, stateDir })}\n`, { flag: "wx", mode: 0o600 });
   return { monitorId, stateDir, dueAt: state.dueAt };
 }
 async function recover(stateDir, state) {
@@ -83,7 +89,14 @@ async function commit(stateDir, state, args) {
   await refresh(stateDir, next);
   return { committed: true, generation: next.generation, dueAt: next.dueAt };
 }
-function requireStateDir(args) { if (!args["state-dir"]) throw new Error("--state-dir is required"); return resolve(args["state-dir"]); }
+function requireStateDir(args) { if (!args["state-dir"]) throw new Error("--state-dir is required"); return requireSafeLocation(resolve(args["state-dir"])); }
+function requireSafeLocation(stateDir) { const rel = relative(MONITOR_ROOT, stateDir); if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`State directory must be a child of ${MONITOR_ROOT}`); return stateDir; }
+async function assertRealLocation(stateDir) { const info = await lstat(stateDir); if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("State directory must be a real directory, not a symlink"); const [rootPath, statePath] = await Promise.all([realpath(MONITOR_ROOT), realpath(stateDir)]); const rel = relative(rootPath, statePath); if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("State directory resolves outside the Fuel Watch temporary root"); }
+async function assertOwnedStateDir(stateDir) {
+  await assertRealLocation(stateDir);
+  const [owner, state, lease] = await Promise.all([readJson(join(stateDir, OWNER_FILE)), readJson(join(stateDir, "state.json")), readJson(join(stateDir, "lease.json"))]);
+  if (owner.kind !== "fuel-watch-monitor" || owner.schemaVersion !== 1 || state.schemaVersion !== 1 || !owner.monitorId || owner.monitorId !== state.monitorId || owner.monitorId !== lease.monitorId || owner.stateDir !== stateDir) throw new Error("Refusing cleanup: Fuel Watch ownership validation failed");
+}
 async function exists(path) { try { await stat(path); return true; } catch (error) { if (error.code === "ENOENT") return false; throw error; } }
 
 async function main() { const [command, ...argv] = process.argv.slice(2); const args = parseArgs(argv); process.stdout.write(`${stableJson(await monitorCommand(command, args))}\n`); }

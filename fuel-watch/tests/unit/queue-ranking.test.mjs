@@ -22,3 +22,13 @@ test("recent observed transition outranks an older run", () => {
   const recent = { ...base, stationKey: "recent", availabilityRun: { basis: "OBSERVED_TRANSITION", firstObservedAt: "2026-08-30T09:55:00Z" } };
   assert.equal(rankAssessments([old, recent], [44,48], new Date("2026-08-30T10:00:00Z"))[0].stationKey, "recent");
 });
+
+test("catalog and expired positives have zero ranking support", () => {
+  const current={source:"yandex",status:"IN_STOCK",ageMinutes:5,expired:false,product:{specificity:"EXACT_VARIANT"}};
+  const catalog={source:"2gis",status:"IN_STOCK",ageMinutes:1,expired:false,product:{specificity:"CATALOG_ONLY"}};
+  const expired={source:"gdebenz",status:"IN_STOCK",ageMinutes:500,expired:true,product:{specificity:"FAMILY_ONLY"}};
+  const base={verdict:"AVAILABLE",confidence:"MEDIUM",activity:[],coordinate:[44,48],queue:{comparable:false}};
+  const honest={...base,stationKey:"a",observations:[current]};
+  const inflated={...base,stationKey:"b",observations:[current,catalog,expired]};
+  assert.equal(rankAssessments([inflated,honest],[44,48])[0].stationKey,"a");
+});

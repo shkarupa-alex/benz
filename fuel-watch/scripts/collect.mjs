@@ -67,7 +67,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
   }
   const referencePoint = config.ranking.referencePoint ?? centroid(area.polygon);
   const adapterContractHash = await computeAdapterContractHash();
-  applyCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt, warnings);
+  enforceCompleteness(results, previous, area.areaHash, adapterContractHash, fetchedAt, warnings);
   const snapshot = {
     schemaVersion: 1,
     fetchedAt,
@@ -94,16 +94,23 @@ function centroid(points) { const ring = points.length > 1 && points[0][0] === p
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
 function baselineKey(source, areaHash, contractHash) { return `${source}:${areaHash}:${contractHash}`; }
-function applyCoverageBaselines(results, previous, areaHash, contractHash, fetchedAt, warnings) {
+export function enforceCompleteness(results, previous, areaHash, contractHash, fetchedAt, warnings) {
   const cutoff = new Date(fetchedAt).getTime() - 90 * 86400000;
   for (const result of results) {
     if (!result.coverage) continue;
     const baseline = previous?.coverageBaselines?.[baselineKey(result.source, areaHash, contractHash)];
-    if (baseline && new Date(baseline.updatedAt).getTime() >= cutoff && baseline.stationCount >= 4 && result.coverage.stationCount < baseline.stationCount * 0.5) warnings.push({ code: "STATION_COUNT_REGRESSION", message: `${result.source}: station count ${result.coverage.stationCount} is below 50% of baseline ${baseline.stationCount}` });
-    if (result.coverage.duplicateRatio > 0.15 || result.coverage.coordinateCoverage < 0.9 || result.coverage.fuelBlockCoverage < 0.2 || result.coverage.timestampCoverage < 0.2) warnings.push({ code: "COMPLETENESS_INVARIANT", message: `${result.source}: coverage invariants failed (${JSON.stringify(result.coverage)})` });
+    const failures = [];
+    if (baseline && new Date(baseline.updatedAt).getTime() >= cutoff && baseline.stationCount >= 4 && result.coverage.stationCount < baseline.stationCount * 0.5) failures.push(`station count ${result.coverage.stationCount} is below 50% of baseline ${baseline.stationCount}`);
+    if (result.coverage.duplicateRatio > 0.15) failures.push("duplicate ratio exceeds 15%");
+    if (result.coverage.coordinateCoverage < 0.9) failures.push("coordinate coverage is below 90%");
+    if (result.coverage.fuelBlockCoverage < 0.2) failures.push("fuel-block coverage is below 20%");
+    if (result.coverage.timestampCoverage < 0.2) failures.push("timestamp coverage is below 20%");
+    if (!failures.length) continue;
+    if (result.health.status === "OK") result.health = { ...result.health, status: "PARTIAL", code: "COMPLETENESS_INVARIANT", message: failures.join("; ") };
+    warnings.push({ code: failures.some(value => value.startsWith("station count")) ? "STATION_COUNT_REGRESSION" : "COMPLETENESS_INVARIANT", message: `${result.source}: ${failures.join("; ")}` });
   }
 }
-function nextCoverageBaselines(results, previous, areaHash, contractHash, fetchedAt) {
+export function nextCoverageBaselines(results, previous, areaHash, contractHash, fetchedAt) {
   const cutoff = new Date(fetchedAt).getTime() - 90 * 86400000;
   const out = Object.fromEntries(Object.entries(previous?.coverageBaselines ?? {}).filter(([, value]) => new Date(value.updatedAt).getTime() >= cutoff));
   for (const result of results) if (result.health.status === "OK" && result.coverage) { const key = baselineKey(result.source, areaHash, contractHash); const old = out[key]; out[key] = { stationCount: Math.max(old?.stationCount ?? 0, result.coverage.stationCount), updatedAt: fetchedAt }; }

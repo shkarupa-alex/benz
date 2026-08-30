@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig } from "./lib/config.mjs";
+import { isCurrentPositiveObservation } from "./lib/evidence.mjs";
 import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
 import { readJson, sha256, stableJson } from "./lib/util.mjs";
 
@@ -41,8 +42,8 @@ function healthText(h) { return `${h.source}: ${h.status}${h.code && h.code !== 
 function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${c.current.title}: появилась в выборке`; if (c.type === "REMOVED") return `${c.previous.title}: исчезла из выборки`; return `${c.current.title}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
 function formatTime(value) { return new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
 function freshnessText(observations = []) { const usable = observations.filter(o => Number.isFinite(o.ageMinutes)); if (!usable.length) return "возраст неизвестен"; const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0]; const min = Math.round(freshest.ageMinutes); return `${freshest.approximate ? "≈" : ""}${min < 1 ? "только что" : `${min} мин`}`; }
-function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(o => ["IN_STOCK", "LIMITED"].includes(o.status)).map(o => o.source))]; return values.length ? values.join(", ") : "нет прямой поддержки"; }
-function runText(run) { if (!run) return "время появления неизвестно · "; const confidence = CONFIDENCE[run.confidence] ?? "уверенность неизвестна"; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} (${confidence}) · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} (${confidence}) · `; }
+function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(isCurrentPositiveObservation).map(o => o.source))]; return values.length ? values.join(", ") : "нет свежей текущей поддержки"; }
+function runText(run) { if (!run) return "время появления неизвестно · "; const confidence = CONFIDENCE[run.confidence] ?? "уверенность неизвестна"; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) · `; if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `впервые увидели вероятный сигнал ${formatTime(run.firstObservedAt)} (${confidence}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} (${confidence}) · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} (${confidence}) · `; }
 function activityText(activity = []) { if (activity.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "активность возобновилась (эвристика) · "; if (activity.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "активность продолжается (эвристика) · "; return ""; }
 function gradeText(item, requested = []) {
   const assessments = item.productAssessments ?? {};

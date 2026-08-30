@@ -25,3 +25,10 @@ test("one negative tick does not close established run", () => {
   const runs = updateAvailabilityRuns(old, [{stationKey:"s",verdict:"NOT_AVAILABLE",confidence:"MEDIUM"}], {assessments:[]}, "2026-08-30T10:15:00Z");
   assert.equal(runs[0].state, "AVAILABLE");
 });
+
+test("low-confidence likely tick is retained as cautious first-seen", () => {
+  const runs=updateAvailabilityRuns([], [{stationKey:"s",verdict:"LIKELY_AVAILABLE",confidence:"LOW"}], undefined, "2026-08-30T10:00:00Z");
+  assert.equal(runs[0].basis,"FIRST_SEEN");
+  assert.equal(runs[0].verdict,"LIKELY_AVAILABLE");
+  assert.equal(runs[0].confidence,"LOW");
+});
