@@ -17,6 +17,7 @@
 
 - [ ] **Yandex map canvas.** В headed-режиме левая панель и структурированные `fuelAvailability` данные загружаются, но canvas карты визуально оставался пустым. После согласованного restart diagnostic daemon собрать короткими командами console errors и failed/blocked requests без `screenshot`, HAR или trace; проверить asset-domain allowlist отдельно от парсера.
 - [ ] **Убрать visual-mode workaround после исправления agent-browser.** В версии 0.35.1 CDP network controls детерминированно ломают третью вкладку (`Cannot find default execution context`), а `screenshot` может заблокировать command queue. Сейчас видимый осмотр использует точные URL без network controls с ручной fail-closed проверкой final host; автоматический collect сохраняет allowlist.
+- [ ] **Freshness ГдеБЕНЗ.** Текущие `.stn[data-osm]` содержат статусы, но не timestamp и не freshness band. Источник помечается `NO_FRESHNESS_METADATA`, его наблюдения не влияют на вердикт и не считаются completeness-регрессией. Периодически проверять detail/card DOM: если сайт начнёт отдавать честную свежесть, подключить `EXACT` или `BOUNDED_AGE`, не подставляя fetch time.
 
 ## Исправления из ревью
 

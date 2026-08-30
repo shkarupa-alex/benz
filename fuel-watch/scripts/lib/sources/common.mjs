@@ -58,5 +58,5 @@ function coverageMetrics(stations, observations, raw) {
   const unique = new Set(ids);
   const stationIdsWithFuel = new Set(observations.map(o => o.sourceStationId));
   const timed = observations.filter(o => o.time?.kind !== "UNKNOWN").length;
-  return { stationCount: stations.length, coordinateCoverage: stations.length ? stations.filter(s => validCoordinate(s.coordinate)).length / stations.length : 0, duplicateRatio: stations.length ? 1 - unique.size / stations.length : 0, fuelBlockCoverage: unique.size ? stationIdsWithFuel.size / unique.size : 0, timestampCoverage: observations.length ? timed / observations.length : 0, naturalTermination: raw.naturalTermination !== false };
+  return { stationCount: stations.length, coordinateCoverage: stations.length ? stations.filter(s => validCoordinate(s.coordinate)).length / stations.length : 0, duplicateRatio: stations.length ? 1 - unique.size / stations.length : 0, fuelBlockCoverage: unique.size ? stationIdsWithFuel.size / unique.size : 0, timestampCoverage: observations.length ? timed / observations.length : 0, freshnessExpected: raw.freshnessExpected !== false, naturalTermination: raw.naturalTermination !== false };
 }

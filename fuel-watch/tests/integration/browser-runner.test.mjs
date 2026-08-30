@@ -129,6 +129,18 @@ test("post-open network-control failure recreates before page inspection", async
   assert.equal(runner.networkControlsStatus,"DEGRADED");
 });
 
+test("ordinary Runtime.evaluate failure never disables network controls", async () => {
+  const config=await loadConfig(); let opens=0;
+  const exec=async(command,args)=>{
+    if(args.includes("open")){opens++;return{exitCode:1,stdout:"",stderr:"CDP error (Runtime.evaluate): JavaScript exception"};}
+    return{exitCode:0,stdout:JSON.stringify({data:{sessions:[]}}),stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath});
+  await assert.rejects(runner.open("https://gdebenz.ru/"),error=>error.code==="INTERNAL_ADAPTER_ERROR");
+  assert.equal(opens,1);
+  assert.equal(runner.networkControlsStatus,"PENDING");
+});
+
 test("network controls are installed once per live browser session", async () => {
   const config=await loadConfig();
   const openCalls=[];
@@ -181,6 +193,30 @@ test("cleanup never invokes close --all outside owned namespace", async () => {
   const fallback = calls.find(args => args.includes("--all"));
   assert.ok(fallback);
   assert.equal(fallback[fallback.indexOf("--namespace") + 1], "owned");
+});
+
+test("cleanup verifies every rotated namespace and preserves early close failures", async () => {
+  const config=await loadConfig(); config.browser.cleanupReserveMs=20;
+  const alive=new Map([["old-owned",true]]); const calls=[];
+  const exec=async(command,args)=>{
+    calls.push(args);
+    const namespace=args[args.indexOf("--namespace")+1];
+    if(args.includes("list"))return{exitCode:0,stdout:JSON.stringify({data:{sessions:alive.get(namespace)?[{name:"source"}]:[]}}),stderr:""};
+    if(args.includes("close") && args.includes("--all"))return{exitCode:1,stdout:"",stderr:"fallback failed"};
+    if(args.includes("close") && namespace==="old-owned")return{exitCode:1,stdout:"",stderr:"early close failed"};
+    if(args.includes("close")){alive.set(namespace,false);return{exitCode:0,stdout:"{}",stderr:""};}
+    return{exitCode:0,stdout:"{}",stderr:""};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath,namespace:"old-owned",sessionName:"source"});
+  await runner.closeSessionBestEffort();
+  runner.rotateNamespace();
+  alive.set(runner.namespace,true);
+  const cleanup=await runner.close();
+  assert.equal(cleanup.sessionsRemaining,1);
+  assert.equal(cleanup.namespaces.length,2);
+  assert.equal(cleanup.namespaces.find(value=>value.namespace==="old-owned").sessionsRemaining,1);
+  assert.ok(cleanup.warnings.some(value=>value.startsWith("old-owned: session close failed: early close failed")));
+  assert.ok(calls.some(args=>args.includes("--all") && args[args.indexOf("--namespace")+1]==="old-owned"));
 });
 
 test("cleanup waits for an asynchronously disappearing session before fallback", async () => {

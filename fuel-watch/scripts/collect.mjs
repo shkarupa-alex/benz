@@ -124,10 +124,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
 }
 
 function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
-function isNetworkControlsHealth(health) {
-  if (health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls|CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message))) return true;
-  return health?.code === "PAGE_LOST" && /got about:blank/i.test(String(health.message));
-}
+function isNetworkControlsHealth(health) { return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message)); }
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
 function baselineKey(source, areaHash, contractHash) { return `${source}:${areaHash}:${contractHash}`; }
@@ -141,7 +138,7 @@ export function enforceCompleteness(results, previous, areaHash, contractHash, f
     if (result.coverage.duplicateRatio > 0.15) failures.push("duplicate ratio exceeds 15%");
     if (result.coverage.coordinateCoverage < 0.9) failures.push("coordinate coverage is below 90%");
     if (result.coverage.fuelBlockCoverage < 0.2) failures.push("fuel-block coverage is below 20%");
-    if (result.coverage.timestampCoverage < 0.2) failures.push("timestamp coverage is below 20%");
+    if (result.coverage.freshnessExpected !== false && result.coverage.timestampCoverage < 0.2) failures.push("timestamp coverage is below 20%");
     if (!failures.length) continue;
     if (result.health.status === "OK") result.health = { ...result.health, status: "PARTIAL", code: "COMPLETENESS_INVARIANT", message: failures.join("; ") };
     warnings.push({ code: failures.some(value => value.startsWith("station count")) ? "STATION_COUNT_REGRESSION" : "COMPLETENESS_INVARIANT", message: `${result.source}: ${failures.join("; ")}` });

@@ -78,7 +78,7 @@ test("adapter-level network-control failure retries the source once degraded", a
   assert.ok(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")));
 });
 
-test("about-blank page loss retries once but external page drift does not", async () => {
+test("about-blank page loss never disables network controls", async () => {
   let created=0;
   const browserFactory=(config,sourceId)=>{
     const attempt=created++;
@@ -94,6 +94,7 @@ test("about-blank page loss retries once but external page drift does not", asyn
     };
   };
   const result=await collectSnapshot({browserFactory,now:new Date("2026-08-30T10:00:00Z")});
-  assert.equal(created,4);
-  assert.equal(result.snapshot.sourceHealth.find(value=>value.source==="gdebenz").code,"HTTP_ERROR_PAGE");
+  assert.equal(created,3);
+  assert.equal(result.snapshot.sourceHealth.find(value=>value.source==="gdebenz").code,"PAGE_LOST");
+  assert.equal(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")),false);
 });

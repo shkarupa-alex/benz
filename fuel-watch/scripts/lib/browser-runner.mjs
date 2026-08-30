@@ -18,6 +18,7 @@ export class BrowserRunner {
     this.probed = false;
     this.networkControlsStatus = "PENDING";
     this.runtimeWarnings = [];
+    this.cleanupWarningsByNamespace = new Map([[this.namespace, []]]);
     this.expectedUrl = undefined;
   }
 
@@ -83,6 +84,7 @@ export class BrowserRunner {
   rotateNamespace() {
     this.namespace = uniqueId("fuel-watch");
     this.namespaceHistory.push(this.namespace);
+    this.cleanupWarningsByNamespace.set(this.namespace, []);
   }
 
   async waitReady(condition) {
@@ -128,46 +130,56 @@ export class BrowserRunner {
   }
 
   async close() {
-    const warnings = [];
-    await this.closeSessionBestEffort(warnings);
-    const startedAt = Date.now();
-    let remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs / 2);
-    if (remaining > 0) {
-      const fallback = await this.commandJson(["close", "--all", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs });
-      if (fallback.exitCode !== 0) warnings.push(`namespace close --all failed: ${clampText(fallback.stderr || fallback.stdout)}`);
-      remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs);
+    const namespaces = [];
+    for (const namespace of [...new Set(this.namespaceHistory)]) {
+      const warnings = [...this.cleanupWarningsFor(namespace)];
+      await this.closeSessionBestEffort(warnings, namespace);
+      const startedAt = Date.now();
+      let remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs / 2, namespace);
+      if (remaining > 0) {
+        const fallback = await this.commandJson(["close", "--all", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs, namespace });
+        if (fallback.exitCode !== 0) warnings.push(`namespace close --all failed: ${clampText(fallback.stderr || fallback.stdout)}`);
+        remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs, namespace);
+      }
+      if (remaining > 0) warnings.push(`${remaining} owned session(s) remain`);
+      namespaces.push({ namespace, sessionsRemaining: remaining, warnings: [...new Set(warnings)] });
     }
     this.started = false;
-    if (remaining > 0) warnings.push(`${remaining} owned session(s) remain`);
-    return { sessionsRemaining: remaining, warnings };
+    return { sessionsRemaining: namespaces.reduce((sum, value) => sum + value.sessionsRemaining, 0), warnings: namespaces.flatMap(value => value.warnings.map(message => `${value.namespace}: ${message}`)), namespaces };
   }
 
-  async closeSessionBestEffort(warnings = []) {
-    const result = await this.commandJson(["close", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs });
+  cleanupWarningsFor(namespace) {
+    if (!this.cleanupWarningsByNamespace.has(namespace)) this.cleanupWarningsByNamespace.set(namespace, []);
+    return this.cleanupWarningsByNamespace.get(namespace);
+  }
+
+  async closeSessionBestEffort(warnings, namespace = this.namespace) {
+    warnings ??= this.cleanupWarningsFor(namespace);
+    const result = await this.commandJson(["close", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs, namespace });
     if (result.exitCode !== 0 && !/no active|not found|not running/i.test(`${result.stderr} ${result.stdout}`)) warnings.push(`session close failed: ${clampText(result.stderr || result.stdout)}`);
   }
 
-  async sessionsRemaining() {
-    const result = await this.commandJson(["session", "list", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs });
+  async sessionsRemaining(namespace = this.namespace) {
+    const result = await this.commandJson(["session", "list", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs, namespace });
     if (result.exitCode !== 0) return 1;
     const value = unwrapJson(result.json);
     const sessions = Array.isArray(value) ? value : value?.sessions ?? value?.data?.sessions ?? [];
     return sessions.length;
   }
 
-  async waitForNoSessions(deadline) {
-    let remaining = await this.sessionsRemaining();
+  async waitForNoSessions(deadline, namespace = this.namespace) {
+    let remaining = await this.sessionsRemaining(namespace);
     while (remaining > 0 && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-      remaining = await this.sessionsRemaining();
+      remaining = await this.sessionsRemaining(namespace);
     }
     return remaining;
   }
 
-  environment() {
+  environment(namespace = this.namespace) {
     const env = {};
     for (const key of SAFE_ENV) if (process.env[key]) env[key] = process.env[key];
-    env.AGENT_BROWSER_NAMESPACE = this.namespace;
+    env.AGENT_BROWSER_NAMESPACE = namespace;
     env.AGENT_BROWSER_SESSION = this.sessionName;
     env.AGENT_BROWSER_IDLE_TIMEOUT_MS = String(this.config.browser.idleTimeoutMs);
     return env;
@@ -175,7 +187,8 @@ export class BrowserRunner {
 
   async commandJson(args, options = {}) {
     const launchMode = this.config.browser.headed ? ["--headed"] : [];
-    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, ...launchMode, "--namespace", this.namespace, "--session", this.sessionName, ...args], { env: this.environment(), timeoutMs: options.timeoutMs, input: options.input });
+    const namespace = options.namespace ?? this.namespace;
+    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, ...launchMode, "--namespace", namespace, "--session", this.sessionName, ...args], { env: this.environment(namespace), timeoutMs: options.timeoutMs, input: options.input });
     let json;
     try { json = result.stdout.trim() ? JSON.parse(result.stdout) : null; } catch { json = null; }
     return { ...result, json };
@@ -218,7 +231,7 @@ function assertAllowedLanding(actual, allowedDomains) {
 }
 function domainMatches(hostname, pattern) { const host = hostname.toLowerCase(), allowed = pattern.toLowerCase(); return allowed.startsWith("*.") ? host.endsWith(allowed.slice(1)) && host !== allowed.slice(2) : host === allowed; }
 function isNetworkControlsFailure(result) { return isNetworkControlsFailureText(`${result.stderr} ${result.stdout}`); }
-function isNetworkControlsFailureText(text) { return /failed to install browser network controls|CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(text)); }
+function isNetworkControlsFailureText(text) { return /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(text)); }
 function isBrowserLevelFailure(result) { return /daemon|connection|failed to connect|browser.*closed|target.*closed|session with given id not found|no session with given id|cannot find default execution context|execution context.*(?:destroyed|not found)|socket|econn/i.test(`${result.stderr} ${result.stdout}`); }
 function classifyCommandFailure(result, operation) {
   const text = `${result.stderr} ${result.stdout}`;

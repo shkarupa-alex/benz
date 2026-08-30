@@ -71,4 +71,6 @@ test("gdebenz page extractor uses stable data-osm cards", () => {
   assert.equal(raw.observations[0].status,"есть топливо");
   assert.equal(raw.queues[0].present,true);
   assert.equal(raw.partial,true);
+  assert.equal(raw.freshnessExpected,false);
+  assert.match(raw.message,/no observation timestamps or freshness bands/);
 });

@@ -55,5 +55,8 @@ export const GDEBENZ_EXTRACTOR = String.raw`(() => {
     if (/очередь/i.test(label)) queues.push({ stationId: id, present: true, value: 'очередь' });
   }
   const missingCoordinates = stations.some(s => !Number.isFinite(Number(s.coordinate?.[0])) || !Number.isFinite(Number(s.coordinate?.[1])));
-  return { stations, observations, queues, activity, schemaChanged: stations.length === 0, partial: missingCoordinates, code: missingCoordinates ? 'COORDINATE_COVERAGE' : undefined, message: missingCoordinates ? 'Recognizable gdebenz station statuses were found, but some coordinates are unavailable' : stations.length ? undefined : 'gdebenz page exposed no recognizable station data' };
+  const hasFreshness = observations.some(o => o.observedAt || (Number.isFinite(o.minMinutes) && Number.isFinite(o.maxMinutes)));
+  const noFreshnessMetadata = observations.length > 0 && !hasFreshness;
+  const limitations = [missingCoordinates && 'some coordinates are unavailable', noFreshnessMetadata && 'the source exposes no observation timestamps or freshness bands'].filter(Boolean);
+  return { stations, observations, queues, activity, schemaChanged: stations.length === 0, partial: missingCoordinates || noFreshnessMetadata, code: missingCoordinates ? 'COORDINATE_COVERAGE' : noFreshnessMetadata ? 'NO_FRESHNESS_METADATA' : undefined, message: limitations.length ? 'Recognizable gdebenz station statuses were found, but ' + limitations.join(' and ') : stations.length ? undefined : 'gdebenz page exposed no recognizable station data', freshnessExpected: !noFreshnessMetadata };
 })()`;
