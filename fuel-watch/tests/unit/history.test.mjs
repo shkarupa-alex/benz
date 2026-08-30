@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,4 +126,17 @@ test("parallel history updates retain every tick", async () => {
   assert.equal(saved.ticks.length,8);
   assert.deepEqual(saved.ticks.map(value=>value.fetchedAt).sort(),snapshots.map(value=>value.fetchedAt).sort());
   await assert.rejects(readFile(`${path}.lock`,"utf8"),error=>error.code==="ENOENT");
+});
+
+test("history recovers legacy locks left by a crashed reclaimer process", async () => {
+  const config=await loadConfig();
+  const dir=await mkdtemp(join(tmpdir(),"fuel-history-reclaimer-crash-test-"));
+  const path=join(dir,"history.json");
+  const child=spawnSync(process.execPath,["-e",`const fs=require('node:fs');const path=process.argv[1];const owner=JSON.stringify({pid:process.pid,nonce:'crashed',acquiredAt:new Date().toISOString()});fs.writeFileSync(path+'.lock',owner);fs.writeFileSync(path+'.lock.reclaim',owner);process.exit(99)`,path],{encoding:"utf8"});
+  assert.equal(child.status,99);
+  const snapshot={fetchedAt:"2026-08-31T00:00:00Z",areaHash:"area",queryHash:"query",assessments:[]};
+  const result=await recordHistory(path,snapshot,config);
+  assert.equal(result.history.ticks.length,1);
+  await assert.rejects(readFile(`${path}.lock`,"utf8"),error=>error.code==="ENOENT");
+  await assert.rejects(readFile(`${path}.lock.reclaim`,"utf8"),error=>error.code==="ENOENT");
 });

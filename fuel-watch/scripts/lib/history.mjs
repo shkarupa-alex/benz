@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import properLockfile from "proper-lockfile";
 import { readJson, writeJsonAtomic } from "./util.mjs";
 
 const POSITIVE = new Set(["AVAILABLE", "LIKELY_AVAILABLE"]);
@@ -36,45 +36,27 @@ export async function recordHistory(path, snapshot, config) {
 async function withHistoryLock(path, operation) {
   const lockPath = `${path}.lock`;
   const reclaimPath = `${lockPath}.reclaim`;
-  const owner = { pid: process.pid, nonce: randomUUID(), acquiredAt: new Date().toISOString() };
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + 5000;
-  while (true) {
-    try {
-      await writeFile(lockPath, `${JSON.stringify(owner)}\n`, { flag: "wx", mode: 0o600 });
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      await reclaimDeadHistoryLock(lockPath, reclaimPath);
-      if (Date.now() >= deadline) throw Object.assign(new Error(`Timed out waiting for history lock: ${lockPath}`), { code: "HISTORY_LOCK_TIMEOUT" });
-      await new Promise(resolveWait => setTimeout(resolveWait, 20));
-    }
+  await recoverLegacyFileLock(reclaimPath);
+  await recoverLegacyFileLock(lockPath);
+  let release;
+  try {
+    release = await properLockfile.lock(path, { realpath: false, stale: 30000, update: 10000, retries: { retries: 250, factor: 1, minTimeout: 20, maxTimeout: 20, randomize: false } });
+  } catch (error) {
+    if (error.code === "ELOCKED") throw Object.assign(new Error(`Timed out waiting for history lock: ${lockPath}`), { code: "HISTORY_LOCK_TIMEOUT", cause: error });
+    throw error;
   }
   try { return await operation(); }
-  finally { await releaseOwnedLock(lockPath, owner.nonce); }
+  finally { await release(); }
 }
 
-async function reclaimDeadHistoryLock(lockPath, reclaimPath) {
-  const reclaimer = { pid: process.pid, nonce: randomUUID(), acquiredAt: new Date().toISOString() };
-  try { await writeFile(reclaimPath, `${JSON.stringify(reclaimer)}\n`, { flag: "wx", mode: 0o600 }); }
-  catch (error) { if (error.code === "EEXIST") return; throw error; }
-  try {
-    const [raw, info] = await Promise.all([readFile(lockPath, "utf8"), stat(lockPath)]).catch(error => error.code === "ENOENT" ? [] : Promise.reject(error));
-    if (!raw) return;
-    let holder;
-    try { holder = JSON.parse(raw); } catch { holder = undefined; }
-    const invalidAndOld = !Number.isInteger(holder?.pid) && Date.now() - info.mtimeMs > 30000;
-    if (invalidAndOld || (Number.isInteger(holder?.pid) && !isProcessAlive(holder.pid))) await releaseOwnedLock(lockPath, holder?.nonce, { allowInvalid: invalidAndOld });
-  } finally { await releaseOwnedLock(reclaimPath, reclaimer.nonce); }
-}
-
-async function releaseOwnedLock(path, nonce, { allowInvalid = false } = {}) {
-  const raw = await readFile(path, "utf8").catch(error => error.code === "ENOENT" ? undefined : Promise.reject(error));
-  if (raw == null) return;
-  let current;
-  try { current = JSON.parse(raw); } catch { current = undefined; }
-  if (allowInvalid ? current?.nonce != null : (!nonce || current?.nonce !== nonce)) return;
-  await unlink(path).catch(error => { if (error.code !== "ENOENT") throw error; });
+async function recoverLegacyFileLock(path) {
+  const [raw, info] = await Promise.all([readFile(path, "utf8"), stat(path)]).catch(error => error.code === "ENOENT" || error.code === "EISDIR" ? [] : Promise.reject(error));
+  if (!raw || !info?.isFile()) return;
+  let holder;
+  try { holder = JSON.parse(raw); } catch { holder = undefined; }
+  const recoverable = Number.isInteger(holder?.pid) ? !isProcessAlive(holder.pid) : Date.now() - info.mtimeMs > 30000;
+  if (recoverable) await unlink(path).catch(error => { if (!['ENOENT','EISDIR','EPERM'].includes(error.code)) throw error; });
 }
 
 function isProcessAlive(pid) {
