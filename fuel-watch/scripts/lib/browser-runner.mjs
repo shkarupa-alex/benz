@@ -14,6 +14,7 @@ export class BrowserRunner {
     this.sessionName = options.sessionName ?? "source";
     this.command = options.command ?? config.browser.executable;
     this.exec = options.exec ?? execute;
+    this.now = options.now ?? Date.now;
     this.started = false;
     this.probed = false;
     this.networkControlsStatus = "PENDING";
@@ -131,16 +132,27 @@ export class BrowserRunner {
 
   async close() {
     const namespaces = [];
-    for (const namespace of [...new Set(this.namespaceHistory)]) {
+    const ownedNamespaces = [...new Set(this.namespaceHistory)];
+    const cleanupDeadline = this.now() + this.config.browser.cleanupReserveMs;
+    for (const [index, namespace] of ownedNamespaces.entries()) {
       const warnings = [...this.cleanupWarningsFor(namespace)];
-      await this.closeSessionBestEffort(warnings, namespace);
-      const startedAt = Date.now();
-      let remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs / 2, namespace);
-      if (remaining > 0) {
-        const fallback = await this.commandJson(["close", "--all", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs, namespace });
-        if (fallback.exitCode !== 0) warnings.push(`namespace close --all failed: ${clampText(fallback.stderr || fallback.stdout)}`);
-        remaining = await this.waitForNoSessions(startedAt + this.config.browser.cleanupReserveMs, namespace);
+      const namespaceCountRemaining = ownedNamespaces.length - index;
+      const namespaceBudget = Math.floor(this.remainingCleanupMs(cleanupDeadline) / namespaceCountRemaining);
+      const namespaceDeadline = Math.min(cleanupDeadline, this.now() + namespaceBudget);
+      if (namespaceBudget <= 0) {
+        warnings.push("cleanup deadline exhausted before namespace verification");
+        namespaces.push({ namespace, sessionsRemaining: 1, warnings: [...new Set(warnings)] });
+        continue;
       }
+      await this.closeSessionBestEffort(warnings, namespace, namespaceDeadline);
+      const naturalWaitDeadline = Math.min(namespaceDeadline, this.now() + Math.floor(this.remainingCleanupMs(namespaceDeadline) / 2));
+      let remaining = await this.waitForNoSessions(naturalWaitDeadline, namespace);
+      if (remaining > 0 && this.remainingCleanupMs(namespaceDeadline) > 0) {
+        const fallback = await this.commandJson(["close", "--all", "--json"], { timeoutMs: this.remainingCleanupMs(namespaceDeadline), namespace });
+        if (fallback.exitCode !== 0) warnings.push(`namespace close --all failed: ${clampText(fallback.stderr || fallback.stdout)}`);
+        remaining = await this.waitForNoSessions(namespaceDeadline, namespace);
+      }
+      if (remaining > 0 && this.remainingCleanupMs(namespaceDeadline) <= 0) warnings.push("cleanup deadline exhausted before namespace became empty");
       if (remaining > 0) warnings.push(`${remaining} owned session(s) remain`);
       namespaces.push({ namespace, sessionsRemaining: remaining, warnings: [...new Set(warnings)] });
     }
@@ -153,14 +165,20 @@ export class BrowserRunner {
     return this.cleanupWarningsByNamespace.get(namespace);
   }
 
-  async closeSessionBestEffort(warnings, namespace = this.namespace) {
+  remainingCleanupMs(deadline) { return Math.max(0, deadline - this.now()); }
+
+  async closeSessionBestEffort(warnings, namespace = this.namespace, deadline) {
     warnings ??= this.cleanupWarningsFor(namespace);
-    const result = await this.commandJson(["close", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs, namespace });
+    const timeoutMs = deadline == null ? this.config.browser.cleanupReserveMs : this.remainingCleanupMs(deadline);
+    if (timeoutMs <= 0) { warnings.push("cleanup deadline exhausted before session close"); return; }
+    const result = await this.commandJson(["close", "--json"], { timeoutMs, namespace });
     if (result.exitCode !== 0 && !/no active|not found|not running/i.test(`${result.stderr} ${result.stdout}`)) warnings.push(`session close failed: ${clampText(result.stderr || result.stdout)}`);
   }
 
-  async sessionsRemaining(namespace = this.namespace) {
-    const result = await this.commandJson(["session", "list", "--json"], { timeoutMs: this.config.browser.cleanupReserveMs, namespace });
+  async sessionsRemaining(namespace = this.namespace, deadline) {
+    const timeoutMs = deadline == null ? this.config.browser.cleanupReserveMs : this.remainingCleanupMs(deadline);
+    if (timeoutMs <= 0) return 1;
+    const result = await this.commandJson(["session", "list", "--json"], { timeoutMs, namespace });
     if (result.exitCode !== 0) return 1;
     const value = unwrapJson(result.json);
     const sessions = Array.isArray(value) ? value : value?.sessions ?? value?.data?.sessions ?? [];
@@ -168,10 +186,11 @@ export class BrowserRunner {
   }
 
   async waitForNoSessions(deadline, namespace = this.namespace) {
-    let remaining = await this.sessionsRemaining(namespace);
-    while (remaining > 0 && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-      remaining = await this.sessionsRemaining(namespace);
+    let remaining = await this.sessionsRemaining(namespace, deadline);
+    while (remaining > 0 && this.now() < deadline) {
+      const waitBudget = deadline - this.now();
+      await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(1, Math.floor(waitBudget / 2)))));
+      remaining = await this.sessionsRemaining(namespace, deadline);
     }
     return remaining;
   }

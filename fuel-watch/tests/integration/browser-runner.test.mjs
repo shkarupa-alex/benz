@@ -219,6 +219,27 @@ test("cleanup verifies every rotated namespace and preserves early close failure
   assert.ok(calls.some(args=>args.includes("--all") && args[args.indexOf("--namespace")+1]==="old-owned"));
 });
 
+test("cleanup uses one absolute reserve across commands and namespaces", async () => {
+  const config=await loadConfig(); config.browser.cleanupReserveMs=20;
+  let now=1000; const calls=[];
+  const exec=async(command,args,options)=>{
+    const namespace=args[args.indexOf("--namespace")+1];
+    calls.push({namespace,args,timeoutMs:options.timeoutMs,startedAt:now});
+    now+=Math.min(7,options.timeoutMs);
+    if(args.includes("list"))return{exitCode:0,stdout:JSON.stringify({data:{sessions:[{name:"source"}]}}),stderr:""};
+    if(args.includes("--all"))return{exitCode:1,stdout:"",stderr:"fallback failed"};
+    return{exitCode:1,stdout:"",stderr:"close failed"};
+  };
+  const runner=new BrowserRunner(config,{exec,command:process.execPath,namespace:"budget-old",sessionName:"source",now:()=>now});
+  runner.rotateNamespace();
+  const cleanup=await runner.close();
+  assert.ok(calls.every(call=>call.timeoutMs>0 && call.timeoutMs<=20));
+  assert.ok(calls.every(call=>call.timeoutMs<=1020-call.startedAt));
+  assert.ok(now<=1020);
+  assert.equal(cleanup.sessionsRemaining,2);
+  assert.ok(cleanup.namespaces.every(value=>value.warnings.some(message=>/deadline exhausted/.test(message))));
+});
+
 test("cleanup waits for an asynchronously disappearing session before fallback", async () => {
   const config=await loadConfig(); config.browser.cleanupReserveMs=100;
   let polls=0; const calls=[];
