@@ -19,7 +19,7 @@ const adapters = {
   "2gis": () => import("./lib/sources/twogis.mjs")
 };
 
-export async function collectSnapshot({ configPath, outputPath, previousPath, browserFactory = config => new BrowserRunner(config), now = new Date() } = {}) {
+export async function collectSnapshot({ configPath, outputPath, previousPath, browserFactory = config => new BrowserRunner(config), now = new Date(), cleanupNow = Date.now } = {}) {
   const config = await loadConfig(configPath);
   const area = resolveArea(config.area);
   const previous = previousPath ? await readJson(previousPath) : undefined;
@@ -29,6 +29,14 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
   const warnings = [];
   let runtimeHealth = { status: "OK" };
   const cleanups = [];
+  const cleanupBudgetMs = config.browser.cleanupReserveMs;
+  let cleanupRemainingMs = cleanupBudgetMs;
+  const closeRunner = async runner => {
+    const startedAt = cleanupNow();
+    const deadline = startedAt + cleanupRemainingMs;
+    try { return await runner.close(deadline); }
+    finally { cleanupRemainingMs = Math.max(0, cleanupRemainingMs - Math.max(0, cleanupNow() - startedAt)); }
+  };
   const browserNamespaces = [];
   const orderedSources = [...config.sources].sort((a, b) => a.order - b.order);
   const firstEnabled = orderedSources.find(source => source.enabled);
@@ -59,7 +67,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
         } catch (error) {
           sourceResult = { source: source.id, health: { source: source.id, status: "PARTIAL", code: "INTERNAL_ADAPTER_ERROR", message: error.message }, stations: [], observations: [], queues: [], activity: [] };
         } finally {
-          const sourceCleanup = await runner.close().catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
+          const sourceCleanup = await closeRunner(runner).catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
           for (const namespace of runner.namespaceHistory ?? [runner.namespace]) if (!browserNamespaces.includes(namespace)) browserNamespaces.push(namespace);
           cleanups.push({ source: source.id, browserNamespaces: runner.namespaceHistory ?? [runner.namespace], networkControls: runner.networkControlsStatus, ...sourceCleanup });
           for (const message of runner.runtimeWarnings ?? []) warnings.push({ code: "BROWSER_NETWORK_CONTROLS_DEGRADED", message: `${source.id}: ${message}` });
@@ -77,10 +85,10 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, br
       results.push(sourceResult);
     }
   } else if (firstRunner) {
-    const sourceCleanup = await firstRunner.close().catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
+    const sourceCleanup = await closeRunner(firstRunner).catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
     cleanups.push({ source: firstEnabled.id, networkControls: firstRunner.networkControlsStatus, ...sourceCleanup });
   }
-  const cleanup = { sessionsRemaining: cleanups.reduce((sum, value) => sum + value.sessionsRemaining, 0), warnings: cleanups.flatMap(value => value.warnings.map(message => `${value.source}: ${message}`)), sources: cleanups };
+  const cleanup = { budgetMs: cleanupBudgetMs, spentMs: cleanupBudgetMs - cleanupRemainingMs, remainingMs: cleanupRemainingMs, sessionsRemaining: cleanups.reduce((sum, value) => sum + value.sessionsRemaining, 0), warnings: cleanups.flatMap(value => value.warnings.map(message => `${value.source}: ${message}`)), sources: cleanups };
   if (cleanup.sessionsRemaining || cleanup.warnings.length) warnings.push({ code: "CLEANUP_FAILED", message: cleanup.warnings.join("; ") || `${cleanup.sessionsRemaining} browser session(s) remain` });
   if (results.some(r => ["PARTIAL", "SCHEMA_CHANGED", "CHALLENGE", "TIMEOUT", "HTTP_ERROR", "RESOURCE_BLOCKED"].includes(r.health.status))) warnings.push({ code: "PARTIAL_COVERAGE", message: "At least one source did not provide complete evidence." });
 

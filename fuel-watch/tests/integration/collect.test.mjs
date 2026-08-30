@@ -78,6 +78,46 @@ test("adapter-level network-control failure retries the source once degraded", a
   assert.ok(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")));
 });
 
+test("all source runners and retries share one collection cleanup reserve", async () => {
+  let created=0;
+  let cleanupClock=0;
+  const closes=[];
+  const browserFactory=(config,sourceId)=>{
+    const attempt=created++;
+    return{
+      namespace:`cleanup-${attempt}`,
+      networkControlsStatus:"PENDING",
+      runtimeWarnings:[],
+      probe:async()=>({}),
+      open:async url=>{
+        if(sourceId==="yandex")return{finalUrl:url,pageTextPrefix:"limited"};
+        if(sourceId==="gdebenz" && attempt===1)throw Object.assign(new Error("Failed to install browser network controls: CDP error (Runtime.evaluate): Cannot find default execution context"),{code:"BROWSER_UNAVAILABLE"});
+        if(sourceId==="gdebenz")return{finalUrl:url,pageTitle:"Error 502",pageTextPrefix:"502 - Bad Gateway"};
+        return{finalUrl:"https://2gis.ru/captcha",pageTextPrefix:"captcha"};
+      },
+      waitReady:async()=>{},
+      evalJson:async()=>({}),
+      close:async deadline=>{
+        const startedAt=cleanupClock;
+        const spent=Math.min(7000,Math.max(0,deadline-startedAt));
+        cleanupClock+=spent;
+        closes.push({startedAt,deadline,spent});
+        return{sessionsRemaining:1,warnings:["fixture hung cleanup"]};
+      }
+    };
+  };
+  const result=await collectSnapshot({browserFactory,now:new Date("2026-08-30T10:00:00Z"),cleanupNow:()=>cleanupClock});
+  const cleanup=result.snapshot.runtime.cleanup;
+  assert.equal(created,4);
+  assert.equal(closes.length,4);
+  assert.ok(closes.every(value=>value.deadline===cleanup.budgetMs));
+  assert.equal(cleanupClock,cleanup.budgetMs);
+  assert.equal(cleanup.spentMs,cleanup.budgetMs);
+  assert.equal(cleanup.remainingMs,0);
+  assert.equal(closes.at(-1).spent,0);
+  assert.equal(result.exitCode,75);
+});
+
 test("about-blank page loss never disables network controls", async () => {
   let created=0;
   const browserFactory=(config,sourceId)=>{

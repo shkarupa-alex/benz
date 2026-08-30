@@ -130,10 +130,9 @@ export class BrowserRunner {
     assertSameOrigin(this.expectedUrl, String(unwrapJson(result.json) ?? ""));
   }
 
-  async close() {
+  async close(cleanupDeadline = this.now() + this.config.browser.cleanupReserveMs) {
     const namespaces = [];
     const ownedNamespaces = [...new Set(this.namespaceHistory)];
-    const cleanupDeadline = this.now() + this.config.browser.cleanupReserveMs;
     for (const [index, namespace] of ownedNamespaces.entries()) {
       const warnings = [...this.cleanupWarningsFor(namespace)];
       const namespaceCountRemaining = ownedNamespaces.length - index;
