@@ -553,6 +553,8 @@ Example row:
 
 Every rendered station address is a Yandex Maps link: use the reconciled `[lon, lat]` as an exact map pin when available and a strict RFC3986-encoded Volgograd address search only as fallback, including percent-encoding parentheses that would otherwise terminate a Markdown destination. This applies to ranked recommendations, forecasts, and changed-station rows. No availability claim is rendered without confidence and freshness information. Repeat-report diffs compare verdict, confidence, and queue transitions, not rank movement or harmless age drift inside the same freshness band.
 
+The rendered Markdown is the canonical user-facing artifact in both on-demand and monitoring modes. The agent publishes the complete `report.mjs` stdout or decoded JSON `markdown` value verbatim as Markdown, never paraphrases/reformats it, never strips links or lines, and never wraps it in a code fence or blockquote. A separate operational note may precede or follow the full report after an execution failure, but cannot replace or alter it.
+
 ## Failure isolation
 
 Adapters return typed health instead of throwing for expected failures:
