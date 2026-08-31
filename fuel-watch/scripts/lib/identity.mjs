@@ -1,5 +1,5 @@
 import { haversineMeters } from "./geometry.mjs";
-import { ADDRESS_UNIT_KINDS, brandLabel, compileBrandAliases, compileStreetDictionary, normalizeAddress, normalizeBrand, normalizeComparableBrand, normalizeText } from "./normalize.mjs";
+import { ADDRESS_UNIT_KINDS, brandLabel, compileBrandAliases, compileStreetDictionary, isAddressUnitValue, normalizeAddress, normalizeBrand, normalizeComparableBrand, normalizeText } from "./normalize.mjs";
 import { sha256 } from "./util.mjs";
 
 export function reconcileStations(stations, config, previousSnapshot) {
@@ -111,7 +111,7 @@ function addressParts(address) {
   const tokens = address.split(" ").filter(Boolean);
   const units = {};
   for (let index = 0; index < tokens.length - 1; index++) {
-    if (!ADDRESS_UNIT_KINDS.has(tokens[index]) || !/^\d+[а-яa-z]?$/u.test(tokens[index + 1])) continue;
+    if (!ADDRESS_UNIT_KINDS.has(tokens[index]) || !isAddressUnitValue(tokens[index], tokens[index + 1])) continue;
     units[tokens[index]] = tokens[index + 1];
   }
   for (let index = tokens.length - 1; index >= 0; index--) {

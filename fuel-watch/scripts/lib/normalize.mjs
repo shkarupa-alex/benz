@@ -42,6 +42,10 @@ export function compileStreetDictionary(dictionary = {}) {
 
 export const ADDRESS_UNIT_KINDS = new Set(["корпус", "строение", "литера", "владение", "сооружение"]);
 
+export function isAddressUnitValue(kind, value) {
+  return kind === "литера" ? /^(?:\d+[а-яa-z]?|[а-яa-z])$/u.test(value ?? "") : /^\d+[а-яa-z]?$/u.test(value ?? "");
+}
+
 export function normalizeAddress(value, dictionary = {}) {
   const protectedValue = String(value ?? "")
     .replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s*\/\s*(\d+[а-яa-z]?)/giu, "$1 корпус $2")
@@ -57,7 +61,8 @@ export function normalizeAddress(value, dictionary = {}) {
       index++;
       continue;
     }
-    tokens.push(unitKinds.has(token) && /^\d+[а-яa-z]?$/u.test(next ?? "") ? unitKinds.get(token) : token);
+    const unitKind = unitKinds.get(token);
+    tokens.push(unitKind && isAddressUnitValue(unitKind, next) ? unitKind : token);
   }
   return applyPhraseDictionary(tokens, dictionary).join(" ");
 }
