@@ -66,4 +66,9 @@ test("normalizes slash corpus notation and preserves a street initial", () => {
 test("normalizes full and abbreviated letter qualifiers", () => {
   assert.equal(normalizeAddress("ул. Мира, 10, литера А"), "мира 10 литера а");
   assert.equal(normalizeAddress("ул. Мира, 10, лит. А"), "мира 10 литера а");
+  assert.equal(normalizeAddress("ул. Мира, 10, корпус А"), "мира 10 корпус а");
+  assert.equal(normalizeAddress("ул. Мира, 10, корп. А"), "мира 10 корпус а");
+  assert.equal(normalizeAddress("ул. Мира, 10, строение Б"), "мира 10 строение б");
+  assert.equal(normalizeAddress("ул. Мира, 10, стр. Б"), "мира 10 строение б");
+  assert.equal(normalizeAddress("ул. им. К. А. Тимирязева, 5"), "к а тимирязева 5");
 });

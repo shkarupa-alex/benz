@@ -42,8 +42,8 @@ export function compileStreetDictionary(dictionary = {}) {
 
 export const ADDRESS_UNIT_KINDS = new Set(["корпус", "строение", "литера", "владение", "сооружение"]);
 
-export function isAddressUnitValue(kind, value) {
-  return kind === "литера" ? /^(?:\d+[а-яa-z]?|[а-яa-z])$/u.test(value ?? "") : /^\d+[а-яa-z]?$/u.test(value ?? "");
+export function isAddressUnitValue(kind, value, { allowLetter = ["корпус", "строение", "литера"].includes(kind) } = {}) {
+  return allowLetter ? /^(?:\d+[а-яa-z]?|[а-яa-z])$/u.test(value ?? "") : /^\d+[а-яa-z]?$/u.test(value ?? "");
 }
 
 export function normalizeAddress(value, dictionary = {}) {
@@ -62,7 +62,8 @@ export function normalizeAddress(value, dictionary = {}) {
       continue;
     }
     const unitKind = unitKinds.get(token);
-    tokens.push(unitKind && isAddressUnitValue(unitKind, next) ? unitKind : token);
+    const ambiguousSingleLetter = token === "к";
+    tokens.push(unitKind && isAddressUnitValue(unitKind, next, { allowLetter: !ambiguousSingleLetter && ["корпус", "строение", "литера"].includes(unitKind) }) ? unitKind : token);
   }
   return applyPhraseDictionary(tokens, dictionary).join(" ");
 }

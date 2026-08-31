@@ -186,6 +186,26 @@ for (const [left, right] of [["литера А", "литера Б"], ["лит. �
   });
 }
 
+for (const [kind, left, right] of [["корпус", "корпус А", "корпус Б"], ["корп.", "корп. А", "корп. Б"], ["строение", "строение А", "строение Б"], ["стр.", "стр. А", "стр. Б"]]) {
+  test(`different alphabetic ${kind} values remain separate`, async () => {
+    const config = await loadConfig();
+    const values = reconcileStations([
+      { source: "yandex", sourceStationId: "unit-a", title: "АЗС", brand: "Лукойл", address: `ул. Мира, 10, ${left}`, coordinate: [44.5, 48.7] },
+      { source: "2gis", sourceStationId: "unit-b", title: "АЗС", brand: "Лукойл", address: `ул. Мира, 10, ${right}`, coordinate: [44.5, 48.7] }
+    ], config);
+    assert.equal(values.length, 2);
+  });
+}
+
+test("an abbreviated alphabetic corpus matches its full spelling", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "full-corpus", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус А", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "short-corpus", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корп. А", coordinate: [44.50001, 48.7] }
+  ], config);
+  assert.equal(values.length, 1);
+});
+
 test("full and abbreviated spellings of the same letter qualifier merge", async () => {
   const config = await loadConfig();
   const values = reconcileStations([
