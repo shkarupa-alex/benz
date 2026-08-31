@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadConfig } from "./lib/config.mjs";
-import { isCurrentPositiveObservation } from "./lib/evidence.mjs";
+import { isCurrentPositiveObservation, isFreshActivity } from "./lib/evidence.mjs";
 import { petrolOctaneKey } from "./lib/fuels.mjs";
 import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
 import { readJson, sha256, stableJson } from "./lib/util.mjs";
@@ -62,7 +62,6 @@ function runText(run, activity = [], verdict, fetchedAt, freshness) { if (!run) 
 function sourceTransitionCluster(activity, fetchedAt, freshness) { const values = [...activity].filter(value => value.kind === "SOURCE_REPORTED_TRANSITION" && value.observedAt && isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness)).sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt)); const clusters = []; for (const value of values) { const current = clusters.at(-1); if (!current || new Date(value.observedAt) - new Date(current.at(-1).observedAt) > 120 * 60000) clusters.push([value]); else current.push(value); } return clusters.at(-1) ?? []; }
 function activityText(activity = [], fetchedAt, freshness) { const current = activity.filter(value => isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness)); if (current.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "активность возобновилась (эвристика) · "; if (current.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "активность продолжается (эвристика) · "; return ""; }
 function isAi95Activity(value) { return petrolOctaneKey(value) === "95"; }
-function isFreshActivity(value, fetchedAt, freshness = {}) { const eventMs = new Date(value.latestEventAt ?? value.resumedAt ?? value.observedAt).getTime(), fetchedMs = new Date(fetchedAt).getTime(); const futureSkewMs = Number(freshness?.futureSkewSeconds ?? 120) * 1000, expireMs = Number(freshness?.expireMinutes ?? 360) * 60000; return Number.isFinite(eventMs) && Number.isFinite(fetchedMs) && eventMs <= fetchedMs + futureSkewMs && fetchedMs - eventMs <= expireMs; }
 function forecastBasis(value) { return ({ STATION: "прошлые периоды этой АЗС", BRAND: "прошлые периоды этого бренда", AREA: "прошлые периоды в зоне" })[value] ?? "история зоны"; }
 function forecastSignalBasis(value) { if (value === "ROLLING_ACTIVITY") return "rolling-count сигналов по октановым маркам"; if (value === "SOURCE_ACTIVITY_TIMELINE") return "история возобновления активности у источника"; if (value === "SOURCE_REPORTED_STATUS") return "история переходов статуса у источника"; if (value === "PETROL_STATUS_PATTERN") return "синхронные переходы статусов бензиновых марок"; return "переходы АИ-95 отсутствовало → появилось"; }
 

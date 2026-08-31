@@ -1,4 +1,4 @@
-import { errorResult, healthResult, okResult } from "./common.mjs";
+import { detailTiming, errorResult, healthResult, okResult } from "./common.mjs";
 
 export const id = "2gis";
 export const capability = "CURRENT_GRADE";
@@ -8,13 +8,14 @@ export async function collect(request, ctx) {
     const opened = await ctx.browser.open("https://2gis.ru/volgograd/search/%D0%90%D0%97%D0%A1");
     if (/\/captcha|\/museum|recaptcha|провер.{0,20}(робот|человек)/iu.test(`${opened.finalUrl} ${opened.pageTextPrefix}`)) return healthResult(id, "CHALLENGE", "CHALLENGE", "2GIS presented CAPTCHA/challenge; no bypass attempted");
     await ctx.browser.waitReady({ anyOfSelectors: ["[class*=searchResults]", "a[href*=firm]"], urlRejectPatterns: ["/captcha", "/museum", "recaptcha"], timeoutMs: Math.min(20000, ctx.config.browser.adapterTimeoutMs) });
-    const raw = await ctx.browser.evalJson(twogisExtractor(request.area.polygon));
+    const timing = detailTiming(ctx.config);
+    const raw = await ctx.browser.evalJson(twogisExtractor(request.area.polygon, timing.requestTimeoutMs, timing.budgetMs));
     if (raw.challenge) return healthResult(id, "CHALLENGE", "CHALLENGE", "2GIS challenge detected; no bypass attempted");
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
     return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
-export function twogisExtractor(polygon, detailTimeoutMs = 3500) { return String.raw`(async () => {
+export function twogisExtractor(polygon, detailTimeoutMs = 3500, detailBudgetMs = 10000) { return String.raw`(async () => {
   const body = document.body?.innerText || '';
   if (/recaptcha|captcha|подтвердите,? что вы не робот|museum/i.test(location.href + ' ' + body.slice(0,2000))) return { challenge: true };
   const stations = [], observations = [], queues = [], activity = [], seen = new Set();
@@ -31,7 +32,7 @@ export function twogisExtractor(polygon, detailTimeoutMs = 3500) { return String
   const isPetrol = value => /(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/u.test(String(value || ''));
   const gradeOf = value => String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/u)?.[1];
   const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
-  const detailDeadline = Date.now() + 10000;
+  const detailDeadline = Date.now() + ${Number(detailBudgetMs)};
   const detailCandidates = liveRows.filter(row => row?.station?.id && insideBounds(row.station));
   const details = await mapLimit(detailCandidates, 6, async row => { const remainingMs = detailDeadline - Date.now(); if (remainingMs <= 0) return; const response = await fetch('https://benzin.api.2gis.ru/api/v1/stations/' + encodeURIComponent(row.station.id), { signal: AbortSignal.timeout(Math.max(1, Math.min(${Number(detailTimeoutMs)}, remainingMs))) }); if (!response.ok) return; const detail = await response.json(); return detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : undefined; });
   const detailsById = new Map(details.filter(Boolean).map(detail => [String(detail.station?.id || ''), detail]));

@@ -1,4 +1,4 @@
-import { errorResult, healthResult, okResult } from "./common.mjs";
+import { detailTiming, errorResult, healthResult, okResult } from "./common.mjs";
 
 export const id = "gdebenz";
 export const capability = "CURRENT_FAMILY";
@@ -8,17 +8,18 @@ export async function collect(request, ctx) {
     let opened = await ctx.browser.open("https://gdebenz.ru/");
     if (is502(opened)) { opened = await ctx.browser.open("https://gdebenz.ru/"); if (is502(opened)) return healthResult(id, "HTTP_ERROR", "HTTP_ERROR_PAGE", "Fixture-validated 502 error page"); }
     await ctx.browser.waitReady({ anyOfSelectors: ["#map", "[class*=map]", "script"], urlRejectPatterns: ["captcha", "challenge"], timeoutMs: Math.min(20000, ctx.config.browser.adapterTimeoutMs) });
-    let raw = await ctx.browser.evalJson(gdebenzApiExtractor(nearbyUrl(request.area.polygon)));
+    const timing = detailTiming(ctx.config);
+    let raw = await ctx.browser.evalJson(gdebenzApiExtractor(nearbyUrl(request.area.polygon), timing.requestTimeoutMs, timing.budgetMs));
     if (raw.apiUnavailable || raw.schemaChanged) {
       const fallback = await ctx.browser.evalJson(GDEBENZ_EXTRACTOR);
       raw = fallback.schemaChanged ? { ...fallback, message: `${raw.message}; ${fallback.message}` } : fallback;
     }
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
-    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability, activityCapability: "CURRENT_GRADE" });
+    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
 function is502(opened) { return /^\s*(?:error\s+)?502(?:\s*-?\s*bad gateway)?\s*$/iu.test(opened.pageTitle ?? "") || /^\s*502\s*-?\s*bad gateway\b/iu.test(opened.pageTextPrefix ?? ""); }
-export function gdebenzApiExtractor(url, detailTimeoutMs = 3500) { return String.raw`(async () => {
+export function gdebenzApiExtractor(url, detailTimeoutMs = 3500, detailBudgetMs = 10000) { return String.raw`(async () => {
   try {
     const response = await fetch(${JSON.stringify(url)}, { credentials: 'same-origin' });
     if (!response.ok) return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API returned HTTP ' + response.status };
@@ -35,7 +36,7 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500) { return String
     const petrolGrades = value => [...new Set((String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu) || []).map(match => match.match(/92|95|98|100/u)?.[0]).filter(Boolean))];
     const commentPetrolGrades = value => { const fuelSegment = String(value || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(fuelSegment) ? [] : petrolGrades(fuelSegment); };
     const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
-    const detailDeadline = Date.now() + 10000;
+    const detailDeadline = Date.now() + ${Number(detailBudgetMs)};
     const detailRows = rows.filter(row => String(row.osm_id || row.id || '') && Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat)));
     const commentRows = await mapLimit(detailRows, 6, async row => { const remainingMs = detailDeadline - Date.now(); if (remainingMs <= 0) return; const id = String(row.osm_id || row.id || ''); const commentsResponse = await fetch('/api/comments/' + encodeURIComponent(id) + '/recent?limit=12', { credentials: 'same-origin', signal: AbortSignal.timeout(Math.max(1, Math.min(${Number(detailTimeoutMs)}, remainingMs))) }); if (!commentsResponse.ok) return; const comments = await commentsResponse.json(); return Array.isArray(comments) ? [id, comments] : undefined; });
     const commentsById = new Map(commentRows.filter(Boolean));
@@ -58,7 +59,8 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500) { return String
         const status = String(comment.status || '').toLowerCase();
         const grades = commentPetrolGrades(comment.detail);
         const detailText = String(comment.detail || '');
-        const namesSpecificFuel = /(?:^|[^\p{L}\p{N}])(?:дт|дизел\p{L}*|92|95|98|100)(?:[^\p{L}\p{N}]|$)/iu.test(detailText);
+        const fuelSegment = detailText.split('·')[0].trim();
+        const namesSpecificFuel = /(?:^|[^\p{L}\p{N}])(?:дт|дизел\p{L}*|92|95|98|100)(?:[^\p{L}\p{N}]|$)/iu.test(fuelSegment);
         const familyNegative = status === 'no' && !namesSpecificFuel && /нет\s+(?:топлива|бензина)|заправка\s+не\s+работает/iu.test(detailText);
         if (status === 'no') for (const grade of (grades.length ? grades : familyNegative ? knownGrades : [])) stateByGrade.set(grade, 'OUT_OF_STOCK');
         if (['yes','queue'].includes(status)) for (const grade of grades) {
@@ -81,7 +83,6 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500) { return String
     return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API could not be read: ' + error.message };
   }
 })()`; }
-
 function nearbyUrl(polygon) {
   const ring = polygon.length > 1 && polygon[0][0] === polygon.at(-1)[0] && polygon[0][1] === polygon.at(-1)[1] ? polygon.slice(0, -1) : polygon;
   const lon = ring.reduce((sum, point) => sum + point[0], 0) / ring.length;

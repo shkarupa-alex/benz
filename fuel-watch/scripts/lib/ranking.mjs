@@ -1,5 +1,5 @@
 import { haversineMeters } from "./geometry.mjs";
-import { isCurrentPositiveObservation } from "./evidence.mjs";
+import { isCurrentPositiveObservation, isFreshActivity } from "./evidence.mjs";
 import { petrolOctaneKey } from "./fuels.mjs";
 import { queueSortKey } from "./queue.mjs";
 
@@ -19,5 +19,4 @@ export function rankKey(a, ref, now = new Date(), freshness = {}) {
   const distance = ref ? haversineMeters(a.coordinate, ref) : 0;
   return [activity, support, confidence, freshnessAge, ...queue, runAge, distance, a.stationKey];
 }
-function isFreshActivity(value, now, freshness) { const eventMs = new Date(value.latestEventAt ?? value.resumedAt ?? value.observedAt).getTime(), nowMs = new Date(now).getTime(); return Number.isFinite(eventMs) && eventMs <= nowMs + Number(freshness.futureSkewSeconds ?? 120) * 1000 && nowMs - eventMs <= Number(freshness.expireMinutes ?? 360) * 60000; }
 function compareKeys(a, b) { for (let i = 0; i < a.length; i++) { if (a[i] < b[i]) return -1; if (a[i] > b[i]) return 1; } return 0; }

@@ -158,6 +158,13 @@ test("gdebenz detail timeout preserves current status and non-petrol negatives c
   assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),false);
 });
 
+test("gdebenz queue numbers do not turn a station-wide negative into a grade-specific one", async () => {
+  const rows={stations:[{osm_id:"s",lon:44.5,lat:48.7,status:"yes",fuels_now:"95",detail:"95",last_at:"2026-08-30 19:33:26"}]};
+  const comments=[{created_at:"2026-08-30T17:00:00Z",status:"no",detail:"Нет топлива · Очередь 95 машин"},{created_at:"2026-08-30T19:30:00Z",status:"yes",detail:"95"}];
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?comments:rows}),{href:"https://gdebenz.ru/"});
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),true);
+});
+
 test("2GIS extractor reads current fuel data and normalizes structured brands", async () => {
   const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=station-1";
   const rows=[{station:{id:"station-1",lng:44.5,lat:48.7,name:"АЗС",address:"Адрес",brand:{id:"brand-1",name:"Бренд"}},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z",queue_level:"UP_TO_25"}],queue_level:"UP_TO_25"}];
@@ -264,4 +271,11 @@ test("Benzonavt detail timeout preserves current status and diesel negative cann
   const detail={...rows[0],recent:[{created_at:"2026-08-31T08:00:00Z",status:"no",fuel_grades:["dt"]},{created_at:"2026-08-31T10:01:40Z",status:"yes",fuel_grades:["95"]}]};
   const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async url=>({ok:true,json:async()=>String(url).includes("/stations/986")?detail:rows}));
   assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),false);
+});
+
+test("Benzonavt queue numbers do not suppress a station-wide petrol negative", async () => {
+  const rows=[{id:986,lon:44.5,lat:48.7,fuels:["95"],st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-31T10:52:56Z"}}];
+  const detail={...rows[0],recent:[{created_at:"2026-08-31T08:00:00Z",status:"no",fuel_grades:[],detail:"Нет топлива · Очередь 95 машин"},{created_at:"2026-08-31T10:01:40Z",status:"yes",fuel_grades:["95"]}]};
+  const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async url=>({ok:true,json:async()=>String(url).includes("/stations/986")?detail:rows}));
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),true);
 });

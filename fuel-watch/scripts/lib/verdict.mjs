@@ -1,4 +1,5 @@
 import { ageMinutes } from "./util.mjs";
+import { activityTimestampMs, isFreshActivity } from "./evidence.mjs";
 
 const POSITIVE = new Set(["IN_STOCK", "LIMITED"]);
 const NEGATIVE = new Set(["OUT_OF_STOCK"]);
@@ -8,9 +9,9 @@ export function assessStation({ observations = [], activity = [], config, source
   const usable = evidence.filter(o => !o.expired && o.ageKind !== "UNKNOWN");
   const direct = usable.filter(o => o.product?.specificity === "EXACT_VARIANT");
   const positives = direct.filter(o => POSITIVE.has(o.status));
-  const negatives = direct.filter(o => NEGATIVE.has(o.status));
+  const negatives = usable.filter(o => NEGATIVE.has(o.status) && (o.product?.specificity === "EXACT_VARIANT" || o.familyAllUnavailable === true));
   const conflict = hasFreshConflict(positives, negatives, config.freshness.conflictWindowMinutes);
-  if (conflict) return result("CONFLICTING", "LOW", evidence, activity, "opposing fresh direct observations");
+  if (conflict) return result("CONFLICTING", "LOW", evidence, activity, "opposing fresh current observations");
   const freshestPositive = newest(positives);
   const freshestNegative = newest(negatives);
   if (freshestPositive && (!freshestNegative || freshestPositive.observedMs > freshestNegative.observedMs)) {
@@ -39,7 +40,7 @@ export function assessUnion(productAssessments) {
 export function assessRequestedUnion({ observations = [], activity = [], config, sourceGroups = {}, now = new Date() }) {
   const assessments = {};
   for (const product of config.requestedProducts.products) {
-    const matching = observations.filter(o => o.product?.productKey === product.productKey);
+    const matching = observations.filter(o => o.product?.productKey === product.productKey || (o.familyAllUnavailable === true && o.product?.specificity === "FAMILY_ONLY"));
     const matchingActivity = activity.filter(a => a.product?.productKey === product.productKey);
     assessments[product.productKey] = assessStation({ observations: matching, activity: matchingActivity, config, sourceGroups, now });
   }
@@ -92,7 +93,7 @@ function positiveConfidence(positives, activity, groups, config) {
   return "LOW";
 }
 function newest(values) { return [...values].sort((a, b) => b.observedMs - a.observedMs)[0]; }
-function newestActivity(values, freshness, now) { return newest(values.map(value => { const observedMs = new Date(value.latestEventAt ?? value.resumedAt ?? value.observedAt).getTime(); return { ...value, observedMs }; }).filter(value => Number.isFinite(value.observedMs) && value.observedMs <= now.getTime() + freshness.futureSkewSeconds * 1000 && now.getTime() - value.observedMs <= freshness.expireMinutes * 60000)); }
+function newestActivity(values, freshness, now) { return newest(values.filter(value => isFreshActivity(value, now, freshness)).map(value => ({ ...value, observedMs: activityTimestampMs(value) }))); }
 function result(verdict, confidence, observations, activity, reason) { return { verdict, confidence, observations, activity, reason }; }
 function strongest(values) { return [...values].sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence))[0]; }
 function weakest(values) { return [...values].sort((a, b) => confidenceRank(a) - confidenceRank(b))[0] ?? "NONE"; }

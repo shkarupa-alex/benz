@@ -1,4 +1,4 @@
-import { errorResult, healthResult, okResult } from "./common.mjs";
+import { detailTiming, errorResult, healthResult, okResult } from "./common.mjs";
 
 export const id = "benzonavt";
 export const capability = "CURRENT_GRADE";
@@ -8,14 +8,15 @@ export async function collect(request, ctx) {
     const opened = await ctx.browser.open("https://benzonavt.ru/");
     if (/captcha|recaptcha|провер.{0,20}(робот|человек)/iu.test(`${opened.finalUrl} ${opened.pageTextPrefix}`)) return healthResult(id, "CHALLENGE", "CHALLENGE", "Benzonavt presented CAPTCHA/challenge; no bypass attempted");
     await ctx.browser.waitReady({ anyOfSelectors: ["#map", "[class*=map]", "script[src*=_next]"], urlRejectPatterns: ["captcha", "challenge"], timeoutMs: Math.min(20000, ctx.config.browser.adapterTimeoutMs) });
-    const raw = await ctx.browser.evalJson(benzonavtExtractor(stationsUrl(request.area.polygon)));
+    const timing = detailTiming(ctx.config);
+    const raw = await ctx.browser.evalJson(benzonavtExtractor(stationsUrl(request.area.polygon), timing.requestTimeoutMs, timing.budgetMs));
     if (raw.challenge) return healthResult(id, "CHALLENGE", "CHALLENGE", "Benzonavt challenge detected; no bypass attempted");
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
     return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
 
-export function benzonavtExtractor(url, detailTimeoutMs = 3500) { return String.raw`(async () => {
+export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs = 10000) { return String.raw`(async () => {
   const body = document.body?.innerText || '';
   if (/recaptcha|captcha|подтвердите,? что вы не робот/iu.test(location.href + ' ' + body.slice(0,2000))) return { challenge: true };
   try {
@@ -29,7 +30,7 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500) { return String.
     const petrolGrades = values => [...new Set((Array.isArray(values) ? values : [values]).flatMap(value => String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu)?.map(match => match.match(/92|95|98|100/u)?.[0]) || []).filter(Boolean))];
     const eventPetrolGrades = event => { if (Array.isArray(event.fuel_grades)) return petrolGrades(event.fuel_grades); const fuelSegment = String(event.detail || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(fuelSegment) ? [] : petrolGrades(fuelSegment); };
     const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
-    const detailDeadline = Date.now() + 10000;
+    const detailDeadline = Date.now() + ${Number(detailBudgetMs)};
     const detailRows = rows.filter(row => String(row.id ?? '') && Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat)));
     const details = await mapLimit(detailRows, 6, async row => { const remainingMs = detailDeadline - Date.now(); if (remainingMs <= 0) return; const id = String(row.id ?? ''); const detailResponse = await fetch('/api/v1/stations/' + encodeURIComponent(id), { credentials: 'same-origin', signal: AbortSignal.timeout(Math.max(1, Math.min(${Number(detailTimeoutMs)}, remainingMs))) }); if (!detailResponse.ok) return; const detail = await detailResponse.json(); return detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : undefined; });
     const detailsById = new Map(details.filter(Boolean).map(detail => [String(detail.id), detail]));
@@ -66,7 +67,8 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500) { return String.
         const grades = eventPetrolGrades(event);
         const explicitFuelValues = Array.isArray(event.fuel_grades) ? event.fuel_grades : [];
         const detailText = String(event.detail || '');
-        const namesSpecificFuel = explicitFuelValues.length > 0 || /(?:^|[^\p{L}\p{N}])(?:дт|дизел\p{L}*|92|95|98|100)(?:[^\p{L}\p{N}]|$)/iu.test(detailText);
+        const fuelSegment = detailText.split('·')[0].trim();
+        const namesSpecificFuel = explicitFuelValues.length > 0 || /(?:^|[^\p{L}\p{N}])(?:дт|дизел\p{L}*|92|95|98|100)(?:[^\p{L}\p{N}]|$)/iu.test(fuelSegment);
         const familyNegative = status === 'no' && !namesSpecificFuel && (Array.isArray(event.fuel_grades) || /нет\s+(?:топлива|бензина)|заправка\s+не\s+работает/iu.test(detailText));
         if (status === 'no') for (const grade of (grades.length ? grades : familyNegative ? knownPetrol : [])) stateByGrade.set(grade, 'OUT_OF_STOCK');
         if (['yes','queue'].includes(status)) for (const grade of grades) {

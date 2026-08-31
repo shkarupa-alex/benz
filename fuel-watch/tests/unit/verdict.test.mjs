@@ -81,3 +81,15 @@ test("near-simultaneous negative and resumed AI-95 activity are conflicting", as
   const activity = [{ source:"benzonavt", product, kind:"TRANSACTIONS_RESUMED", gradeSpecific:true, latestEventAt:"2026-08-30T09:50:00Z" }];
   assert.equal(assessStation({observations:[negative],activity,config,now}).verdict,"CONFLICTING");
 });
+
+test("family-wide negative participates in activity timestamp arbitration", async () => {
+  const config = await loadConfig();
+  const now = new Date("2026-08-30T10:00:00Z");
+  const family = { family:"AI_95", variant:"UNKNOWN", specificity:"FAMILY_ONLY", productKey:"AI95_FAMILY" };
+  const negative = { source:"gdebenz", product:family, status:"OUT_OF_STOCK", familyAllUnavailable:true, time:{kind:"EXACT",observedAt:"2026-08-30T09:55:00Z"} };
+  const activity = [{ source:"gdebenz", product, kind:"TRANSACTIONS_RESUMED", gradeSpecific:true, latestEventAt:"2026-08-30T09:50:00Z" }];
+  const close = assessRequestedUnion({observations:[negative],activity,config,now});
+  assert.equal(close.verdict,"CONFLICTING");
+  const olderActivity = [{...activity[0],latestEventAt:"2026-08-30T09:00:00Z"}];
+  assert.equal(assessRequestedUnion({observations:[negative],activity:olderActivity,config,now}).verdict,"NOT_AVAILABLE");
+});
