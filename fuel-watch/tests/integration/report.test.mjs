@@ -14,7 +14,7 @@ test("report renders one octane-level assessment, approximate age, activity and 
   const {markdown}=renderReport(snapshot);
   assert.equal(markdown.match(/^\s*АИ-95:/gm)?.length,1);
   assert.doesNotMatch(markdown,/^\s*95(?:\+)?\s*:/m);
-  assert.match(markdown,/независимо от варианта и брендового названия/);
+  assert.match(markdown,/Настроенные варианты и брендовые названия объединены в АИ-95/);
   assert.match(markdown,/≈10 мин/);
   assert.match(markdown,/активность возобновилась \(эвристика\)/);
   assert.match(markdown,/средняя/);

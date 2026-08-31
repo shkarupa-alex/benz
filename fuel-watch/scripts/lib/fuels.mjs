@@ -28,6 +28,8 @@ export function classifyFuelLabel(label, requestedProducts) {
 }
 
 export function petrolOctaneKey(value = {}) {
+  // Forecasting intentionally covers only the configured petrol series; diesel,
+  // gas, unknown labels, and legacy grades such as AI-80 stay out of the model.
   const product = value.product ?? {};
   const productKey = String(value.productKey ?? product.productKey ?? "");
   const family = String(value.family ?? product.family ?? "");

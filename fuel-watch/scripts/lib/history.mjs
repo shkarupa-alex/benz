@@ -109,16 +109,14 @@ async function loadHistory(path) {
 }
 
 function compactTick(snapshot) {
-  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeKey: petrolOctaneKey(value), gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
+  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.productKey ?? value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
 }
 
 function rollingActivityEvents(ticks, config, identity, brandAliases) {
   const previous = new Map();
   const groups = new Map();
-  for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
-    if (!summary.gradeSpecific || !Number.isFinite(summary.count) || !Number.isFinite(summary.windowMinutes)) continue;
-    const grade = summary.gradeKey ?? petrolOctaneKey(summary);
-    if (!grade) continue;
+  for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of aggregateRollingByOctane(station.activity)) {
+    const grade = summary.grade;
     const identityId = identity.id(station);
     const key = `${identityId}|${summary.source}|${grade}`;
     const before = previous.get(key);
@@ -142,10 +140,8 @@ function rollingActivityEvents(ticks, config, identity, brandAliases) {
 function petrolStatusEvents(ticks, config, identity, brandAliases) {
   const previous = new Map();
   const groups = new Map();
-  for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
-    if (summary.kind !== "PETROL_STATUS_SNAPSHOT" || !summary.gradeSpecific) continue;
-    const grade = summary.gradeKey ?? petrolOctaneKey(summary);
-    if (!grade) continue;
+  for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of aggregateStatusesByOctane(station.activity)) {
+    const grade = summary.grade;
     const identityId = identity.id(station);
     const key = `${identityId}|${summary.source}|${grade}`;
     const before = previous.get(key);
@@ -160,6 +156,49 @@ function petrolStatusEvents(ticks, config, identity, brandAliases) {
     previous.set(key, { tickMs, status: summary.status });
   }
   return [...groups.values()].map(value => ({ identityId: value.identityId, brand: value.brand, at: value.at, gradeCount: value.grades.size, confidence: value.grades.size >= 2 ? "MEDIUM" : "LOW", signalBasis: "PETROL_STATUS_PATTERN" }));
+}
+
+function aggregateRollingByOctane(activity = []) {
+  const grouped = new Map();
+  for (const summary of activity) {
+    if (!summary.gradeSpecific || !Number.isFinite(summary.count) || !Number.isFinite(summary.windowMinutes)) continue;
+    const grade = petrolOctaneKey(summary);
+    if (!grade) continue;
+    const key = `${summary.source}\u0000${grade}`;
+    const aggregate = grouped.get(key) ?? { source: summary.source, grade, count: 0, windowMinutes: Infinity, latestEventAt: undefined };
+    aggregate.count += summary.count;
+    aggregate.windowMinutes = Math.min(aggregate.windowMinutes, summary.windowMinutes);
+    if (isLaterTimestamp(summary.latestEventAt, aggregate.latestEventAt)) aggregate.latestEventAt = summary.latestEventAt;
+    grouped.set(key, aggregate);
+  }
+  return [...grouped.values()];
+}
+
+function aggregateStatusesByOctane(activity = []) {
+  const grouped = new Map();
+  for (const summary of activity) {
+    if (summary.kind !== "PETROL_STATUS_SNAPSHOT" || !summary.gradeSpecific) continue;
+    const grade = petrolOctaneKey(summary);
+    if (!grade) continue;
+    const key = `${summary.source}\u0000${grade}`;
+    const aggregate = grouped.get(key) ?? { source: summary.source, grade, statuses: [] };
+    aggregate.statuses.push(summary.status);
+    grouped.set(key, aggregate);
+  }
+  return [...grouped.values()].map(value => ({
+    source: value.source,
+    grade: value.grade,
+    status: value.statuses.some(status => ["IN_STOCK", "LIMITED"].includes(status))
+      ? "IN_STOCK"
+      : value.statuses.every(status => status === "OUT_OF_STOCK") ? "OUT_OF_STOCK" : "UNKNOWN"
+  }));
+}
+
+function isLaterTimestamp(candidate, current) {
+  const candidateMs = new Date(candidate).getTime();
+  if (!Number.isFinite(candidateMs)) return false;
+  const currentMs = new Date(current).getTime();
+  return !Number.isFinite(currentMs) || candidateMs > currentMs;
 }
 
 function selectPattern(values, station, brand, identity) {

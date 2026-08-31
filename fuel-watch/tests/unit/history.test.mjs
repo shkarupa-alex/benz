@@ -82,7 +82,7 @@ test("synchronized petrol status transitions predict delivery while diesel is ab
   assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:00:00.000Z");
 });
 
-test("branded variants of one octane do not masquerade as multiple delivery grades", async () => {
+test("branded variants of one octane produce one aggregate transition per tick", async () => {
   const config=await loadConfig();
   const status=(productKey,value)=>({source:"source",productKey,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
   const statusTick=(fetchedAt,value)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE",value),status("AI95_GDRIVE",value)]}]});
@@ -96,6 +96,81 @@ test("branded variants of one octane do not masquerade as multiple delivery grad
   const forecast=buildForecast(history,snapshot,config);
   assert.equal(forecast.petrolStatusEventCount,3);
   assert.equal(forecast.items[0].confidence,"LOW");
+});
+
+test("mixed variant statuses that never change do not create octane transitions", async () => {
+  const config=await loadConfig();
+  const status=(productKey,value)=>({source:"source",productKey,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
+  const mixedTick=(fetchedAt,reverse=false)=>{
+    const activity=[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE","IN_STOCK")];
+    if (reverse) activity.reverse();
+    return {fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity}]};
+  };
+  const history={schemaVersion:1,ticks:[
+    mixedTick("2026-08-28T05:45:00Z"),mixedTick("2026-08-28T06:00:00Z",true),
+    mixedTick("2026-08-29T05:45:00Z",true),mixedTick("2026-08-29T06:00:00Z"),
+    mixedTick("2026-08-30T05:30:00Z")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.petrolStatusEventCount,0);
+  assert.equal(forecast.items.length,0);
+});
+
+test("rolling counts aggregate variants before detecting a quiet-to-active transition", async () => {
+  const config=await loadConfig();
+  const rolling=(productKey,count,latestEventAt)=>({source:"source",productKey,kind:"ROLLING_SIGNAL_COUNT",count,windowMinutes:60,latestEventAt,gradeSpecific:true,sourceTerminology:"SIGNAL"});
+  const rollingTick=(fetchedAt,base,gdrive,reverse=false)=>{
+    const activity=[rolling("AI95_BASE",base,fetchedAt),rolling("AI95_GDRIVE",gdrive,fetchedAt)];
+    if (reverse) activity.reverse();
+    return {fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity}]};
+  };
+  const history={schemaVersion:1,ticks:[
+    rollingTick("2026-08-28T05:45:00Z",5,0),rollingTick("2026-08-28T06:00:00Z",5,2,true),
+    rollingTick("2026-08-29T05:45:00Z",5,0,true),rollingTick("2026-08-29T06:00:00Z",5,2),
+    rollingTick("2026-08-30T05:30:00Z",5,0)
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.activityEventCount,0);
+  assert.equal(forecast.items.length,0);
+});
+
+test("rolling variant counts are summed into one real octane transition", async () => {
+  const config=await loadConfig();
+  const rolling=(productKey,count,latestEventAt)=>({source:"source",productKey,kind:"ROLLING_SIGNAL_COUNT",count,windowMinutes:60,latestEventAt,gradeSpecific:true,sourceTerminology:"SIGNAL"});
+  const rollingTick=(fetchedAt,base,gdrive)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("AI95_BASE",base,fetchedAt),rolling("AI95_GDRIVE",gdrive,fetchedAt)]}]});
+  const history={schemaVersion:1,ticks:[
+    rollingTick("2026-08-28T05:45:00Z",0,0),rollingTick("2026-08-28T06:00:00Z",1,1),
+    rollingTick("2026-08-29T05:45:00Z",0,0),rollingTick("2026-08-29T06:00:00Z",1,1),
+    rollingTick("2026-08-30T05:30:00Z",0,0)
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.activityEventCount,2);
+  assert.equal(forecast.items[0].signalBasis,"ROLLING_ACTIVITY");
+});
+
+test("shortest variant window conservatively controls rolling quiet-gap eligibility", async () => {
+  const config=await loadConfig();
+  const rolling=(productKey,count,windowMinutes,latestEventAt)=>({source:"source",productKey,kind:"ROLLING_SIGNAL_COUNT",count,windowMinutes,latestEventAt,gradeSpecific:true,sourceTerminology:"SIGNAL"});
+  const history={schemaVersion:1,ticks:[
+    {fetchedAt:"2026-08-28T05:45:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("AI95_BASE",0,60,"2026-08-28T05:00:00Z"),rolling("AI95_GDRIVE",0,30,"2026-08-28T05:00:00Z")]}]},
+    {fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("AI95_BASE",1,60,"2026-08-28T05:58:00Z"),rolling("AI95_GDRIVE",1,60,"2026-08-28T05:58:00Z")]}]}
+  ]};
+  const snapshot={fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  assert.equal(buildForecast(history,snapshot,config).activityEventCount,0);
+});
+
+test("unknown variant prevents a family-negative status transition", async () => {
+  const config=await loadConfig();
+  const status=(productKey,value)=>({source:"source",productKey,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
+  const history={schemaVersion:1,ticks:[
+    {fetchedAt:"2026-08-28T05:45:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]},
+    {fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","IN_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]}
+  ]};
+  const snapshot={fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  assert.equal(buildForecast(history,snapshot,config).petrolStatusEventCount,0);
 });
 
 test("history keeps station continuity when a merged member source disappears", async () => {
