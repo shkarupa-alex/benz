@@ -162,15 +162,20 @@ test("shortest variant window conservatively controls rolling quiet-gap eligibil
   assert.equal(buildForecast(history,snapshot,config).activityEventCount,0);
 });
 
-test("unknown variant prevents a family-negative status transition", async () => {
+test("unreadable variant does not suppress readable octane transitions", async () => {
   const config=await loadConfig();
   const status=(productKey,value)=>({source:"source",productKey,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
   const history={schemaVersion:1,ticks:[
     {fetchedAt:"2026-08-28T05:45:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]},
-    {fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","IN_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]}
+    {fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","IN_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]},
+    {fetchedAt:"2026-08-29T05:45:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]},
+    {fetchedAt:"2026-08-29T06:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","LIMITED"),status("AI95_GDRIVE","UNKNOWN")]}]},
+    {fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE","UNKNOWN")]}]}
   ]};
-  const snapshot={fetchedAt:"2026-08-28T06:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
-  assert.equal(buildForecast(history,snapshot,config).petrolStatusEventCount,0);
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.petrolStatusEventCount,2);
+  assert.equal(forecast.items.length,1);
 });
 
 test("history keeps station continuity when a merged member source disappears", async () => {

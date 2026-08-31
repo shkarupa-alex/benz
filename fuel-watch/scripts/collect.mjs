@@ -118,7 +118,6 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
     areaHash: area.areaHash,
     queryHash: sha256(config.requestedProducts),
     adapterContractHash,
-    requestedProducts: config.requestedProducts.products.map(p => ({ productKey: p.productKey, variantKey: p.variantKey })),
     assessments,
     rankingReferencePoint: referencePoint,
     rankedStationKeys: rankAssessments(assessments, referencePoint).map(a => a.stationKey),
