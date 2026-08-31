@@ -25,13 +25,18 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
     const payload = await response.json();
     const rows = Array.isArray(payload) ? payload : payload && Array.isArray(payload.stations) ? payload.stations : [];
     if (!rows.length) return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API exposed no station rows' };
-    const stations = [], observations = [], queues = [];
+    const stations = [], observations = [], queues = [], activity = [];
     const isoTime = value => {
       if (!value) return undefined;
       const normalized = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(String(value)) ? String(value).replace(' ', 'T') + 'Z' : value;
       const date = new Date(normalized);
       return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
     };
+    const petrolGrades = value => [...new Set((String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu) || []).map(match => match.match(/92|95|98|100/u)?.[0]).filter(Boolean))];
+    const commentPetrolGrades = value => { const fuelSegment = String(value || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(fuelSegment) ? [] : petrolGrades(fuelSegment); };
+    const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
+    const commentRows = await mapLimit(rows, 6, async row => { const id = String(row.osm_id || row.id || ''); if (!id) return; const commentsResponse = await fetch('/api/comments/' + encodeURIComponent(id) + '/recent?limit=12', { credentials: 'same-origin' }); if (!commentsResponse.ok) return; const comments = await commentsResponse.json(); return Array.isArray(comments) ? [id, comments] : undefined; });
+    const commentsById = new Map(commentRows.filter(Boolean));
     for (const row of rows) {
       const id = String(row.osm_id || row.id || '');
       if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
@@ -41,6 +46,23 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
       const hasAi95 = /(?:^|[\s,;/])(?:аи[-\s]?|ai[-\s]?)?95\+?(?=$|[\s,;/])/iu.test(listed);
       const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);
       observations.push({ stationId: id, fuel: 'АИ-95', status: detail || String(row.status || ''), normalizedStatus: familyUnavailable ? 'OUT_OF_STOCK' : hasAi95 ? 'IN_STOCK' : 'UNKNOWN', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
+      for (const grade of petrolGrades(listed)) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'PETROL_STATUS_SNAPSHOT', status: familyUnavailable ? 'OUT_OF_STOCK' : 'IN_STOCK', observedAt: isoTime(row.last_at), gradeSpecific: true, sourceTerminology: 'STATUS' });
+      const comments = [...(commentsById.get(id) || [])].sort((a, b) => new Date(String(a.created_at).replace(' ', 'T') + 'Z') - new Date(String(b.created_at).replace(' ', 'T') + 'Z'));
+      const knownGrades = [...new Set([...(petrolGrades(listed)), ...comments.flatMap(comment => commentPetrolGrades(comment.detail))])];
+      const stateByGrade = new Map(knownGrades.map(grade => [grade, 'UNKNOWN']));
+      const timesByGrade = new Map();
+      for (const comment of comments) {
+        const at = isoTime(comment.created_at); if (!at) continue;
+        const status = String(comment.status || '').toLowerCase();
+        const grades = commentPetrolGrades(comment.detail);
+        if (status === 'no') for (const grade of knownGrades) stateByGrade.set(grade, 'OUT_OF_STOCK');
+        if (['yes','queue'].includes(status)) for (const grade of grades) {
+          const eventTimes = timesByGrade.get(grade) ?? []; eventTimes.push(at); timesByGrade.set(grade, eventTimes);
+          if (stateByGrade.get(grade) === 'OUT_OF_STOCK') activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'SOURCE_REPORTED_TRANSITION', observedAt: at, gradeSpecific: true, sourceTerminology: 'USER_REPORT' });
+          stateByGrade.set(grade, 'IN_STOCK');
+        }
+      }
+      for (const [grade, eventTimes] of timesByGrade) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'RECENT_SIGNAL', eventTimes, gradeSpecific: true, sourceTerminology: 'USER_REPORT' });
       const queue = detail.match(/очередь\s*([^·,;]*)/iu)?.[1]?.trim();
       if (queue) {
         const ordinal = /100\s*\+/u.test(queue) ? 'VERY_LONG' : /50\s*[–—-]\s*100/u.test(queue) ? 'LONG' : /20\s*[–—-]\s*50/u.test(queue) ? 'LONG' : /5\s*[–—-]\s*20/u.test(queue) ? 'MEDIUM' : undefined;
@@ -49,7 +71,7 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
     }
     const hasFreshness = observations.some(observation => observation.observedAt);
     const noFreshnessMetadata = observations.length > 0 && !hasFreshness;
-    return { stations, observations, queues, activity: [], apiUnavailable: stations.length === 0, schemaChanged: stations.length === 0, partial: noFreshnessMetadata, code: noFreshnessMetadata ? 'NO_FRESHNESS_METADATA' : undefined, freshnessExpected: hasFreshness, naturalTermination: true, message: stations.length === 0 ? 'gdebenz nearby API rows lacked station identity or coordinates' : noFreshnessMetadata ? 'gdebenz nearby API exposes no observation timestamps' : undefined };
+    return { stations, observations, queues, activity, apiUnavailable: stations.length === 0, schemaChanged: stations.length === 0, partial: noFreshnessMetadata, code: noFreshnessMetadata ? 'NO_FRESHNESS_METADATA' : undefined, freshnessExpected: hasFreshness, naturalTermination: true, message: stations.length === 0 ? 'gdebenz nearby API rows lacked station identity or coordinates' : noFreshnessMetadata ? 'gdebenz nearby API exposes no observation timestamps' : undefined, activityHistoryCoverage: rows.length ? commentsById.size / rows.length : 0 };
   } catch (error) {
     return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API could not be read: ' + error.message };
   }

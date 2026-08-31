@@ -66,6 +66,49 @@ test("per-grade gasoline rolling activity predicts the station's typical tanker 
   assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:58:00.000Z");
 });
 
+test("source-provided petrol transition history can train an on-demand forecast", async () => {
+  const config=await loadConfig();
+  const sourceTick=(fetchedAt,observedAt)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","AVAILABLE"),activity:[
+    {source:"gdebenz",gradeLabel:"92",kind:"SOURCE_REPORTED_TRANSITION",observedAt,gradeSpecific:true,sourceTerminology:"USER_REPORT"},
+    {source:"gdebenz",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt,gradeSpecific:true,sourceTerminology:"USER_REPORT"}
+  ]}]});
+  const history={schemaVersion:1,ticks:[
+    sourceTick("2026-08-28T06:15:00Z","2026-08-28T06:00:00Z"),
+    sourceTick("2026-08-29T06:15:00Z","2026-08-29T06:05:00Z"),
+    {fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",stations:[station("s","NOT_AVAILABLE")]}
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.sourceTimelineEventCount,2);
+  assert.equal(forecast.items[0].signalBasis,"SOURCE_REPORTED_STATUS");
+  assert.equal(forecast.items[0].basis,"STATION");
+});
+
+test("several sources observing one delivery window count as one episode", async () => {
+  const config=await loadConfig();
+  const activity=[
+    {source:"gdebenz",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-30T09:40:00Z",gradeSpecific:true},
+    {source:"benzonavt",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-30T10:01:00Z",gradeSpecific:true},
+    {source:"2gis",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-30T10:36:00Z",gradeSpecific:true}
+  ];
+  const history={schemaVersion:1,ticks:[{fetchedAt:"2026-08-30T11:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","AVAILABLE"),activity}]},{fetchedAt:"2026-08-31T08:00:00Z",areaHash:"area",queryHash:"query",stations:[station("s","NOT_AVAILABLE")]}]};
+  const snapshot={fetchedAt:"2026-08-31T08:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.sourceTimelineEventCount,1);
+  assert.equal(forecast.items.length,0);
+});
+
+test("two source transitions on one day are not a typical-time pattern", async () => {
+  const config=await loadConfig();
+  const activity=[
+    {source:"gdebenz",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-30T06:00:00Z",gradeSpecific:true},
+    {source:"gdebenz",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-30T10:00:00Z",gradeSpecific:true}
+  ];
+  const history={schemaVersion:1,ticks:[{fetchedAt:"2026-08-30T11:00:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","AVAILABLE"),activity}]},{fetchedAt:"2026-08-31T08:00:00Z",areaHash:"area",queryHash:"query",stations:[station("s","NOT_AVAILABLE")]}]};
+  const snapshot={fetchedAt:"2026-08-31T08:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  assert.equal(buildForecast(history,snapshot,config).items.length,0);
+});
+
 test("synchronized petrol status transitions predict delivery while diesel is absent", async () => {
   const config=await loadConfig();
   const status=(gradeLabel,value)=>({source:"yandex",gradeLabel,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});

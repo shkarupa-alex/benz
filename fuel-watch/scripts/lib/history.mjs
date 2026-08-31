@@ -81,6 +81,7 @@ export function buildForecast(history, snapshot, config) {
   const identity = buildHistoryIdentity(areaTicks);
   const episodes = completedEpisodes(scopedTicks, config.monitoring.intervalMinutes * 3, identity, brandAliases);
   const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
+  const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases);
   const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
   const nowMs = new Date(snapshot.fetchedAt).getTime();
   const candidates = snapshot.assessments.filter(assessment => assessment.verdict === NEGATIVE).map(assessment => {
@@ -88,13 +89,13 @@ export function buildForecast(history, snapshot, config) {
     const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
     if (!negativeStartedAt) return null;
     const brand = stationBrand(assessment, brandAliases);
-    const activity = selectPattern(rollingEvents, assessment, brand, identity) ?? selectPattern(statusEvents, assessment, brand, identity);
+    const activity = selectPattern(rollingEvents, assessment, brand, identity) ?? selectPattern(sourceEvents, assessment, brand, identity) ?? selectPattern(statusEvents, assessment, brand, identity);
     if (activity) return forecastFromActivity(assessment, negativeStartedAt, activity, nowMs);
     const selected = selectPattern(episodes, assessment, brand, identity);
     if (!selected) return null;
     return forecastFromStatus(assessment, negativeStartedAt, selected, nowMs);
   }).filter(Boolean).sort((a, b) => new Date(a.expectedAt) - new Date(b.expectedAt)).slice(0, config.history.forecastCount);
-  return { generatedAt: snapshot.fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: areaTicks.length, completedEpisodeCount: episodes.length, activityEventCount: rollingEvents.length, petrolStatusEventCount: statusEvents.length, items: candidates };
+  return { generatedAt: snapshot.fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: areaTicks.length, completedEpisodeCount: episodes.length, activityEventCount: rollingEvents.length, sourceTimelineEventCount: sourceEvents.length, petrolStatusEventCount: statusEvents.length, items: candidates };
 }
 
 async function loadHistory(path) {
@@ -109,7 +110,32 @@ async function loadHistory(path) {
 }
 
 function compactTick(snapshot) {
-  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
+  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT", "SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, resumedAt: value.resumedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
+}
+
+function sourceTimelineEvents(ticks, config, identity, brandAliases) {
+  const rawEvents = [];
+  const seen = new Set();
+  for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
+    if (!["SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"].includes(summary.kind) || !summary.gradeSpecific) continue;
+    const grade = petrolOctaneKey(summary);
+    const at = summary.observedAt ?? summary.resumedAt ?? summary.latestEventAt;
+    const atMs = new Date(at).getTime();
+    if (!grade || !Number.isFinite(atMs)) continue;
+    const identityId = identity.id(station);
+    const eventKey = `${identityId}|${summary.source}|${grade}|${new Date(atMs).toISOString()}`;
+    if (seen.has(eventKey)) continue;
+    seen.add(eventKey);
+    rawEvents.push({ identityId, brand: stationBrand(station, brandAliases), atMs, grade, source: summary.source, kind: summary.kind });
+  }
+  const clusterGapMs = Math.max(config.activity.resumeWindowMinutes, config.activity.quietGapMinutes * 2) * 60000;
+  const clusters = [];
+  for (const event of rawEvents.sort((a, b) => a.identityId.localeCompare(b.identityId) || a.atMs - b.atMs)) {
+    const current = clusters.at(-1);
+    if (!current || current.identityId !== event.identityId || event.atMs - current.lastAtMs > clusterGapMs) clusters.push({ identityId: event.identityId, brand: event.brand, atMs: event.atMs, lastAtMs: event.atMs, grades: new Set([event.grade]), sources: new Set([event.source]), kinds: new Set([event.kind]) });
+    else { current.lastAtMs = Math.max(current.lastAtMs, event.atMs); current.grades.add(event.grade); current.sources.add(event.source); current.kinds.add(event.kind); }
+  }
+  return clusters.map(value => ({ identityId: value.identityId, brand: value.brand, at: new Date(value.atMs).toISOString(), gradeCount: value.grades.size, confidence: value.grades.size >= 2 || value.sources.size >= 2 ? "MEDIUM" : "LOW", signalBasis: value.kinds.has("TRANSACTIONS_RESUMED") ? "SOURCE_ACTIVITY_TIMELINE" : "SOURCE_REPORTED_STATUS" }));
 }
 
 function rollingActivityEvents(ticks, config, identity, brandAliases) {
@@ -223,11 +249,13 @@ function selectPattern(values, station, brand, identity) {
   const stationIdentity = identity.id(station);
   const stationValues = values.filter(value => value.identityId === stationIdentity);
   const matchingBrand = values.filter(value => brand && value.brand === brand);
-  if (stationValues.length >= 2) return { values: stationValues, basis: "STATION" };
-  if (matchingBrand.length >= 2) return { values: matchingBrand, basis: "BRAND" };
-  if (values.length >= 2) return { values, basis: "AREA" };
+  if (spansTwoMoscowDays(stationValues)) return { values: stationValues, basis: "STATION" };
+  if (spansTwoMoscowDays(matchingBrand)) return { values: matchingBrand, basis: "BRAND" };
+  if (spansTwoMoscowDays(values)) return { values, basis: "AREA" };
   return null;
 }
+
+function spansTwoMoscowDays(values) { return values.length >= 2 && new Set(values.map(value => value.at ?? value.transitionAt).map(value => { const ms = new Date(value).getTime(); return Number.isFinite(ms) ? new Date(ms + 3 * 3600000).toISOString().slice(0, 10) : undefined; }).filter(Boolean)).size >= 2; }
 
 function forecastFromActivity(assessment, negativeStartedAt, selected, nowMs) {
   const minutes = selected.values.map(value => moscowMinute(value.at));

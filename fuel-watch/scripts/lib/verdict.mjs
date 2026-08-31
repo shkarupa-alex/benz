@@ -39,13 +39,13 @@ export function assessRequestedUnion({ observations = [], activity = [], config,
   const assessments = {};
   for (const product of config.requestedProducts.products) {
     const matching = observations.filter(o => o.product?.productKey === product.productKey);
-    const matchingActivity = activity.filter(a => !a.product || a.product.productKey === product.productKey);
+    const matchingActivity = activity.filter(a => a.product?.productKey === product.productKey);
     assessments[product.productKey] = assessStation({ observations: matching, activity: matchingActivity, config, sourceGroups, now });
   }
   const unknown = observations.filter(o => o.product?.productKey === "AI95_UNKNOWN");
-  if (unknown.length) assessments.AI95_UNKNOWN = assessStation({ observations: unknown, activity: activity.filter(a => !a.product || a.product.productKey === "AI95_UNKNOWN"), config, sourceGroups, now });
+  if (unknown.length) assessments.AI95_UNKNOWN = assessStation({ observations: unknown, activity: activity.filter(a => a.product?.productKey === "AI95_UNKNOWN"), config, sourceGroups, now });
   const family = observations.filter(o => o.product?.specificity === "FAMILY_ONLY");
-  const familyAssessment = family.length ? assessStation({ observations: family, activity: activity.filter(a => !a.product), config, sourceGroups, now }) : null;
+  const familyAssessment = family.length ? assessStation({ observations: family, activity: activity.filter(a => a.product?.family === "AI_95"), config, sourceGroups, now }) : null;
   const values = Object.values(assessments);
   let selected;
   const available = values.filter(v => v.verdict === "AVAILABLE");

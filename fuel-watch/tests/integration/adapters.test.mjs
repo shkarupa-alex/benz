@@ -110,7 +110,11 @@ test("gdebenz nearby API extractor preserves coordinates, current family status 
     {osm_id:"yes-95",lon:44.5,lat:48.7,name:"АЗС 1",addr:"Адрес 1",status:"queue",fuels_now:"92,95",detail:"92, 95 · Очередь ≈20–50 машин",last_at:"2026-08-30 19:33:26"},
     {osm_id:"no-fuel",lon:44.6,lat:48.8,name:"АЗС 2",addr:"Адрес 2",status:"no",fuels_now:"95",detail:"Заправка не работает",last_at:"2026-08-30 19:35:39"}
   ]};
-  const fetch=async()=>({ok:true,json:async()=>rows});
+  const comments=[
+    {created_at:"2026-08-30 17:00:00",status:"no",detail:"Заправка не работает"},
+    {created_at:"2026-08-30 19:30:00",status:"queue",detail:"92, 95 · Очередь 100+ машин"}
+  ];
+  const fetch=async url=>({ok:true,json:async()=>String(url).includes("/comments/")?comments:rows});
   const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(fetch,{href:"https://gdebenz.ru/"});
   assert.deepEqual(raw.stations[0].coordinate,[44.5,48.7]);
   assert.equal(raw.observations[0].status,"92, 95 · Очередь ≈20–50 машин");
@@ -120,6 +124,9 @@ test("gdebenz nearby API extractor preserves coordinates, current family status 
   assert.equal(raw.observations[1].normalizedStatus,"OUT_OF_STOCK");
   assert.equal(raw.observations[1].familyAllUnavailable,true);
   assert.equal(raw.queues[0].ordinal,"LONG");
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"&&value.observedAt==="2026-08-30T19:30:00.000Z"),true);
+  assert.equal(raw.activity.some(value=>value.gradeLabel==="100"),false);
+  assert.equal(raw.activity.some(value=>value.gradeLabel==="ДТ"),false);
   assert.equal(raw.freshnessExpected,true);
   const browser={open:async()=>({finalUrl:"https://gdebenz.ru/",pageTitle:"Где бензин",pageTextPrefix:"Карта"}),waitReady:async()=>{},evalJson:async()=>raw};
   const normalized=await gdebenz.collect(request(await loadConfig()),{browser,config:await loadConfig()});
@@ -143,7 +150,11 @@ test("2GIS extractor reads current fuel data and normalizes structured brands", 
   const rows=[{station:{id:"station-1",lng:44.5,lat:48.7,name:"АЗС",address:"Адрес",brand:{id:"brand-1",name:"Бренд"}},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z",queue_level:"UP_TO_25"}],queue_level:"UP_TO_25"}];
   const document={body:{innerText:"АЗС"},scripts:[]};
   const performance={getEntriesByType:()=>[{name:liveUrl}]};
-  const fetch=async()=>({ok:true,json:async()=>rows});
+  const detail={station:rows[0].station,recent_ugc_reports:[
+    {available:false,created_at:"2026-08-30T17:00:00Z",fuel_types:["AI_92","AI_95","DT"]},
+    {available:true,created_at:"2026-08-30T19:30:00Z",fuel_types:["AI_92","AI_95","DT"]}
+  ],recent_transactions:[{created_at:"2026-08-30T19:31:00Z",fuel_types:null}]};
+  const fetch=async url=>({ok:true,json:async()=>String(url).includes("/by-ids")?rows:detail});
   const raw=await Function("window","document","location","performance","fetch","URL",`return ${twogis.TWOGIS_EXTRACTOR}`)({},document,{href:"https://2gis.ru/volgograd/search/АЗС"},performance,fetch,URL);
   assert.deepEqual(raw.stations[0].coordinate,[44.5,48.7]);
   assert.equal(raw.stations[0].brand,"Бренд");
@@ -151,6 +162,9 @@ test("2GIS extractor reads current fuel data and normalizes structured brands", 
   assert.equal(raw.observations[0].status,"IN_STOCK");
   assert.equal(raw.observations[0].observedAt,"2026-08-30T19:40:00Z");
   assert.equal(raw.queues[0].ordinal,"LONG");
+  assert.equal(raw.activity.some(value=>value.kind==="PETROL_STATUS_SNAPSHOT"&&value.gradeLabel==="95"),true);
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),true);
+  assert.equal(raw.activity.some(value=>value.sourceTerminology==="TRANSACTION"&&value.gradeSpecific===false),true);
   assert.equal(raw.partial,false);
 });
 
@@ -172,27 +186,49 @@ test("Benzonavt handles exhaustive fuels, conflicts and structured queues conser
     {id:3,lon:44.7,lat:48.7,name:"АЗС 3",brand:"Бренд",address:"Адрес 3",st:{status:"yes",fuels_now:["dt"],updated_at:"2026-08-30T19:42:00Z",queue:{at:"2026-08-30T19:43:00Z",size:"gt50"}}},
     {id:4,lon:44.8,lat:48.7,name:"АЗС 4",brand:"Бренд",address:"Адрес 4",st:{status:"no",fuels_now:[],updated_at:"2026-08-30T19:43:00Z",conflict:{status:"yes",created_at:"2026-08-30T19:42:00Z"}}},
     {id:5,lon:44.9,lat:48.7,name:"АЗС 5",brand:"Бренд",address:"Адрес 5",st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:44:00Z",conflict:{status:"no",created_at:"2026-08-30T19:43:00Z"}}},
-    {id:6,lon:45.0,lat:48.7,name:"АЗС 6",brand:"Бренд",address:"Адрес 6",st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:45:00Z",conflict:{fuels_now:["dt"]},queue:{size:"20_50"}}}
+    {id:6,lon:45.0,lat:48.7,name:"АЗС 6",brand:"Бренд",address:"Адрес 6",st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:45:00Z",conflict:{fuels_now:["dt"]},queue:{size:"20_50"}}},
+    {id:7,lon:45.1,lat:48.7,name:"АЗС 7",brand:"Бренд",address:"Адрес 7",st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:45:00Z",conflict:{status:"no",created_at:"2026-08-30T19:46:00Z"}}},
+    {id:8,lon:45.2,lat:48.7,name:"АЗС 8",brand:"Бренд",address:"Адрес 8",st:{status:"no",fuels_now:[],updated_at:"2026-08-30T19:45:00Z",conflict:{status:"yes",created_at:"2026-08-30T19:45:00Z"}}}
   ];
   const document={body:{innerText:"Бензонавт"}};
   const fetch=async()=>({ok:true,json:async()=>rows});
   const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)(document,{href:"https://benzonavt.ru/"},fetch);
-  assert.equal(raw.stations.length,6);
+  assert.equal(raw.stations.length,8);
   const byId=Object.fromEntries(raw.observations.map(value=>[value.stationId,value]));
   assert.equal(byId["1"].status,"IN_STOCK");
   assert.equal(byId["2"].familyAllUnavailable,true);
   assert.equal(byId["3"].status,"OUT_OF_STOCK");
   assert.equal(byId["3"].familyAllUnavailable,true);
-  assert.equal(byId["4"].status,"UNCERTAIN");
-  assert.equal(byId["4"].familyAllUnavailable,undefined);
-  assert.equal(byId["5"].status,"UNCERTAIN");
+  assert.equal(byId["4"].status,"OUT_OF_STOCK");
+  assert.equal(byId["4"].familyAllUnavailable,true);
+  assert.equal(byId["5"].status,"IN_STOCK");
   assert.equal(byId["6"].status,"UNCERTAIN");
   assert.equal(byId["6"].observedAt,undefined);
-  assert.ok(byId["4"].conflict && byId["5"].conflict && byId["6"].conflict);
+  assert.equal(byId["7"].status,"UNCERTAIN");
+  assert.equal(byId["8"].status,"UNCERTAIN");
+  assert.equal(byId["4"].conflict,undefined);
+  assert.equal(byId["5"].conflict,undefined);
+  assert.ok(byId["6"].conflict);
   assert.equal(raw.queues[0].ordinal,"LONG");
   assert.equal(raw.queues[0].observedAt,"2026-08-30T19:42:00Z");
   assert.equal(raw.queues[1].ordinal,"VERY_LONG");
   assert.equal(raw.queues[2].ordinal,"LONG");
   assert.equal(raw.queues[2].observedAt,undefined);
   assert.equal(raw.freshnessExpected,true);
+});
+
+test("Benzonavt detail history preserves petrol transitions and ignores a superseded conflict", async () => {
+  const rows=[{id:986,lon:44.4897613,lat:48.7095778,name:"Лукойл",brand:"Лукойл",address:"Рокоссовского, 1Р",fuels:["92","95","100","dt"],st:{status:"yes",fuels_now:["92","95","dt"],updated_at:"2026-08-31T10:52:56Z",conflict:{status:"no",created_at:"2026-08-31T08:53:36Z"}}}];
+  const detail={...rows[0],recent:[
+    {created_at:"2026-08-31T08:53:36Z",status:"no",fuel_grades:[]},
+    {created_at:"2026-08-31T10:01:40Z",status:"yes",fuel_grades:["92","95"],origin:"bank"},
+    {created_at:"2026-08-31T10:52:56Z",status:"queue",fuel_grades:["92","95","dt"]}
+  ]};
+  const fetch=async url=>({ok:true,json:async()=>String(url).includes("/stations/986")?detail:rows});
+  const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},fetch);
+  assert.equal(raw.observations[0].status,"IN_STOCK");
+  assert.equal(raw.observations[0].conflict,undefined);
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"&&value.observedAt==="2026-08-31T10:01:40.000Z"),true);
+  assert.equal(raw.activity.some(value=>value.kind==="PETROL_STATUS_SNAPSHOT"&&value.gradeLabel==="100"&&value.status==="OUT_OF_STOCK"),true);
+  assert.equal(raw.activity.some(value=>value.gradeLabel==="dt"),false);
 });

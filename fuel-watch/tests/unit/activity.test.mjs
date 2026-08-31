@@ -15,3 +15,10 @@ test("aggregate activity never becomes grade-specific resumption", async () => {
   const [value] = deriveActivityEvidence([{ gradeSpecific: false, eventTimes: ["2026-08-30T08:30:00Z", "2026-08-30T09:50:00Z", "2026-08-30T09:55:00Z"], kind: "TRANSACTIONS_RESUMED" }], config, "2026-08-30T10:00:00Z");
   assert.equal(value.kind, "RECENT_SIGNAL");
 });
+
+test("source-reported transition keeps its exact source time", async () => {
+  const config = await loadConfig();
+  const [value] = deriveActivityEvidence([{ gradeSpecific: true, observedAt: "2026-08-30T09:40:00Z", kind: "SOURCE_REPORTED_TRANSITION" }], config, "2026-08-30T10:00:00Z");
+  assert.equal(value.kind, "SOURCE_REPORTED_TRANSITION");
+  assert.equal(value.observedAt, "2026-08-30T09:40:00.000Z");
+});

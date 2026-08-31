@@ -58,3 +58,10 @@ test("only explicit family-all negative can negate configured union", async () =
   assert.notEqual(assessRequestedUnion({ observations: [base], config }).verdict, "NOT_AVAILABLE");
   assert.equal(assessRequestedUnion({ observations: [{ ...base, familyAllUnavailable: true }], config }).verdict, "NOT_AVAILABLE");
 });
+
+test("resumed AI-92 activity cannot imply current AI-95 availability", async () => {
+  const config = await loadConfig();
+  const activity = [{ source: "2gis", gradeLabel: "92", kind: "TRANSACTIONS_RESUMED", gradeSpecific: true }];
+  const result = assessRequestedUnion({ observations: [], activity, config });
+  assert.equal(result.verdict, "NO_FRESH_DATA");
+});
