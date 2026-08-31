@@ -210,6 +210,38 @@ test("rolling variant appearing cannot fabricate activity resumption", async () 
   assert.equal(forecast.items.length,0);
 });
 
+test("different AI95_UNKNOWN labels cannot fabricate status witnesses", async () => {
+  const config=await loadConfig();
+  const status=(gradeLabel,value)=>({source:"source",productKey:"AI95_UNKNOWN",gradeLabel,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
+  const hiddenTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("АИ-95 Фора","OUT_OF_STOCK"),status("АИ-95 Ультра",undefined)]}]});
+  const visibleTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("АИ-95 Фора","OUT_OF_STOCK"),status("АИ-95 Ультра","IN_STOCK")]}]});
+  const history={schemaVersion:1,ticks:[
+    hiddenTick("2026-08-28T05:45:00Z"),visibleTick("2026-08-28T06:00:00Z"),
+    hiddenTick("2026-08-29T05:45:00Z"),visibleTick("2026-08-29T06:00:00Z"),
+    hiddenTick("2026-08-30T05:30:00Z")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.petrolStatusEventCount,0);
+  assert.equal(forecast.items.length,0);
+});
+
+test("different AI95_UNKNOWN labels cannot fabricate rolling witnesses", async () => {
+  const config=await loadConfig();
+  const rolling=(gradeLabel,count,latestEventAt)=>({source:"source",productKey:"AI95_UNKNOWN",gradeLabel,kind:"ROLLING_SIGNAL_COUNT",count,windowMinutes:60,latestEventAt,gradeSpecific:true,sourceTerminology:"SIGNAL"});
+  const hiddenTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("АИ-95 Фора",0,fetchedAt)]}]});
+  const visibleTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("АИ-95 Фора",0,fetchedAt),rolling("АИ-95 Ультра",3,fetchedAt)]}]});
+  const history={schemaVersion:1,ticks:[
+    hiddenTick("2026-08-28T05:45:00Z"),visibleTick("2026-08-28T06:00:00Z"),
+    hiddenTick("2026-08-29T05:45:00Z"),visibleTick("2026-08-29T06:00:00Z"),
+    hiddenTick("2026-08-30T05:30:00Z")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.activityEventCount,0);
+  assert.equal(forecast.items.length,0);
+});
+
 test("history keeps station continuity when a merged member source disappears", async () => {
   const config=await loadConfig();
   const physical=(stationKey,verdict,memberKeys)=>({...station(stationKey,verdict),memberKeys});

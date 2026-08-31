@@ -148,14 +148,14 @@ function petrolStatusEvents(ticks, config, identity, brandAliases) {
     const before = previous.get(key);
     const tickMs = new Date(tick.fetchedAt).getTime();
     const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
-    const witnessed = before && [...summary.variantStatuses].some(([variant, status]) => ["IN_STOCK", "LIMITED"].includes(status) && before.variantStatuses.get(variant) === "OUT_OF_STOCK");
-    if (closeTicks && witnessed && before.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
+    const witnessed = before && [...summary.variantStatuses].some(([variant, status]) => ["IN_STOCK", "LIMITED"].includes(status) && before.summary.variantStatuses.get(variant) === "OUT_OF_STOCK");
+    if (closeTicks && witnessed && before.summary.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
       const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, brandAliases), at: tick.fetchedAt, grades: new Set() };
       group.grades.add(grade);
       groups.set(groupKey, group);
     }
-    previous.set(key, { tickMs, status: summary.status, variantStatuses: summary.variantStatuses });
+    previous.set(key, { tickMs, summary });
   }
   return [...groups.values()].map(value => ({ identityId: value.identityId, brand: value.brand, at: value.at, gradeCount: value.grades.size, confidence: value.grades.size >= 2 ? "MEDIUM" : "LOW", signalBasis: "PETROL_STATUS_PATTERN" }));
 }
@@ -207,9 +207,9 @@ function strongestStatus(statuses) {
 
 function activityVariantKey(summary) {
   const explicit = summary.productKey ?? summary.product?.productKey ?? summary.variantKey ?? summary.product?.variantKey;
-  if (explicit) return String(explicit);
+  if (explicit && explicit !== "AI95_UNKNOWN") return String(explicit);
   const label = normalizeFuelLabel(summary.gradeLabel ?? summary.product?.displayLabel ?? "");
-  return label || undefined;
+  return label || (explicit ? String(explicit) : undefined);
 }
 
 function isLaterTimestamp(candidate, current) {
