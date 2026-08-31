@@ -33,6 +33,19 @@ test("family-only adapter cannot create exact variant evidence", async () => {
   const result = okResult("gdebenz", { stations: [{ id: "1", coordinate: [44.5, 48.7] }], observations: [{ stationId: "1", fuel: "АИ-95", status: "есть", minMinutes: 5, maxMinutes: 10 }] }, request, config, { capability: "CURRENT_FAMILY" });
   assert.equal(result.observations[0].product.specificity, "FAMILY_ONLY");
   assert.equal(result.observations[0].product.productKey, "AI95_FAMILY");
+  const withActivity = okResult("gdebenz", { stations: [{ id: "1", coordinate: [44.5, 48.7] }], activity: [{ stationId: "1", fuel: "АИ-95", kind: "TRANSACTIONS_RESUMED", gradeSpecific: true }] }, request, config, { capability: "CURRENT_FAMILY" });
+  assert.equal(withActivity.activity[0].product.specificity, "FAMILY_ONLY");
+  assert.equal(withActivity.activity[0].gradeSpecific, false);
+});
+
+test("optional history loss is visible without discarding current observations", async () => {
+  const config = await loadConfig();
+  const request = { requestedProducts: config.requestedProducts, fetchedAt: "2026-08-30T10:00:00Z" };
+  const result = okResult("benzonavt", { stations:[{id:"1",coordinate:[44.5,48.7]}], observations:[{stationId:"1",fuel:"АИ-95",status:"есть",observedAt:"2026-08-30T09:55:00Z"}], activityHistoryCoverage:0.5 }, request, config);
+  assert.equal(result.health.status,"PARTIAL");
+  assert.equal(result.health.code,"ACTIVITY_HISTORY_PARTIAL");
+  assert.equal(result.observations[0].status,"IN_STOCK");
+  assert.equal(result.coverage.activityHistoryCoverage,0.5);
 });
 
 test("normalizes named, aliased, array and opaque structured brands without erasing them", () => {

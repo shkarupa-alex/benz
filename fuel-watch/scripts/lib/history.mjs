@@ -26,7 +26,7 @@ export async function recordHistory(path, snapshot, config, { lock = properLockf
     const ticks = previous.ticks
       .filter(tick => new Date(tick.fetchedAt).getTime() >= cutoff)
       .filter(tick => !(tick.fetchedAt === snapshot.fetchedAt && tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash));
-    ticks.push(compactTick(snapshot));
+    ticks.push(compactTick(snapshot, cutoff));
     ticks.sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt));
     const history = { schemaVersion: 1, retentionDays, updatedAt: ticks.at(-1)?.fetchedAt ?? snapshot.fetchedAt, ticks };
     const forecast = buildForecast(history, snapshot, config);
@@ -76,22 +76,24 @@ function isProcessAlive(pid) {
 
 export function buildForecast(history, snapshot, config) {
   const brandAliases = compileBrandAliases(config.identity.brandAliases);
-  const areaTicks = history.ticks.filter(tick => tick.areaHash === snapshot.areaHash);
-  const scopedTicks = history.ticks.filter(tick => tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash);
+  const nowMs = new Date(snapshot.fetchedAt).getTime();
+  const cutoffMs = nowMs - config.history.retentionDays * 86400000;
+  const retainedTicks = history.ticks.filter(tick => new Date(tick.fetchedAt).getTime() >= cutoffMs);
+  const areaTicks = retainedTicks.filter(tick => tick.areaHash === snapshot.areaHash);
+  const scopedTicks = retainedTicks.filter(tick => tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash);
   const identity = buildHistoryIdentity(areaTicks);
   const episodes = completedEpisodes(scopedTicks, config.monitoring.intervalMinutes * 3, identity, brandAliases);
   const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
-  const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases);
+  const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases, cutoffMs, nowMs);
   const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
-  const nowMs = new Date(snapshot.fetchedAt).getTime();
   const candidates = snapshot.assessments.filter(assessment => assessment.verdict === NEGATIVE).map(assessment => {
     const samples = stationSamples(scopedTicks, assessment, identity);
     const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
     if (!negativeStartedAt) return null;
     const brand = stationBrand(assessment, brandAliases);
-    const activity = selectPattern(rollingEvents, assessment, brand, identity) ?? selectPattern(sourceEvents, assessment, brand, identity) ?? selectPattern(statusEvents, assessment, brand, identity);
+    const activity = selectTimePattern(rollingEvents, assessment, brand, identity) ?? selectTimePattern(sourceEvents, assessment, brand, identity) ?? selectTimePattern(statusEvents, assessment, brand, identity);
     if (activity) return forecastFromActivity(assessment, negativeStartedAt, activity, nowMs);
-    const selected = selectPattern(episodes, assessment, brand, identity);
+    const selected = selectDurationPattern(episodes, assessment, brand, identity);
     if (!selected) return null;
     return forecastFromStatus(assessment, negativeStartedAt, selected, nowMs);
   }).filter(Boolean).sort((a, b) => new Date(a.expectedAt) - new Date(b.expectedAt)).slice(0, config.history.forecastCount);
@@ -109,19 +111,25 @@ async function loadHistory(path) {
   }
 }
 
-function compactTick(snapshot) {
-  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT", "SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, resumedAt: value.resumedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
+function compactTick(snapshot, cutoffMs = -Infinity) {
+  const keepActivity = value => {
+    if (!["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT", "SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"].includes(value.kind)) return false;
+    if (!["SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"].includes(value.kind)) return true;
+    const eventMs = new Date(sourceEventAt(value)).getTime();
+    return Number.isFinite(eventMs) && eventMs >= cutoffMs;
+  };
+  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(keepActivity).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, resumedAt: value.resumedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
 }
 
-function sourceTimelineEvents(ticks, config, identity, brandAliases) {
+function sourceTimelineEvents(ticks, config, identity, brandAliases, cutoffMs, nowMs) {
   const rawEvents = [];
   const seen = new Set();
   for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
     if (!["SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"].includes(summary.kind) || !summary.gradeSpecific) continue;
     const grade = petrolOctaneKey(summary);
-    const at = summary.observedAt ?? summary.resumedAt ?? summary.latestEventAt;
+    const at = sourceEventAt(summary);
     const atMs = new Date(at).getTime();
-    if (!grade || !Number.isFinite(atMs)) continue;
+    if (!grade || !Number.isFinite(atMs) || atMs < cutoffMs || atMs > nowMs + config.freshness.futureSkewSeconds * 1000) continue;
     const identityId = identity.id(station);
     const eventKey = `${identityId}|${summary.source}|${grade}|${new Date(atMs).toISOString()}`;
     if (seen.has(eventKey)) continue;
@@ -244,16 +252,24 @@ function isLaterTimestamp(candidate, current) {
   const currentMs = new Date(current).getTime();
   return !Number.isFinite(currentMs) || candidateMs > currentMs;
 }
+function sourceEventAt(value) { return value.kind === "SOURCE_REPORTED_TRANSITION" ? value.observedAt : value.resumedAt ?? value.latestEventAt; }
 
-function selectPattern(values, station, brand, identity) {
+function scopedPatterns(values, station, brand, identity) {
   const stationIdentity = identity.id(station);
-  const stationValues = values.filter(value => value.identityId === stationIdentity);
-  const matchingBrand = values.filter(value => brand && value.brand === brand);
-  if (spansTwoMoscowDays(stationValues)) return { values: stationValues, basis: "STATION" };
-  if (spansTwoMoscowDays(matchingBrand)) return { values: matchingBrand, basis: "BRAND" };
-  if (spansTwoMoscowDays(values)) return { values, basis: "AREA" };
+  return [
+    { values: values.filter(value => value.identityId === stationIdentity), basis: "STATION" },
+    { values: values.filter(value => brand && value.brand === brand), basis: "BRAND" },
+    { values, basis: "AREA" }
+  ];
+}
+function selectTimePattern(values, station, brand, identity) {
+  const [stationValues, matchingBrand, areaValues] = scopedPatterns(values, station, brand, identity);
+  if (spansTwoMoscowDays(stationValues.values)) return stationValues;
+  if (spansTwoMoscowDays(matchingBrand.values)) return matchingBrand;
+  if (spansTwoMoscowDays(areaValues.values)) return areaValues;
   return null;
 }
+function selectDurationPattern(values, station, brand, identity) { return scopedPatterns(values, station, brand, identity).find(value => value.values.length >= 2) ?? null; }
 
 function spansTwoMoscowDays(values) { return values.length >= 2 && new Set(values.map(value => value.at ?? value.transitionAt).map(value => { const ms = new Date(value).getTime(); return Number.isFinite(ms) ? new Date(ms + 3 * 3600000).toISOString().slice(0, 10) : undefined; }).filter(Boolean)).size >= 2; }
 

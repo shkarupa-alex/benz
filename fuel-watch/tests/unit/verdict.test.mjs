@@ -65,3 +65,19 @@ test("resumed AI-92 activity cannot imply current AI-95 availability", async () 
   const result = assessRequestedUnion({ observations: [], activity, config });
   assert.equal(result.verdict, "NO_FRESH_DATA");
 });
+
+test("newer direct negative outranks older resumed AI-95 activity", async () => {
+  const config = await loadConfig();
+  const now = new Date("2026-08-30T10:00:00Z");
+  const negative = { source:"2gis", product, status:"OUT_OF_STOCK", time:{kind:"EXACT",observedAt:"2026-08-30T09:55:00Z"} };
+  const activity = [{ source:"benzonavt", product, kind:"TRANSACTIONS_RESUMED", gradeSpecific:true, resumedAt:"2026-08-30T09:00:00Z", latestEventAt:"2026-08-30T09:05:00Z" }];
+  assert.equal(assessStation({observations:[negative],activity,config,now}).verdict,"NOT_AVAILABLE");
+});
+
+test("near-simultaneous negative and resumed AI-95 activity are conflicting", async () => {
+  const config = await loadConfig();
+  const now = new Date("2026-08-30T10:00:00Z");
+  const negative = { source:"2gis", product, status:"OUT_OF_STOCK", time:{kind:"EXACT",observedAt:"2026-08-30T09:55:00Z"} };
+  const activity = [{ source:"benzonavt", product, kind:"TRANSACTIONS_RESUMED", gradeSpecific:true, latestEventAt:"2026-08-30T09:50:00Z" }];
+  assert.equal(assessStation({observations:[negative],activity,config,now}).verdict,"CONFLICTING");
+});

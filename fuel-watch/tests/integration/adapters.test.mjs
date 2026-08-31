@@ -145,6 +145,19 @@ test("gdebenz API extractor treats missing timestamps as a declared limitation a
   assert.equal(raw.freshnessExpected,false);
 });
 
+test("gdebenz detail timeout preserves current status and non-petrol negatives cannot fabricate a transition", async () => {
+  const rows={stations:[{osm_id:"s",lon:44.5,lat:48.7,status:"yes",fuels_now:"95",detail:"95",last_at:"2026-08-30 19:33:26"}]};
+  const hangingFetch=async (url,options={})=>String(url).includes("/comments/")
+    ? new Promise((resolve,reject)=>options.signal.addEventListener("abort",()=>reject(new Error("aborted")),{once:true}))
+    : {ok:true,json:async()=>rows};
+  const timed=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby",5)}`)(hangingFetch,{href:"https://gdebenz.ru/"});
+  assert.equal(timed.observations[0].normalizedStatus,"IN_STOCK");
+  assert.equal(timed.activityHistoryCoverage,0);
+  const comments=[{created_at:"2026-08-30T17:00:00Z",status:"no",detail:"ДТ — нет топлива"},{created_at:"2026-08-30 19:30:00",status:"yes",detail:"95"}];
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?comments:rows}),{href:"https://gdebenz.ru/"});
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),false);
+});
+
 test("2GIS extractor reads current fuel data and normalizes structured brands", async () => {
   const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=station-1";
   const rows=[{station:{id:"station-1",lng:44.5,lat:48.7,name:"АЗС",address:"Адрес",brand:{id:"brand-1",name:"Бренд"}},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z",queue_level:"UP_TO_25"}],queue_level:"UP_TO_25"}];
@@ -177,6 +190,15 @@ test("2GIS extractor preserves alias, array and opaque brand forms", async () =>
   const liveUrl = "https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=alias,array,opaque";
   const raw = await Function("window", "document", "location", "performance", "fetch", "URL", `return ${twogis.TWOGIS_EXTRACTOR}`)({}, { body: { innerText: "АЗС" }, scripts: [] }, { href: "https://2gis.ru/volgograd/search/АЗС" }, { getEntriesByType: () => [{ name: liveUrl }] }, async () => ({ ok: true, json: async () => rows }), URL);
   assert.deepEqual(raw.stations.map(station => station.brand), ["Лукойл", "Роснефть / Пульсар", "brand-id:42"]);
+});
+
+test("2GIS detail timeout preserves current fuel rows with partial history coverage", async () => {
+  const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=s";
+  const rows=[{station:{id:"s",lng:44.5,lat:48.7,name:"АЗС"},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z"}]}];
+  const fetch=async (url,options={})=>String(url).includes("/by-ids") ? {ok:true,json:async()=>rows} : new Promise((resolve,reject)=>options.signal.addEventListener("abort",()=>reject(new Error("aborted")),{once:true}));
+  const raw=await Function("window","document","location","performance","fetch","URL",`return ${twogis.twogisExtractor([[44,48],[45,48],[45,49]],5)}`)({}, {body:{innerText:"АЗС"},scripts:[]},{href:"https://2gis.ru/volgograd/search/АЗС"},{getEntriesByType:()=>[{name:liveUrl}]},fetch,URL);
+  assert.equal(raw.observations[0].status,"IN_STOCK");
+  assert.equal(raw.activityHistoryCoverage,0);
 });
 
 test("Benzonavt handles exhaustive fuels, conflicts and structured queues conservatively", async () => {
@@ -231,4 +253,15 @@ test("Benzonavt detail history preserves petrol transitions and ignores a supers
   assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"&&value.observedAt==="2026-08-31T10:01:40.000Z"),true);
   assert.equal(raw.activity.some(value=>value.kind==="PETROL_STATUS_SNAPSHOT"&&value.gradeLabel==="100"&&value.status==="OUT_OF_STOCK"),true);
   assert.equal(raw.activity.some(value=>value.gradeLabel==="dt"),false);
+});
+
+test("Benzonavt detail timeout preserves current status and diesel negative cannot seed a petrol transition", async () => {
+  const rows=[{id:986,lon:44.5,lat:48.7,fuels:["95","dt"],st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-31T10:52:56Z"}}];
+  const hanging=async (url,options={})=>String(url).includes("/stations/986") ? new Promise((resolve,reject)=>options.signal.addEventListener("abort",()=>reject(new Error("aborted")),{once:true})) : {ok:true,json:async()=>rows};
+  const timed=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x",5)}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},hanging);
+  assert.equal(timed.observations[0].status,"IN_STOCK");
+  assert.equal(timed.activityHistoryCoverage,0);
+  const detail={...rows[0],recent:[{created_at:"2026-08-31T08:00:00Z",status:"no",fuel_grades:["dt"]},{created_at:"2026-08-31T10:01:40Z",status:"yes",fuel_grades:["95"]}]};
+  const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async url=>({ok:true,json:async()=>String(url).includes("/stations/986")?detail:rows}));
+  assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),false);
 });

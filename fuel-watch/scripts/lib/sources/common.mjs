@@ -1,7 +1,7 @@
 import { classifyFuelLabel } from "../fuels.mjs";
 import { brandLabel } from "../normalize.mjs";
 
-export function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", coordinateOrder = "LON_LAT" } = {}) {
+export function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", activityCapability = capability, coordinateOrder = "LON_LAT" } = {}) {
   const enumerated = (raw.stations ?? []).map(s => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: brandLabel(s.brand) || undefined, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), provenanceUrl: s.url ?? raw.url ?? "" }));
   const stations = enumerated.filter(s => validCoordinate(s.coordinate));
   const stationIds = new Set(enumerated.map(s => s.sourceStationId));
@@ -20,14 +20,17 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
   const activity = (raw.activity ?? []).flatMap(a => {
     const sourceStationId = String(a.stationId ?? a.sourceStationId ?? "");
     if (!stationIds.has(sourceStationId)) return [];
-    const product = a.product ?? (a.fuel ? classifyFuelLabel(a.fuel, request.requestedProducts) : undefined) ?? undefined;
-    return [{ source, sourceStationId, product, gradeLabel: String(a.gradeLabel ?? a.fuel ?? product?.displayLabel ?? "").trim() || undefined, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? undefined : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? product), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
+    const classified = a.product ?? (a.fuel ? classifyFuelLabel(a.fuel, request.requestedProducts) : undefined) ?? undefined;
+    const product = activityCapability === "CURRENT_FAMILY" && classified ? { family: "AI_95", variant: "UNKNOWN", variantKey: "FAMILY", displayLabel: classified.displayLabel, specificity: "FAMILY_ONLY", productKey: "AI95_FAMILY" } : classified;
+    return [{ source, sourceStationId, product, gradeLabel: String(a.gradeLabel ?? a.fuel ?? product?.displayLabel ?? "").trim() || undefined, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? undefined : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: activityCapability !== "CURRENT_FAMILY" && Boolean(a.gradeSpecific ?? product), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
   });
   const unlocatedStationIds = enumerated.filter(s => !validCoordinate(s.coordinate)).map(s => s.sourceStationId);
-  const partial = raw.partial || unlocatedStationIds.length > 0;
+  const historyCoverage = finite(raw.activityHistoryCoverage);
+  const partialHistory = historyCoverage != null && historyCoverage < 1;
+  const partial = raw.partial || unlocatedStationIds.length > 0 || partialHistory;
   const status = partial ? "PARTIAL" : "OK";
-  const code = raw.code ?? (unlocatedStationIds.length ? "COORDINATE_COVERAGE" : undefined);
-  const message = raw.message ?? (unlocatedStationIds.length ? `${unlocatedStationIds.length} enumerated station(s) lacked valid coordinates` : undefined);
+  const code = raw.code ?? (unlocatedStationIds.length ? "COORDINATE_COVERAGE" : partialHistory ? "ACTIVITY_HISTORY_PARTIAL" : undefined);
+  const message = raw.message ?? (unlocatedStationIds.length ? `${unlocatedStationIds.length} enumerated station(s) lacked valid coordinates` : partialHistory ? `Optional activity history loaded for ${Math.round(historyCoverage * 100)}% of eligible stations; current status data was preserved` : undefined);
   const coverage = coverageMetrics(enumerated, observations, raw);
   return { source, health: { source, status, code, message }, stations, observations, queues, activity, coverage, enumeratedStationIds: enumerated.map(s => s.sourceStationId), unlocatedStationIds };
 }
@@ -60,5 +63,5 @@ function coverageMetrics(stations, observations, raw) {
   const unique = new Set(ids);
   const stationIdsWithFuel = new Set(observations.map(o => o.sourceStationId));
   const timed = observations.filter(o => o.time?.kind !== "UNKNOWN").length;
-  return { stationCount: stations.length, coordinateCoverage: stations.length ? stations.filter(s => validCoordinate(s.coordinate)).length / stations.length : 0, duplicateRatio: stations.length ? 1 - unique.size / stations.length : 0, fuelBlockCoverage: unique.size ? stationIdsWithFuel.size / unique.size : 0, timestampCoverage: observations.length ? timed / observations.length : 0, freshnessExpected: raw.freshnessExpected !== false, naturalTermination: raw.naturalTermination !== false };
+  return { stationCount: stations.length, coordinateCoverage: stations.length ? stations.filter(s => validCoordinate(s.coordinate)).length / stations.length : 0, duplicateRatio: stations.length ? 1 - unique.size / stations.length : 0, fuelBlockCoverage: unique.size ? stationIdsWithFuel.size / unique.size : 0, timestampCoverage: observations.length ? timed / observations.length : 0, activityHistoryCoverage: finite(raw.activityHistoryCoverage), freshnessExpected: raw.freshnessExpected !== false, naturalTermination: raw.naturalTermination !== false };
 }

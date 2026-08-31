@@ -9,7 +9,7 @@ test("degraded report warns that empty evidence does not mean no petrol", () => 
 });
 
 test("report renders one octane-level assessment, approximate age, activity and run confidence", () => {
-  const item={stationKey:"s",title:"АЗС",address:"ул. Рокоссовского, 175",coordinate:[44.525837,48.748086],verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"gdebenz",status:"IN_STOCK",ageMinutes:10,approximate:true,expired:false,product:{specificity:"FAMILY_ONLY"}}],activity:[{kind:"TRANSACTIONS_RESUMED"}],productAssessments:{AI95_BASE:{verdict:"AVAILABLE",confidence:"MEDIUM",approximate:true},AI95_PREMIUM_GENERIC:{verdict:"NOT_AVAILABLE",confidence:"MEDIUM"}},availabilityRun:{basis:"FIRST_SEEN",firstObservedAt:"2026-08-30T09:50:00Z",confidence:"MEDIUM"}};
+  const item={stationKey:"s",title:"АЗС",address:"ул. Рокоссовского, 175",coordinate:[44.525837,48.748086],verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"gdebenz",status:"IN_STOCK",ageMinutes:10,approximate:true,expired:false,product:{specificity:"FAMILY_ONLY"}}],activity:[{kind:"TRANSACTIONS_RESUMED",latestEventAt:"2026-08-30T09:55:00Z",product:{family:"AI_95",productKey:"AI95_BASE"}}],productAssessments:{AI95_BASE:{verdict:"AVAILABLE",confidence:"MEDIUM",approximate:true},AI95_PREMIUM_GENERIC:{verdict:"NOT_AVAILABLE",confidence:"MEDIUM"}},availabilityRun:{basis:"FIRST_SEEN",firstObservedAt:"2026-08-30T09:50:00Z",confidence:"MEDIUM"}};
   const snapshot={fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[{source:"gdebenz",status:"OK"}],warnings:[],changes:[]};
   const {markdown}=renderReport(snapshot);
   assert.equal(markdown.match(/^\s*АИ-95:/gm)?.length,1);
@@ -54,4 +54,16 @@ test("report renders an AI-95 source-reported transition when monitor state is a
   const item={stationKey:"s",title:"Лукойл",address:"ул. Рокоссовского, 1Р",coordinate:[44.4897613,48.7095778],verdict:"AVAILABLE",confidence:"LOW",observations:[{source:"benzonavt",status:"IN_STOCK",ageMinutes:30,expired:false,product:{family:"AI_95",specificity:"EXACT_VARIANT"}}],activity:[{source:"gdebenz",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-31T09:41:06Z",gradeLabel:"95",product:{family:"AI_95"}},{source:"2gis",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-31T10:36:58Z",gradeLabel:"95",product:{family:"AI_95"}}],productAssessments:{}};
   const snapshot={fetchedAt:"2026-08-31T11:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[{source:"gdebenz",status:"OK"}],warnings:[],changes:[],forecast:{retentionDays:7,items:[]},runtime:{browserMode:"HEADED"}};
   assert.match(renderReport(snapshot).markdown,/gdebenz фиксирует ранний переход около .*12:41, остальные источники — до .*13:36/);
+});
+
+test("report ignores stale and cross-octane activity on the AI-95 line", () => {
+  const activity=[
+    {source:"2gis",kind:"TRANSACTIONS_RESUMED",latestEventAt:"2026-08-31T10:55:00Z",gradeLabel:"92"},
+    {source:"gdebenz",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-08-30T09:41:06Z",gradeLabel:"95"}
+  ];
+  const item={stationKey:"s",title:"АЗС",verdict:"AVAILABLE",confidence:"LOW",observations:[],activity,productAssessments:{}};
+  const snapshot={fetchedAt:"2026-08-31T11:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[],warnings:[],changes:[],freshnessPolicy:{expireMinutes:360,futureSkewSeconds:120}};
+  const {markdown}=renderReport(snapshot);
+  assert.doesNotMatch(markdown,/активность возобновилась/);
+  assert.match(markdown,/время появления неизвестно/);
 });

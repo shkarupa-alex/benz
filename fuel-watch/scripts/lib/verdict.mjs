@@ -19,8 +19,9 @@ export function assessStation({ observations = [], activity = [], config, source
   }
   const familyPositive = usable.find(o => POSITIVE.has(o.status) && o.product?.specificity === "FAMILY_ONLY");
   if (familyPositive) return result("LIKELY_AVAILABLE", "LOW", evidence, activity, "family-only positive evidence");
-  const resumed = activity.some(a => a.kind === "TRANSACTIONS_RESUMED" && a.gradeSpecific);
-  if (resumed) return result("LIKELY_AVAILABLE", "MEDIUM", evidence, activity, "grade-specific activity resumed");
+  const resumed = newestActivity(activity.filter(a => a.kind === "TRANSACTIONS_RESUMED" && a.gradeSpecific), config.freshness, now);
+  if (resumed && freshestNegative && Math.abs(resumed.observedMs - freshestNegative.observedMs) <= config.freshness.conflictWindowMinutes * 60000) return result("CONFLICTING", "LOW", evidence, activity, "fresh activity conflicts with direct negative evidence");
+  if (resumed && (!freshestNegative || resumed.observedMs > freshestNegative.observedMs)) return result("LIKELY_AVAILABLE", "MEDIUM", evidence, activity, "grade-specific activity resumed");
   if (freshestNegative && (!freshestPositive || freshestNegative.observedMs > freshestPositive.observedMs)) return result("NOT_AVAILABLE", "MEDIUM", evidence, activity, "fresh exact negative evidence");
   if (usable.length) return result("INDIRECT", "LOW", evidence, activity, "indirect or uncertain evidence only");
   return result("NO_FRESH_DATA", "NONE", evidence, activity, "no usable current evidence");
@@ -91,6 +92,7 @@ function positiveConfidence(positives, activity, groups, config) {
   return "LOW";
 }
 function newest(values) { return [...values].sort((a, b) => b.observedMs - a.observedMs)[0]; }
+function newestActivity(values, freshness, now) { return newest(values.map(value => { const observedMs = new Date(value.latestEventAt ?? value.resumedAt ?? value.observedAt).getTime(); return { ...value, observedMs }; }).filter(value => Number.isFinite(value.observedMs) && value.observedMs <= now.getTime() + freshness.futureSkewSeconds * 1000 && now.getTime() - value.observedMs <= freshness.expireMinutes * 60000)); }
 function result(verdict, confidence, observations, activity, reason) { return { verdict, confidence, observations, activity, reason }; }
 function strongest(values) { return [...values].sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence))[0]; }
 function weakest(values) { return [...values].sort((a, b) => confidenceRank(a) - confidenceRank(b))[0] ?? "NONE"; }

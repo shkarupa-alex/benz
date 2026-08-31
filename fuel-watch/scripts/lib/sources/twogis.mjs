@@ -14,7 +14,7 @@ export async function collect(request, ctx) {
     return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
   } catch (error) { return errorResult(id, error); }
 }
-export function twogisExtractor(polygon) { return String.raw`(async () => {
+export function twogisExtractor(polygon, detailTimeoutMs = 3500) { return String.raw`(async () => {
   const body = document.body?.innerText || '';
   if (/recaptcha|captcha|подтвердите,? что вы не робот|museum/i.test(location.href + ' ' + body.slice(0,2000))) return { challenge: true };
   const stations = [], observations = [], queues = [], activity = [], seen = new Set();
@@ -31,8 +31,9 @@ export function twogisExtractor(polygon) { return String.raw`(async () => {
   const isPetrol = value => /(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/u.test(String(value || ''));
   const gradeOf = value => String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/u)?.[1];
   const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
+  const detailDeadline = Date.now() + 10000;
   const detailCandidates = liveRows.filter(row => row?.station?.id && insideBounds(row.station));
-  const details = await mapLimit(detailCandidates, 6, async row => { const response = await fetch('https://benzin.api.2gis.ru/api/v1/stations/' + encodeURIComponent(row.station.id)); if (!response.ok) return; const detail = await response.json(); return detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : undefined; });
+  const details = await mapLimit(detailCandidates, 6, async row => { const remainingMs = detailDeadline - Date.now(); if (remainingMs <= 0) return; const response = await fetch('https://benzin.api.2gis.ru/api/v1/stations/' + encodeURIComponent(row.station.id), { signal: AbortSignal.timeout(Math.max(1, Math.min(${Number(detailTimeoutMs)}, remainingMs))) }); if (!response.ok) return; const detail = await response.json(); return detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : undefined; });
   const detailsById = new Map(details.filter(Boolean).map(detail => [String(detail.station?.id || ''), detail]));
   for (const row of liveRows) {
     const station = row?.station;
@@ -56,7 +57,7 @@ export function twogisExtractor(polygon) { return String.raw`(async () => {
     for (const report of reports) {
       const at = new Date(report.created_at); if (!Number.isFinite(at.getTime())) continue;
       const grades = [...new Set((report.fuel_types || []).map(gradeOf).filter(Boolean))];
-      if (report.available === false) for (const grade of (grades.length ? grades : knownGrades)) stateByGrade.set(grade, 'OUT_OF_STOCK');
+      if (report.available === false) for (const grade of grades) stateByGrade.set(grade, 'OUT_OF_STOCK');
       if (report.available === true) for (const grade of grades) {
         const eventTimes = timesByGrade.get(grade) ?? []; eventTimes.push(at.toISOString()); timesByGrade.set(grade, eventTimes);
         if (stateByGrade.get(grade) === 'OUT_OF_STOCK') activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'SOURCE_REPORTED_TRANSITION', observedAt: at.toISOString(), gradeSpecific: true, sourceTerminology: 'UGC_REPORT' });
@@ -68,6 +69,6 @@ export function twogisExtractor(polygon) { return String.raw`(async () => {
     if (transactionTimes.length) activity.push({ stationId: id, kind: 'RECENT_SIGNAL', eventTimes: transactionTimes, gradeSpecific: false, sourceTerminology: 'TRANSACTION' });
   }
   const liveAvailable = liveRows.length > 0;
-  return {stations,observations,queues,activity,schemaChanged:stations.length===0,partial:!liveAvailable,code:liveAvailable?undefined:'CURRENT_DATA_UNAVAILABLE',message:stations.length===0?'2GIS exposed no recognizable coordinate-bearing station data':liveAvailable?undefined:'2GIS station catalogue loaded, but its current fuel response was not observable',freshnessExpected:liveAvailable,naturalTermination:true,activityHistoryCoverage:detailCandidates.length?detailsById.size/detailCandidates.length:0};
+  return {stations,observations,queues,activity,schemaChanged:stations.length===0,partial:!liveAvailable,code:liveAvailable?undefined:'CURRENT_DATA_UNAVAILABLE',message:stations.length===0?'2GIS exposed no recognizable coordinate-bearing station data':liveAvailable?undefined:'2GIS station catalogue loaded, but its current fuel response was not observable',freshnessExpected:liveAvailable,naturalTermination:true,activityHistoryCoverage:detailCandidates.length?detailsById.size/detailCandidates.length:1};
 })()`; }
 export const TWOGIS_EXTRACTOR = twogisExtractor();

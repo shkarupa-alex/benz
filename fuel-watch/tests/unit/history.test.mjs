@@ -84,6 +84,39 @@ test("source-provided petrol transition history can train an on-demand forecast"
   assert.equal(forecast.items[0].basis,"STATION");
 });
 
+test("source events older than retention cannot train or persist a forecast", async () => {
+  const config=await loadConfig();
+  const oldActivity=[
+    {source:"gdebenz",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-07-01T06:00:00Z",gradeSpecific:true},
+    {source:"gdebenz",gradeLabel:"95",kind:"SOURCE_REPORTED_TRANSITION",observedAt:"2026-07-02T06:00:00Z",gradeSpecific:true}
+  ];
+  const history={schemaVersion:1,ticks:[
+    {fetchedAt:"2026-08-31T07:45:00Z",areaHash:"area",queryHash:"query",stations:[{...station("s","AVAILABLE"),activity:oldActivity}]},
+    {fetchedAt:"2026-08-31T08:00:00Z",areaHash:"area",queryHash:"query",stations:[station("s","NOT_AVAILABLE")]}
+  ]};
+  const snapshot={fetchedAt:"2026-08-31T08:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  assert.equal(buildForecast(history,snapshot,config).sourceTimelineEventCount,0);
+  const dir=await mkdtemp(join(tmpdir(),"fuel-history-retention-")), path=join(dir,"history.json");
+  const current={...snapshot,assessments:[{...station("s","AVAILABLE"),activity:oldActivity}]};
+  const result=await recordHistory(path,current,config);
+  assert.equal(result.history.ticks[0].stations[0].activity.length,0);
+});
+
+test("duration episodes may train on two episodes from one Moscow day", async () => {
+  const config=await loadConfig();
+  const values=[
+    ["2026-08-30T05:00:00Z","NOT_AVAILABLE"],["2026-08-30T05:15:00Z","AVAILABLE"],
+    ["2026-08-30T06:00:00Z","NOT_AVAILABLE"],["2026-08-30T06:30:00Z","AVAILABLE"],
+    ["2026-08-30T07:00:00Z","NOT_AVAILABLE"]
+  ];
+  const history={schemaVersion:1,ticks:values.map(([fetchedAt,verdict])=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[station("s",verdict)]}))};
+  const snapshot={fetchedAt:"2026-08-30T07:00:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.completedEpisodeCount,2);
+  assert.equal(forecast.items[0].signalBasis,"STATUS_TRANSITION");
+  assert.equal(forecast.items[0].sampleSize,2);
+});
+
 test("several sources observing one delivery window count as one episode", async () => {
   const config=await loadConfig();
   const activity=[

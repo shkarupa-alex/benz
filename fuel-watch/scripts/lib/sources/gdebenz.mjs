@@ -14,11 +14,11 @@ export async function collect(request, ctx) {
       raw = fallback.schemaChanged ? { ...fallback, message: `${raw.message}; ${fallback.message}` } : fallback;
     }
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message);
-    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability });
+    return okResult(id, { ...raw, url: opened.finalUrl }, request, ctx.config, { capability, activityCapability: "CURRENT_GRADE" });
   } catch (error) { return errorResult(id, error); }
 }
 function is502(opened) { return /^\s*(?:error\s+)?502(?:\s*-?\s*bad gateway)?\s*$/iu.test(opened.pageTitle ?? "") || /^\s*502\s*-?\s*bad gateway\b/iu.test(opened.pageTextPrefix ?? ""); }
-export function gdebenzApiExtractor(url) { return String.raw`(async () => {
+export function gdebenzApiExtractor(url, detailTimeoutMs = 3500) { return String.raw`(async () => {
   try {
     const response = await fetch(${JSON.stringify(url)}, { credentials: 'same-origin' });
     if (!response.ok) return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API returned HTTP ' + response.status };
@@ -35,7 +35,9 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
     const petrolGrades = value => [...new Set((String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu) || []).map(match => match.match(/92|95|98|100/u)?.[0]).filter(Boolean))];
     const commentPetrolGrades = value => { const fuelSegment = String(value || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(fuelSegment) ? [] : petrolGrades(fuelSegment); };
     const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
-    const commentRows = await mapLimit(rows, 6, async row => { const id = String(row.osm_id || row.id || ''); if (!id) return; const commentsResponse = await fetch('/api/comments/' + encodeURIComponent(id) + '/recent?limit=12', { credentials: 'same-origin' }); if (!commentsResponse.ok) return; const comments = await commentsResponse.json(); return Array.isArray(comments) ? [id, comments] : undefined; });
+    const detailDeadline = Date.now() + 10000;
+    const detailRows = rows.filter(row => String(row.osm_id || row.id || '') && Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat)));
+    const commentRows = await mapLimit(detailRows, 6, async row => { const remainingMs = detailDeadline - Date.now(); if (remainingMs <= 0) return; const id = String(row.osm_id || row.id || ''); const commentsResponse = await fetch('/api/comments/' + encodeURIComponent(id) + '/recent?limit=12', { credentials: 'same-origin', signal: AbortSignal.timeout(Math.max(1, Math.min(${Number(detailTimeoutMs)}, remainingMs))) }); if (!commentsResponse.ok) return; const comments = await commentsResponse.json(); return Array.isArray(comments) ? [id, comments] : undefined; });
     const commentsById = new Map(commentRows.filter(Boolean));
     for (const row of rows) {
       const id = String(row.osm_id || row.id || '');
@@ -47,7 +49,7 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
       const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);
       observations.push({ stationId: id, fuel: 'АИ-95', status: detail || String(row.status || ''), normalizedStatus: familyUnavailable ? 'OUT_OF_STOCK' : hasAi95 ? 'IN_STOCK' : 'UNKNOWN', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
       for (const grade of petrolGrades(listed)) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'PETROL_STATUS_SNAPSHOT', status: familyUnavailable ? 'OUT_OF_STOCK' : 'IN_STOCK', observedAt: isoTime(row.last_at), gradeSpecific: true, sourceTerminology: 'STATUS' });
-      const comments = [...(commentsById.get(id) || [])].sort((a, b) => new Date(String(a.created_at).replace(' ', 'T') + 'Z') - new Date(String(b.created_at).replace(' ', 'T') + 'Z'));
+      const comments = [...(commentsById.get(id) || [])].sort((a, b) => new Date(isoTime(a.created_at) || 0) - new Date(isoTime(b.created_at) || 0));
       const knownGrades = [...new Set([...(petrolGrades(listed)), ...comments.flatMap(comment => commentPetrolGrades(comment.detail))])];
       const stateByGrade = new Map(knownGrades.map(grade => [grade, 'UNKNOWN']));
       const timesByGrade = new Map();
@@ -55,7 +57,10 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
         const at = isoTime(comment.created_at); if (!at) continue;
         const status = String(comment.status || '').toLowerCase();
         const grades = commentPetrolGrades(comment.detail);
-        if (status === 'no') for (const grade of knownGrades) stateByGrade.set(grade, 'OUT_OF_STOCK');
+        const detailText = String(comment.detail || '');
+        const namesSpecificFuel = /(?:^|[^\p{L}\p{N}])(?:дт|дизел\p{L}*|92|95|98|100)(?:[^\p{L}\p{N}]|$)/iu.test(detailText);
+        const familyNegative = status === 'no' && !namesSpecificFuel && /нет\s+(?:топлива|бензина)|заправка\s+не\s+работает/iu.test(detailText);
+        if (status === 'no') for (const grade of (grades.length ? grades : familyNegative ? knownGrades : [])) stateByGrade.set(grade, 'OUT_OF_STOCK');
         if (['yes','queue'].includes(status)) for (const grade of grades) {
           const eventTimes = timesByGrade.get(grade) ?? []; eventTimes.push(at); timesByGrade.set(grade, eventTimes);
           if (stateByGrade.get(grade) === 'OUT_OF_STOCK') activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'SOURCE_REPORTED_TRANSITION', observedAt: at, gradeSpecific: true, sourceTerminology: 'USER_REPORT' });
@@ -71,7 +76,7 @@ export function gdebenzApiExtractor(url) { return String.raw`(async () => {
     }
     const hasFreshness = observations.some(observation => observation.observedAt);
     const noFreshnessMetadata = observations.length > 0 && !hasFreshness;
-    return { stations, observations, queues, activity, apiUnavailable: stations.length === 0, schemaChanged: stations.length === 0, partial: noFreshnessMetadata, code: noFreshnessMetadata ? 'NO_FRESHNESS_METADATA' : undefined, freshnessExpected: hasFreshness, naturalTermination: true, message: stations.length === 0 ? 'gdebenz nearby API rows lacked station identity or coordinates' : noFreshnessMetadata ? 'gdebenz nearby API exposes no observation timestamps' : undefined, activityHistoryCoverage: rows.length ? commentsById.size / rows.length : 0 };
+    return { stations, observations, queues, activity, apiUnavailable: stations.length === 0, schemaChanged: stations.length === 0, partial: noFreshnessMetadata, code: noFreshnessMetadata ? 'NO_FRESHNESS_METADATA' : undefined, freshnessExpected: hasFreshness, naturalTermination: true, message: stations.length === 0 ? 'gdebenz nearby API rows lacked station identity or coordinates' : noFreshnessMetadata ? 'gdebenz nearby API exposes no observation timestamps' : undefined, activityHistoryCoverage: detailRows.length ? commentsById.size / detailRows.length : 1 };
   } catch (error) {
     return { apiUnavailable: true, schemaChanged: true, message: 'gdebenz nearby API could not be read: ' + error.message };
   }
