@@ -119,6 +119,44 @@ test("a house-letter g remains distinct when followed by a city name", async () 
   assert.equal(values.length, 2);
 });
 
+test("attached and separated spellings of the same house letter merge", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "attached", title: "АЗС", brand: "Лукойл", address: "ул. Землячки, 27Г", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "separated", title: "АЗС", brand: "Лукойл", address: "ул. Землячки, 27 г", coordinate: [44.5001, 48.7] }
+  ], config);
+  assert.equal(values.length, 1);
+});
+
+for (const unit of ["корпус 1", "к 1"]) {
+  test(`main house number is not replaced by ${unit}`, async () => {
+    const config = await loadConfig();
+    const values = reconcileStations([
+      { source: "yandex", sourceStationId: "10", title: "АЗС", brand: "Лукойл", address: `ул. Мира, 10, ${unit}`, coordinate: [44.5, 48.7] },
+      { source: "2gis", sourceStationId: "11", title: "АЗС", brand: "Лукойл", address: `ул. Мира, 11, ${unit}`, coordinate: [44.5, 48.7] }
+    ], config);
+    assert.equal(values.length, 2);
+  });
+}
+
+test("corpus abbreviations normalize without changing the main house number", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "long", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 1", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "short", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, к 1", coordinate: [44.5001, 48.7] }
+  ], config);
+  assert.equal(values.length, 1);
+});
+
+test("different known corpus numbers remain separate", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "c1", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 1", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "c2", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 2", coordinate: [44.5, 48.7] }
+  ], config);
+  assert.equal(values.length, 2);
+});
+
 test("configured brand aliases and street dictionary participate in matching", async () => {
   const config = await loadConfig();
   config.identity.brandAliases = { "лукойл": ["lukoil"] };

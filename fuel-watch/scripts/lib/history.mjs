@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import properLockfile from "proper-lockfile";
-import { normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
+import { compileBrandAliases, normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
 import { readJson, writeJsonAtomic } from "./util.mjs";
 
 const POSITIVE = new Set(["AVAILABLE", "LIKELY_AVAILABLE"]);
@@ -74,18 +74,19 @@ function isProcessAlive(pid) {
 }
 
 export function buildForecast(history, snapshot, config) {
+  const brandAliases = compileBrandAliases(config.identity.brandAliases);
   const areaTicks = history.ticks.filter(tick => tick.areaHash === snapshot.areaHash);
   const scopedTicks = history.ticks.filter(tick => tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash);
   const identity = buildHistoryIdentity(areaTicks);
-  const episodes = completedEpisodes(scopedTicks, config.monitoring.intervalMinutes * 3, identity, config.identity.brandAliases);
-  const rollingEvents = rollingActivityEvents(areaTicks, config, identity);
-  const statusEvents = petrolStatusEvents(areaTicks, config, identity);
+  const episodes = completedEpisodes(scopedTicks, config.monitoring.intervalMinutes * 3, identity, brandAliases);
+  const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
+  const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
   const nowMs = new Date(snapshot.fetchedAt).getTime();
   const candidates = snapshot.assessments.filter(assessment => assessment.verdict === NEGATIVE).map(assessment => {
     const samples = stationSamples(scopedTicks, assessment, identity);
     const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
     if (!negativeStartedAt) return null;
-    const brand = stationBrand(assessment, config.identity.brandAliases);
+    const brand = stationBrand(assessment, brandAliases);
     const activity = selectPattern(rollingEvents, assessment, brand, identity) ?? selectPattern(statusEvents, assessment, brand, identity);
     if (activity) return forecastFromActivity(assessment, negativeStartedAt, activity, nowMs);
     const selected = selectPattern(episodes, assessment, brand, identity);
@@ -110,7 +111,7 @@ function compactTick(snapshot) {
   return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
 }
 
-function rollingActivityEvents(ticks, config, identity) {
+function rollingActivityEvents(ticks, config, identity, brandAliases) {
   const previous = new Map();
   const groups = new Map();
   for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
@@ -126,7 +127,7 @@ function rollingActivityEvents(ticks, config, identity) {
     const recentEvent = Number.isFinite(latestMs) && tickMs - latestMs >= -config.freshness.futureSkewSeconds * 1000 && tickMs - latestMs <= config.activity.resumeWindowMinutes * 60000;
     if (closeTicks && before.summary.windowMinutes >= config.activity.quietGapMinutes && before.summary.count === 0 && summary.count >= config.activity.minimumEvents && recentEvent) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
-      const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, config.identity.brandAliases), at: summary.latestEventAt, grades: new Set(), totalCount: 0 };
+      const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, brandAliases), at: summary.latestEventAt, grades: new Set(), totalCount: 0 };
       group.grades.add(grade);
       group.totalCount += summary.count;
       if (new Date(summary.latestEventAt) > new Date(group.at)) group.at = summary.latestEventAt;
@@ -137,7 +138,7 @@ function rollingActivityEvents(ticks, config, identity) {
   return [...groups.values()].map(value => ({ identityId: value.identityId, brand: value.brand, at: value.at, gradeCount: value.grades.size, totalCount: value.totalCount, confidence: value.grades.size >= 2 || value.totalCount >= config.activity.strongSignalCountPerHour ? "MEDIUM" : "LOW", signalBasis: "ROLLING_ACTIVITY" }));
 }
 
-function petrolStatusEvents(ticks, config, identity) {
+function petrolStatusEvents(ticks, config, identity, brandAliases) {
   const previous = new Map();
   const groups = new Map();
   for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
@@ -151,7 +152,7 @@ function petrolStatusEvents(ticks, config, identity) {
     const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
     if (closeTicks && before.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
-      const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, config.identity.brandAliases), at: tick.fetchedAt, grades: new Set() };
+      const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, brandAliases), at: tick.fetchedAt, grades: new Set() };
       group.grades.add(grade);
       groups.set(groupKey, group);
     }
