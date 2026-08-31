@@ -84,6 +84,23 @@ test("source-provided petrol transition history can train an on-demand forecast"
   assert.equal(forecast.items[0].basis,"STATION");
 });
 
+test("AI-92-only source transitions train the generic tanker forecast for AI-95", async () => {
+  const config=await loadConfig();
+  const sourceTick=(fetchedAt,observedAt)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","AVAILABLE"),activity:[
+    {source:"gdebenz",gradeLabel:"92",kind:"SOURCE_REPORTED_TRANSITION",observedAt,gradeSpecific:true,sourceTerminology:"USER_REPORT"}
+  ]}]});
+  const history={schemaVersion:1,ticks:[
+    sourceTick("2026-08-28T06:15:00Z","2026-08-28T06:00:00Z"),
+    sourceTick("2026-08-29T06:15:00Z","2026-08-29T06:05:00Z"),
+    {fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",stations:[station("s","NOT_AVAILABLE")]}
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.sourceTimelineEventCount,2);
+  assert.equal(forecast.items[0].signalBasis,"SOURCE_REPORTED_STATUS");
+  assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:03:00.000Z");
+});
+
 test("source events older than retention cannot train or persist a forecast", async () => {
   const config=await loadConfig();
   const oldActivity=[
