@@ -178,6 +178,38 @@ test("unreadable variant does not suppress readable octane transitions", async (
   assert.equal(forecast.items.length,1);
 });
 
+test("variant becoming readable cannot fabricate status transitions", async () => {
+  const config=await loadConfig();
+  const status=(productKey,value)=>({source:"source",productKey,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
+  const hiddenTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE",undefined)]}]});
+  const visibleTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE","OUT_OF_STOCK"),status("AI95_GDRIVE","IN_STOCK")]}]});
+  const history={schemaVersion:1,ticks:[
+    hiddenTick("2026-08-28T05:45:00Z"),visibleTick("2026-08-28T06:00:00Z"),
+    hiddenTick("2026-08-29T05:45:00Z"),visibleTick("2026-08-29T06:00:00Z"),
+    hiddenTick("2026-08-30T05:30:00Z")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.petrolStatusEventCount,0);
+  assert.equal(forecast.items.length,0);
+});
+
+test("rolling variant appearing cannot fabricate activity resumption", async () => {
+  const config=await loadConfig();
+  const rolling=(productKey,count,latestEventAt)=>({source:"source",productKey,kind:"ROLLING_SIGNAL_COUNT",count,windowMinutes:60,latestEventAt,gradeSpecific:true,sourceTerminology:"SIGNAL"});
+  const hiddenTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("AI95_BASE",0,fetchedAt)]}]});
+  const visibleTick=fetchedAt=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[rolling("AI95_BASE",0,fetchedAt),rolling("AI95_GDRIVE",3,fetchedAt)]}]});
+  const history={schemaVersion:1,ticks:[
+    hiddenTick("2026-08-28T05:45:00Z"),visibleTick("2026-08-28T06:00:00Z"),
+    hiddenTick("2026-08-29T05:45:00Z"),visibleTick("2026-08-29T06:00:00Z"),
+    hiddenTick("2026-08-30T05:30:00Z")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.activityEventCount,0);
+  assert.equal(forecast.items.length,0);
+});
+
 test("history keeps station continuity when a merged member source disappears", async () => {
   const config=await loadConfig();
   const physical=(stationKey,verdict,memberKeys)=>({...station(stationKey,verdict),memberKeys});

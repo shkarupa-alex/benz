@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import properLockfile from "proper-lockfile";
-import { petrolOctaneKey } from "./fuels.mjs";
+import { normalizeFuelLabel, petrolOctaneKey } from "./fuels.mjs";
 import { compileBrandAliases, normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
 import { readJson, writeJsonAtomic } from "./util.mjs";
 
@@ -124,7 +124,8 @@ function rollingActivityEvents(ticks, config, identity, brandAliases) {
     const latestMs = new Date(summary.latestEventAt).getTime();
     const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
     const recentEvent = Number.isFinite(latestMs) && tickMs - latestMs >= -config.freshness.futureSkewSeconds * 1000 && tickMs - latestMs <= config.activity.resumeWindowMinutes * 60000;
-    if (closeTicks && before.summary.windowMinutes >= config.activity.quietGapMinutes && before.summary.count === 0 && summary.count >= config.activity.minimumEvents && recentEvent) {
+    const witnessed = before && [...summary.variantCounts].some(([variant, count]) => count > 0 && before.summary.variantCounts.get(variant) === 0);
+    if (closeTicks && witnessed && before.summary.windowMinutes >= config.activity.quietGapMinutes && before.summary.count === 0 && summary.count >= config.activity.minimumEvents && recentEvent) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
       const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, brandAliases), at: summary.latestEventAt, grades: new Set(), totalCount: 0 };
       group.grades.add(grade);
@@ -147,13 +148,14 @@ function petrolStatusEvents(ticks, config, identity, brandAliases) {
     const before = previous.get(key);
     const tickMs = new Date(tick.fetchedAt).getTime();
     const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
-    if (closeTicks && before.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
+    const witnessed = before && [...summary.variantStatuses].some(([variant, status]) => ["IN_STOCK", "LIMITED"].includes(status) && before.variantStatuses.get(variant) === "OUT_OF_STOCK");
+    if (closeTicks && witnessed && before.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
       const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station, brandAliases), at: tick.fetchedAt, grades: new Set() };
       group.grades.add(grade);
       groups.set(groupKey, group);
     }
-    previous.set(key, { tickMs, status: summary.status });
+    previous.set(key, { tickMs, status: summary.status, variantStatuses: summary.variantStatuses });
   }
   return [...groups.values()].map(value => ({ identityId: value.identityId, brand: value.brand, at: value.at, gradeCount: value.grades.size, confidence: value.grades.size >= 2 ? "MEDIUM" : "LOW", signalBasis: "PETROL_STATUS_PATTERN" }));
 }
@@ -165,10 +167,12 @@ function aggregateRollingByOctane(activity = []) {
     const grade = petrolOctaneKey(summary);
     if (!grade) continue;
     const key = `${summary.source}\u0000${grade}`;
-    const aggregate = grouped.get(key) ?? { source: summary.source, grade, count: 0, windowMinutes: Infinity, latestEventAt: undefined };
+    const aggregate = grouped.get(key) ?? { source: summary.source, grade, count: 0, windowMinutes: Infinity, latestEventAt: undefined, variantCounts: new Map() };
     aggregate.count += summary.count;
     aggregate.windowMinutes = Math.min(aggregate.windowMinutes, summary.windowMinutes);
     if (isLaterTimestamp(summary.latestEventAt, aggregate.latestEventAt)) aggregate.latestEventAt = summary.latestEventAt;
+    const variant = activityVariantKey(summary);
+    if (variant) aggregate.variantCounts.set(variant, (aggregate.variantCounts.get(variant) ?? 0) + summary.count);
     grouped.set(key, aggregate);
   }
   return [...grouped.values()];
@@ -181,17 +185,31 @@ function aggregateStatusesByOctane(activity = []) {
     const grade = petrolOctaneKey(summary);
     if (!grade) continue;
     const key = `${summary.source}\u0000${grade}`;
-    const aggregate = grouped.get(key) ?? { source: summary.source, grade, statuses: [] };
+    const aggregate = grouped.get(key) ?? { source: summary.source, grade, statuses: [], variantStatuses: new Map() };
     aggregate.statuses.push(summary.status);
+    const variant = activityVariantKey(summary);
+    if (variant) aggregate.variantStatuses.set(variant, strongestStatus([aggregate.variantStatuses.get(variant), summary.status]));
     grouped.set(key, aggregate);
   }
   return [...grouped.values()].map(value => ({
     source: value.source,
     grade: value.grade,
-    status: value.statuses.includes("IN_STOCK") ? "IN_STOCK"
-      : value.statuses.includes("LIMITED") ? "LIMITED"
-        : value.statuses.includes("OUT_OF_STOCK") ? "OUT_OF_STOCK" : "UNKNOWN"
+    status: strongestStatus(value.statuses),
+    variantStatuses: value.variantStatuses
   }));
+}
+
+function strongestStatus(statuses) {
+  return statuses.includes("IN_STOCK") ? "IN_STOCK"
+    : statuses.includes("LIMITED") ? "LIMITED"
+      : statuses.includes("OUT_OF_STOCK") ? "OUT_OF_STOCK" : "UNKNOWN";
+}
+
+function activityVariantKey(summary) {
+  const explicit = summary.productKey ?? summary.product?.productKey ?? summary.variantKey ?? summary.product?.variantKey;
+  if (explicit) return String(explicit);
+  const label = normalizeFuelLabel(summary.gradeLabel ?? summary.product?.displayLabel ?? "");
+  return label || undefined;
 }
 
 function isLaterTimestamp(candidate, current) {
