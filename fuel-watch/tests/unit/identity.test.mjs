@@ -26,3 +26,19 @@ test("a surviving member preserves merged station identity", async () => {
   const [current] = reconcileStations([stations[0]], config, previous);
   assert.equal(current.stationKey, both.stationKey);
 });
+
+test("merges the three live representations of Rosneft at Rokossovskogo 175", async () => {
+  const config = await loadConfig();
+  const stations = [
+    { source: "gdebenz", sourceStationId: "1721722173", title: "Роснефть", brand: "Роснефть", address: "улица Рокоссовского, 175", coordinate: [44.5259038, 48.7481603] },
+    { source: "2gis", sourceStationId: "4644865396813243", title: "Роснефть", brand: { branch_count: 11, extension: "АЗС", id: "70000001046307911", name: "Роснефть" }, address: "улица им. Рокоссовского, 175", coordinate: [44.525849, 48.748048] },
+    { source: "benzonavt", sourceStationId: "6948", title: "РН-Ростовнефтепродукт", brand: "Роснефть", address: "Волгоградская обл., г. Волгоград, ул. Рокоссовского, 175", coordinate: [44.5259038, 48.7481603] }
+  ];
+
+  const values = reconcileStations(stations, config);
+
+  assert.equal(values.length, 1);
+  assert.equal(values[0].members.length, 3);
+  assert.deepEqual(values[0].members.map(member => member.source).sort(), ["2gis", "benzonavt", "gdebenz"]);
+  assert.equal(values[0].matchConfidence, "HIGH");
+});

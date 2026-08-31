@@ -18,7 +18,8 @@ export function reconcileStations(stations, config, previousSnapshot) {
       const a = values[i], b = values[j];
       if (!a || !b || a.members[0].source === b.members[0].source) continue;
       const score = matchScore(a.members[0], b.members[0], config.identity.maxCoordinateDriftMeters);
-      if (score >= 0.82 && score - secondBestScore(values, i, j, config) >= config.identity.ambiguityMargin) {
+      const exactIdentity = isExactIdentityMatch(a.members[0], b.members[0], config.identity.maxCoordinateDriftMeters);
+      if (exactIdentity || score >= 0.82 && score - secondBestScore(values, i, j, config) >= config.identity.ambiguityMargin) {
         const members = [...a.members, ...b.members];
         const stationKey = `merged:${sha256(members.map(m => `${m.source}:${m.sourceStationId}`).sort()).slice(0, 20)}`;
         values[i] = { stationKey, members, matchConfidence: "HIGH" };
@@ -44,16 +45,23 @@ function preservePreviousKeys(groups, previousSnapshot) {
 }
 
 function matchScore(a, b, maxMeters) {
-  if (a.brand && b.brand && normalizeText(a.brand) !== normalizeText(b.brand)) return -Infinity;
+  const brandA = normalizeBrand(a.brand), brandB = normalizeBrand(b.brand);
+  if (brandA && brandB && brandA !== brandB) return -Infinity;
   const distance = haversineMeters(a.coordinate, b.coordinate);
   if (distance > maxMeters) return -Infinity;
-  const addressA = normalizeText(a.address), addressB = normalizeText(b.address);
+  const addressA = normalizeAddress(a.address), addressB = normalizeAddress(b.address);
   const titleA = normalizeText(a.title), titleB = normalizeText(b.title);
   const addressScore = tokenSimilarity(addressA, addressB);
   const titleScore = tokenSimilarity(titleA, titleB);
   const numberA = addressA.match(/\b\d+[а-яa-z]?\b/u)?.[0], numberB = addressB.match(/\b\d+[а-яa-z]?\b/u)?.[0];
   if (numberA && numberB && numberA !== numberB) return -Infinity;
   return 0.45 * (1 - distance / maxMeters) + 0.4 * addressScore + 0.15 * titleScore;
+}
+function isExactIdentityMatch(a, b, maxMeters) {
+  const brandA = normalizeBrand(a.brand), brandB = normalizeBrand(b.brand);
+  const addressA = normalizeAddress(a.address), addressB = normalizeAddress(b.address);
+  const number = addressA.match(/\b\d+[а-яa-z]?\b/u)?.[0];
+  return Boolean(brandA && brandB && brandA === brandB && addressA && addressA === addressB && number && haversineMeters(a.coordinate, b.coordinate) <= maxMeters);
 }
 function secondBestScore(values, ai, bj, config) {
   const target = values[ai].members[0];
@@ -65,6 +73,11 @@ function canonicalize(group, priority) {
   return { stationKey: group.stationKey, title: best.title || best.brand || best.address || "АЗС", brand: best.brand, address: best.address, coordinate: best.coordinate, members, matchConfidence: group.matchConfidence };
 }
 function overrideIndex(overrides) { const out = new Map(); for (const o of overrides) for (const m of o.members) out.set(`${m.source}:${m.sourceStationId}`, o.stationKey); return out; }
-function fallbackKey(s) { return `anon:${sha256(`${normalizeText(s.brand)}|${normalizeText(s.address)}|${s.coordinate.join(",")}`).slice(0, 20)}`; }
+function fallbackKey(s) { return `anon:${sha256(`${normalizeBrand(s.brand)}|${normalizeAddress(s.address)}|${s.coordinate.join(",")}`).slice(0, 20)}`; }
+function normalizeBrand(value) { return normalizeText(typeof value === "object" && value ? value.name ?? value.title ?? value.brand : value); }
+function normalizeAddress(value) {
+  const ignored = new Set(["россия", "рф", "волгоградская", "область", "обл", "город", "г", "волгоград", "улица", "ул", "имени", "им"]);
+  return normalizeText(value).split(" ").filter(token => token && !ignored.has(token)).join(" ");
+}
 function normalizeText(v) { return String(v ?? "").normalize("NFKC").toLowerCase().replaceAll("ё", "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
 function tokenSimilarity(a, b) { if (!a || !b) return 0; const aa = new Set(a.split(" ")), bb = new Set(b.split(" ")); const common = [...aa].filter(x => bb.has(x)).length; return common / new Set([...aa, ...bb]).size; }

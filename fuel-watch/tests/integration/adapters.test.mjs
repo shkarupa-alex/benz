@@ -138,14 +138,15 @@ test("gdebenz API extractor treats missing timestamps as a declared limitation a
   assert.equal(raw.freshnessExpected,false);
 });
 
-test("2GIS extractor reads the page's current fuel response instead of catalogue only", async () => {
+test("2GIS extractor reads current fuel data and normalizes structured brands", async () => {
   const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=station-1";
-  const rows=[{station:{id:"station-1",lng:44.5,lat:48.7,name:"АЗС",address:"Адрес",brand:"Бренд"},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z",queue_level:"UP_TO_25"}],queue_level:"UP_TO_25"}];
+  const rows=[{station:{id:"station-1",lng:44.5,lat:48.7,name:"АЗС",address:"Адрес",brand:{id:"brand-1",name:"Бренд"}},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z",queue_level:"UP_TO_25"}],queue_level:"UP_TO_25"}];
   const document={body:{innerText:"АЗС"},scripts:[]};
   const performance={getEntriesByType:()=>[{name:liveUrl}]};
   const fetch=async()=>({ok:true,json:async()=>rows});
   const raw=await Function("window","document","location","performance","fetch","URL",`return ${twogis.TWOGIS_EXTRACTOR}`)({},document,{href:"https://2gis.ru/volgograd/search/АЗС"},performance,fetch,URL);
   assert.deepEqual(raw.stations[0].coordinate,[44.5,48.7]);
+  assert.equal(raw.stations[0].brand,"Бренд");
   assert.equal(raw.observations[0].fuel,"AI_95");
   assert.equal(raw.observations[0].status,"IN_STOCK");
   assert.equal(raw.observations[0].observedAt,"2026-08-30T19:40:00Z");
