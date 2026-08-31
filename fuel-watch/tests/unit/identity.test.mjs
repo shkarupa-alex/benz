@@ -148,11 +148,29 @@ test("corpus abbreviations normalize without changing the main house number", as
   assert.equal(values.length, 1);
 });
 
+test("slash and explicit corpus spellings merge", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "slash", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10/1", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "explicit", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10 к 1", coordinate: [44.50002, 48.7] }
+  ], config);
+  assert.equal(values.length, 1);
+});
+
 test("different known corpus numbers remain separate", async () => {
   const config = await loadConfig();
   const values = reconcileStations([
     { source: "yandex", sourceStationId: "c1", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 1", coordinate: [44.5, 48.7] },
     { source: "2gis", sourceStationId: "c2", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 2", coordinate: [44.5, 48.7] }
+  ], config);
+  assert.equal(values.length, 2);
+});
+
+test("different corpus values remain separate when the structure is the same", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "c1", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 1, строение 2", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "c2", title: "АЗС", brand: "Лукойл", address: "ул. Мира, 10, корпус 2, строение 2", coordinate: [44.5, 48.7] }
   ], config);
   assert.equal(values.length, 2);
 });

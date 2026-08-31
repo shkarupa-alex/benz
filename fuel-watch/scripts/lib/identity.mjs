@@ -1,5 +1,5 @@
 import { haversineMeters } from "./geometry.mjs";
-import { brandLabel, compileBrandAliases, compileStreetDictionary, normalizeAddress, normalizeBrand, normalizeComparableBrand, normalizeText } from "./normalize.mjs";
+import { ADDRESS_UNIT_KINDS, brandLabel, compileBrandAliases, compileStreetDictionary, normalizeAddress, normalizeBrand, normalizeComparableBrand, normalizeText } from "./normalize.mjs";
 import { sha256 } from "./util.mjs";
 
 export function reconcileStations(stations, config, previousSnapshot) {
@@ -62,7 +62,7 @@ function matchScore(a, b, identity) {
   const titleScore = tokenSimilarity(titleA, titleB);
   const partsA = addressParts(addressA), partsB = addressParts(addressB);
   if (partsA.house && partsB.house && partsA.house !== partsB.house) return -Infinity;
-  if (partsA.unit && partsB.unit && partsA.unit !== partsB.unit) return -Infinity;
+  for (const kind of ADDRESS_UNIT_KINDS) if (partsA.units[kind] && partsB.units[kind] && partsA.units[kind] !== partsB.units[kind]) return -Infinity;
   if (brandA && brandA === brandB && addressA && addressA === addressB && partsA.house && distance <= 5) return 1.2;
   const brandScore = brandA && brandA === brandB ? 1 : 0;
   return 0.45 * (1 - distance / identity.maxCoordinateDriftMeters) + 0.4 * addressScore + 0.15 * Math.max(titleScore, brandScore);
@@ -109,16 +109,16 @@ function overrideIndex(overrides) {
 function fallbackKey(s, identity) { return `anon:${sha256(`${normalizeComparableBrand(s.brand, identity.brandAliases) || normalizeBrand(s.brand)}|${normalizeAddress(s.address, identity.streetDictionary)}|${s.coordinate.join(",")}`).slice(0, 20)}`; }
 function addressParts(address) {
   const tokens = address.split(" ").filter(Boolean);
-  let unit;
+  const units = {};
   for (let index = 0; index < tokens.length - 1; index++) {
-    if (!["корпус", "строение"].includes(tokens[index]) || !/^\d+[а-яa-z]?$/u.test(tokens[index + 1])) continue;
-    unit = `${tokens[index]}:${tokens[index + 1]}`;
+    if (!ADDRESS_UNIT_KINDS.has(tokens[index]) || !/^\d+[а-яa-z]?$/u.test(tokens[index + 1])) continue;
+    units[tokens[index]] = tokens[index + 1];
   }
   for (let index = tokens.length - 1; index >= 0; index--) {
-    if (["корпус", "строение"].includes(tokens[index - 1])) continue;
+    if (ADDRESS_UNIT_KINDS.has(tokens[index - 1])) continue;
     if (!/^\d+[а-яa-z]?$/u.test(tokens[index])) continue;
-    return { house: tokens[index], unit };
+    return { house: tokens[index], units };
   }
-  return { house: undefined, unit };
+  return { house: undefined, units };
 }
 function tokenSimilarity(a, b) { if (!a || !b) return 0; const aa = new Set(a.split(" ")), bb = new Set(b.split(" ")); const common = [...aa].filter(x => bb.has(x)).length; return common / new Set([...aa, ...bb]).size; }

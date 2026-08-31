@@ -40,12 +40,16 @@ export function compileStreetDictionary(dictionary = {}) {
   return Object.entries(dictionary).flatMap(([canonical, aliases]) => [canonical, ...aliases].map(alias => ({ alias: normalizeText(alias).split(" ").filter(Boolean), canonical: normalizeText(canonical).split(" ").filter(Boolean) }))).filter(entry => entry.alias.length).sort((a, b) => b.alias.length - a.alias.length);
 }
 
+export const ADDRESS_UNIT_KINDS = new Set(["корпус", "строение", "литера", "владение", "сооружение"]);
+
 export function normalizeAddress(value, dictionary = {}) {
-  const protectedValue = String(value ?? "").replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s+г(?=\s*(?:[,;.]|$|\p{L}))/giu, "$1 houseletterg");
+  const protectedValue = String(value ?? "")
+    .replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s*\/\s*(\d+[а-яa-z]?)/giu, "$1 корпус $2")
+    .replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s+г(?=\s*(?:[,;.]|$|\p{L}))/giu, "$1 houseletterg");
   const ignored = new Set(["россия", "рф", "волгоградская", "область", "обл", "город", "г", "волгоград", "улица", "ул", "имени", "им"]);
   const rawTokens = normalizeText(protectedValue).split(" ").filter(token => token && !ignored.has(token) && !/^\d{6}$/u.test(token)).map(token => token === "houseletterg" ? "г" : token);
   const tokens = [];
-  const unitKinds = new Map([["к", "корпус"], ["корп", "корпус"], ["корпус", "корпус"], ["стр", "строение"], ["строение", "строение"]]);
+  const unitKinds = new Map([["к", "корпус"], ["корп", "корпус"], ["корпус", "корпус"], ["стр", "строение"], ["строение", "строение"], ["лит", "литера"], ["литера", "литера"], ["влад", "владение"], ["владение", "владение"], ["соор", "сооружение"], ["сооружение", "сооружение"]]);
   for (let index = 0; index < rawTokens.length; index++) {
     const token = rawTokens[index], next = rawTokens[index + 1], afterNext = rawTokens[index + 2];
     if (/^\d+$/u.test(token) && next && /^[а-яa-z]$/u.test(next) && !(unitKinds.has(next) && /^\d+[а-яa-z]?$/u.test(afterNext ?? ""))) {
@@ -53,7 +57,7 @@ export function normalizeAddress(value, dictionary = {}) {
       index++;
       continue;
     }
-    tokens.push(unitKinds.get(token) ?? token);
+    tokens.push(unitKinds.has(token) && /^\d+[а-яa-z]?$/u.test(next ?? "") ? unitKinds.get(token) : token);
   }
   return applyPhraseDictionary(tokens, dictionary).join(" ");
 }

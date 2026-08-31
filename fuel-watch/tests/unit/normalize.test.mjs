@@ -57,3 +57,8 @@ test("normalizes attached house letters and ignores an unseparated postal code b
   assert.equal(normalizeAddress("ул. Землячки, 27Г"), normalizeAddress("ул. Землячки, 27 г"));
   assert.equal(normalizeAddress("400075 г. Волгоград, ул. Мира, 27"), "мира 27");
 });
+
+test("normalizes slash corpus notation and preserves a street initial", () => {
+  assert.equal(normalizeAddress("ул. Мира, 10/1"), "мира 10 корпус 1");
+  assert.equal(normalizeAddress("ул. им. К. Маркса, 5", { "карла маркса": ["к маркса"] }), "карла маркса 5");
+});
