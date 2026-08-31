@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import properLockfile from "proper-lockfile";
+import { normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
 import { readJson, writeJsonAtomic } from "./util.mjs";
 
 const POSITIVE = new Set(["AVAILABLE", "LIKELY_AVAILABLE"]);
@@ -84,7 +85,7 @@ export function buildForecast(history, snapshot, config) {
     const samples = stationSamples(scopedTicks, assessment, identity);
     const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
     if (!negativeStartedAt) return null;
-    const brand = normalizeBrand(assessment.brand ?? assessment.title);
+    const brand = stationBrand(assessment);
     const activity = selectPattern(rollingEvents, assessment, brand, identity) ?? selectPattern(statusEvents, assessment, brand, identity);
     if (activity) return forecastFromActivity(assessment, negativeStartedAt, activity, nowMs);
     const selected = selectPattern(episodes, assessment, brand, identity);
@@ -125,7 +126,7 @@ function rollingActivityEvents(ticks, config, identity) {
     const recentEvent = Number.isFinite(latestMs) && tickMs - latestMs >= -config.freshness.futureSkewSeconds * 1000 && tickMs - latestMs <= config.activity.resumeWindowMinutes * 60000;
     if (closeTicks && before.summary.windowMinutes >= config.activity.quietGapMinutes && before.summary.count === 0 && summary.count >= config.activity.minimumEvents && recentEvent) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
-      const group = groups.get(groupKey) ?? { identityId, brand: normalizeBrand(station.brand ?? station.title), at: summary.latestEventAt, grades: new Set(), totalCount: 0 };
+      const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station), at: summary.latestEventAt, grades: new Set(), totalCount: 0 };
       group.grades.add(grade);
       group.totalCount += summary.count;
       if (new Date(summary.latestEventAt) > new Date(group.at)) group.at = summary.latestEventAt;
@@ -150,7 +151,7 @@ function petrolStatusEvents(ticks, config, identity) {
     const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
     if (closeTicks && before.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
-      const group = groups.get(groupKey) ?? { identityId, brand: normalizeBrand(station.brand ?? station.title), at: tick.fetchedAt, grades: new Set() };
+      const group = groups.get(groupKey) ?? { identityId, brand: stationBrand(station), at: tick.fetchedAt, grades: new Set() };
       group.grades.add(grade);
       groups.set(groupKey, group);
     }
@@ -202,7 +203,7 @@ function completedEpisodes(ticks, maxGapMinutes, identity) {
       if (previousAt && at - previousAt > maxGapMinutes * 60000) negativeStart = undefined;
       if (sample.verdict === NEGATIVE) negativeStart ??= sample.fetchedAt;
       else if (isConfirmedPositive(sample) && negativeStart) {
-        out.push({ identityId, brand: normalizeBrand(sample.brand ?? sample.title), startedAt: negativeStart, transitionAt: sample.fetchedAt, durationMinutes: (at - new Date(negativeStart).getTime()) / 60000 });
+        out.push({ identityId, brand: stationBrand(sample), startedAt: negativeStart, transitionAt: sample.fetchedAt, durationMinutes: (at - new Date(negativeStart).getTime()) / 60000 });
         negativeStart = undefined;
       } else if (!POSITIVE.has(sample.verdict)) negativeStart = undefined;
       previousAt = at;
@@ -281,7 +282,7 @@ function aggregateIdentityStations(stations) {
   return { ...representative, verdict, confidence, memberKeys: [...new Set(stations.flatMap(station => station.memberKeys ?? []))].sort(), activity: [...new Map(stations.flatMap(station => station.activity ?? []).map(value => [JSON.stringify(value), value])).values()] };
 }
 function isConfirmedPositive(sample) { return sample.verdict === "AVAILABLE" || (sample.verdict === "LIKELY_AVAILABLE" && ["MEDIUM", "HIGH"].includes(sample.confidence)); }
-function normalizeBrand(value) { return String(value ?? "").normalize("NFKC").toLowerCase().replaceAll("ё", "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
+function stationBrand(station) { return normalizeComparableBrand(station.brand) || normalizeBrand(station.title); }
 function quantile(values, q) { if (values.length === 1) return values[0]; const index = (values.length - 1) * q; const lower = Math.floor(index), upper = Math.ceil(index); return values[lower] + (values[upper] - values[lower]) * (index - lower); }
 function moscowMinute(value) { const shifted = new Date(new Date(value).getTime() + 180 * 60000); return shifted.getUTCHours() * 60 + shifted.getUTCMinutes(); }
 function circularDifference(value, center) { return ((value - center + 2160) % 1440) - 720; }

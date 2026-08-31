@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../../scripts/lib/config.mjs";
+import { brandLabel, normalizeAddress, normalizeBrand, normalizeComparableBrand } from "../../scripts/lib/normalize.mjs";
 import { normalizeCoordinate, normalizeStatus, okResult, validCoordinate } from "../../scripts/lib/sources/common.mjs";
 import { assessRequestedUnion } from "../../scripts/lib/verdict.mjs";
 
@@ -32,4 +33,19 @@ test("family-only adapter cannot create exact variant evidence", async () => {
   const result = okResult("gdebenz", { stations: [{ id: "1", coordinate: [44.5, 48.7] }], observations: [{ stationId: "1", fuel: "АИ-95", status: "есть", minMinutes: 5, maxMinutes: 10 }] }, request, config, { capability: "CURRENT_FAMILY" });
   assert.equal(result.observations[0].product.specificity, "FAMILY_ONLY");
   assert.equal(result.observations[0].product.productKey, "AI95_FAMILY");
+});
+
+test("normalizes named, aliased, array and opaque structured brands without erasing them", () => {
+  assert.equal(brandLabel({ id: 1, name: "Роснефть" }), "Роснефть");
+  assert.equal(normalizeBrand({ id: 2, alias: "Лукойл" }), "лукойл");
+  assert.equal(normalizeBrand([{ name: "Роснефть" }, { alias: "Пульсар" }]), "роснефть пульсар");
+  assert.equal(normalizeBrand({ id: 42 }), "brand id 42");
+  assert.equal(normalizeComparableBrand({ id: 42 }), "");
+  assert.equal(normalizeComparableBrand({ alias: "Лукойл" }), "лукойл");
+});
+
+test("normalizes city prefixes but retains a trailing house letter", () => {
+  assert.equal(normalizeAddress("Волгоградская обл., г. Волгоград, ул. Рокоссовского, 175"), "рокоссовского 175");
+  assert.equal(normalizeAddress("ул. Землячки, 27 г"), "землячки 27 г");
+  assert.notEqual(normalizeAddress("ул. Землячки, 27 г"), normalizeAddress("ул. Землячки, 27"));
 });

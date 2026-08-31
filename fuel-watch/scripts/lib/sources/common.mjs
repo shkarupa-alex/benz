@@ -1,7 +1,8 @@
 import { classifyFuelLabel } from "../fuels.mjs";
+import { brandLabel } from "../normalize.mjs";
 
 export function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", coordinateOrder = "LON_LAT" } = {}) {
-  const enumerated = (raw.stations ?? []).map(s => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: s.brand, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), provenanceUrl: s.url ?? raw.url ?? "" }));
+  const enumerated = (raw.stations ?? []).map(s => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: brandLabel(s.brand) || undefined, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), provenanceUrl: s.url ?? raw.url ?? "" }));
   const stations = enumerated.filter(s => validCoordinate(s.coordinate));
   const stationIds = new Set(enumerated.map(s => s.sourceStationId));
   const observations = (raw.observations ?? []).flatMap(o => {

@@ -154,6 +154,17 @@ test("2GIS extractor reads current fuel data and normalizes structured brands", 
   assert.equal(raw.partial,false);
 });
 
+test("2GIS extractor preserves alias, array and opaque brand forms", async () => {
+  const rows = [
+    { station: { id: "alias", lng: 44.5, lat: 48.7, brand: { id: 1, alias: "Лукойл" } }, fuel_statuses: [] },
+    { station: { id: "array", lng: 44.6, lat: 48.7, brand: [{ name: "Роснефть" }, { alias: "Пульсар" }] }, fuel_statuses: [] },
+    { station: { id: "opaque", lng: 44.7, lat: 48.7, brand: { id: 42 } }, fuel_statuses: [] }
+  ];
+  const liveUrl = "https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=alias,array,opaque";
+  const raw = await Function("window", "document", "location", "performance", "fetch", "URL", `return ${twogis.TWOGIS_EXTRACTOR}`)({}, { body: { innerText: "АЗС" }, scripts: [] }, { href: "https://2gis.ru/volgograd/search/АЗС" }, { getEntriesByType: () => [{ name: liveUrl }] }, async () => ({ ok: true, json: async () => rows }), URL);
+  assert.deepEqual(raw.stations.map(station => station.brand), ["Лукойл", "Роснефть / Пульсар", "brand-id:42"]);
+});
+
 test("Benzonavt handles exhaustive fuels, conflicts and structured queues conservatively", async () => {
   const rows=[
     {id:1,lon:44.5,lat:48.7,name:"АЗС 1",brand:"Бренд",address:"Адрес 1",st:{status:"yes",fuels_now:["92","95"],updated_at:"2026-08-30T19:40:00Z",queue:{at:"2026-08-30T19:42:00Z",size:"20_50"}}},
