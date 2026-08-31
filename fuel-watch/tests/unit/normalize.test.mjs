@@ -47,5 +47,8 @@ test("normalizes named, aliased, array and opaque structured brands without eras
 test("normalizes city prefixes but retains a trailing house letter", () => {
   assert.equal(normalizeAddress("Волгоградская обл., г. Волгоград, ул. Рокоссовского, 175"), "рокоссовского 175");
   assert.equal(normalizeAddress("ул. Землячки, 27 г"), "землячки 27 г");
+  assert.equal(normalizeAddress("ул. Землячки, 27 г, Волгоград"), "землячки 27 г");
+  assert.equal(normalizeAddress("ул. Землячки, 27, г. Волгоград"), "землячки 27");
   assert.notEqual(normalizeAddress("ул. Землячки, 27 г"), normalizeAddress("ул. Землячки, 27"));
+  assert.notEqual(normalizeAddress("ул. Землячки, 27 г, Волгоград"), normalizeAddress("ул. Землячки, 27, г. Волгоград"));
 });

@@ -43,6 +43,21 @@ test("merges the three live representations of Rosneft at Rokossovskogo 175", as
   assert.equal(values[0].matchConfidence, "HIGH");
 });
 
+for (const [label, yandexCoordinate] of [["nearby", [44.52583, 48.74810]], ["same pin", [44.5259038, 48.7481603]]]) {
+  test(`merges four corroborating sources when Yandex is ${label}`, async () => {
+    const config = await loadConfig();
+    const stations = [
+      { source: "gdebenz", sourceStationId: "1721722173", title: "Роснефть", brand: "Роснефть", address: "улица Рокоссовского, 175", coordinate: [44.5259038, 48.7481603] },
+      { source: "2gis", sourceStationId: "4644865396813243", title: "Роснефть", brand: { name: "Роснефть" }, address: "улица им. Рокоссовского, 175", coordinate: [44.525849, 48.748048] },
+      { source: "benzonavt", sourceStationId: "6948", title: "РН-Ростовнефтепродукт", brand: "Роснефть", address: "Волгоградская обл., г. Волгоград, ул. Рокоссовского, 175", coordinate: [44.5259038, 48.7481603] },
+      { source: "yandex", sourceStationId: "ya-175", title: "Роснефть", brand: "Роснефть", address: "ул. Рокоссовского, 175", coordinate: yandexCoordinate }
+    ];
+    const values = reconcileStations(stations, config);
+    assert.equal(values.length, 1);
+    assert.deepEqual(values[0].members.map(member => member.source).sort(), ["2gis", "benzonavt", "gdebenz", "yandex"]);
+  });
+}
+
 test("never merges two station IDs from the same source into one group", async () => {
   const config = await loadConfig();
   const values = reconcileStations([
@@ -93,6 +108,26 @@ test("a house-letter g is not discarded as a city abbreviation", async () => {
     { source: "2gis", sourceStationId: "27g", title: "АЗС 2", brand: "Лукойл", address: "ул. Землячки, 27 г", coordinate: [44.5006, 48.7] }
   ], config);
   assert.equal(values.length, 2);
+});
+
+test("a house-letter g remains distinct when followed by a city name", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "city", title: "АЗС 1", brand: "Лукойл", address: "ул. Землячки, 27, г. Волгоград", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "house-g", title: "АЗС 2", brand: "Лукойл", address: "ул. Землячки, 27 г, Волгоград", coordinate: [44.5001, 48.7] }
+  ], config);
+  assert.equal(values.length, 2);
+});
+
+test("configured brand aliases and street dictionary participate in matching", async () => {
+  const config = await loadConfig();
+  config.identity.brandAliases = { "лукойл": ["lukoil"] };
+  config.identity.streetDictionary = { "рокоссовского": ["маршала рокоссовского"] };
+  const values = reconcileStations([
+    { source: "yandex", sourceStationId: "a", title: "Lukoil", brand: "lukoil", address: "ул. Маршала Рокоссовского, 10", coordinate: [44.5, 48.7] },
+    { source: "2gis", sourceStationId: "b", title: "Лукойл", brand: "Лукойл", address: "ул. Рокоссовского, 10", coordinate: [44.5003, 48.7] }
+  ], config);
+  assert.equal(values.length, 1);
 });
 
 test("automatic members attached to a manual group preserve its key", async () => {

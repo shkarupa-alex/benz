@@ -8,7 +8,7 @@ export function reconcileStations(stations, config, previousSnapshot) {
   for (const station of stations) {
     const member = `${station.source}:${station.sourceStationId ?? ""}`;
     const manual = overrides.get(member);
-    const key = manual ? `manual:${manual}` : station.sourceStationId ? `source:${station.source}:${station.sourceStationId}` : fallbackKey(station);
+    const key = manual ? `manual:${manual}` : station.sourceStationId ? `source:${station.source}:${station.sourceStationId}` : fallbackKey(station, config.identity);
     const existing = groups.get(key);
     if (existing) existing.members.push(station);
     else groups.set(key, { stationKey: key, members: [station], matchConfidence: manual ? "MANUAL" : "SOURCE_ID" });
@@ -21,7 +21,7 @@ export function reconcileStations(stations, config, previousSnapshot) {
       for (let j = i + 1; j < values.length; j++) {
         const a = values[i], b = values[j];
         if (!a || !b || sourcesOverlap(a, b) || conflictingManualKeys(a, b)) continue;
-        const score = groupMatchScore(a, b, config.identity.maxCoordinateDriftMeters);
+        const score = groupMatchScore(a, b, config.identity);
         const unambiguous = score >= 0.82 && score - secondBestScore(values, i, j, config) >= config.identity.ambiguityMargin && score - secondBestScore(values, j, i, config) >= config.identity.ambiguityMargin;
         if (!unambiguous) continue;
         values[i] = mergeGroups(a, b);
@@ -49,30 +49,31 @@ function preservePreviousKeys(groups, previousSnapshot) {
   });
 }
 
-function matchScore(a, b, maxMeters) {
-  const brandA = normalizeComparableBrand(a.brand), brandB = normalizeComparableBrand(b.brand);
+function matchScore(a, b, identity) {
+  const brandA = normalizeComparableBrand(a.brand, identity.brandAliases), brandB = normalizeComparableBrand(b.brand, identity.brandAliases);
   if (brandLabel(a.brand) && !brandA || brandLabel(b.brand) && !brandB) return -Infinity;
   if (brandA && brandB && brandA !== brandB) return -Infinity;
   const distance = haversineMeters(a.coordinate, b.coordinate);
-  if (distance > maxMeters) return -Infinity;
-  const addressA = normalizeAddress(a.address), addressB = normalizeAddress(b.address);
+  if (distance > identity.maxCoordinateDriftMeters) return -Infinity;
+  const addressA = normalizeAddress(a.address, identity.streetDictionary), addressB = normalizeAddress(b.address, identity.streetDictionary);
   const titleA = normalizeText(a.title), titleB = normalizeText(b.title);
   const addressScore = tokenSimilarity(addressA, addressB);
   const titleScore = tokenSimilarity(titleA, titleB);
-  const numberA = addressA.match(/\b\d+[а-яa-z]?\b/u)?.[0], numberB = addressB.match(/\b\d+[а-яa-z]?\b/u)?.[0];
+  const numberA = houseNumber(addressA), numberB = houseNumber(addressB);
   if (numberA && numberB && numberA !== numberB) return -Infinity;
   if (brandA && brandA === brandB && addressA && addressA === addressB && numberA && distance <= 5) return 1.2;
   const brandScore = brandA && brandA === brandB ? 1 : 0;
-  return 0.45 * (1 - distance / maxMeters) + 0.4 * addressScore + 0.15 * Math.max(titleScore, brandScore);
+  return 0.45 * (1 - distance / identity.maxCoordinateDriftMeters) + 0.4 * addressScore + 0.15 * Math.max(titleScore, brandScore);
 }
-function groupMatchScore(a, b, maxMeters) {
-  const scores = a.members.flatMap(left => b.members.map(right => matchScore(left, right, maxMeters)));
+function groupMatchScore(a, b, identity) {
+  const scores = a.members.flatMap(left => b.members.map(right => matchScore(left, right, identity)));
   return scores.length ? Math.min(...scores) : -Infinity;
 }
 function secondBestScore(values, targetIndex, excludedIndex, config) {
   const target = values[targetIndex];
-  if (!target) return 0;
-  return Math.max(0, ...values.map((candidate, index) => index === targetIndex || index === excludedIndex || !candidate || sourcesOverlap(target, candidate) || conflictingManualKeys(target, candidate) ? -Infinity : groupMatchScore(target, candidate, config.identity.maxCoordinateDriftMeters)));
+  const counterpart = values[excludedIndex];
+  if (!target || !counterpart) return 0;
+  return Math.max(0, ...values.map((candidate, index) => index === targetIndex || index === excludedIndex || !candidate || !sourcesOverlap(candidate, counterpart) || sourcesOverlap(target, candidate) || conflictingManualKeys(target, candidate) ? -Infinity : groupMatchScore(target, candidate, config.identity)));
 }
 function sourcesOverlap(a, b) {
   const sources = new Set(a.members.map(member => member.source));
@@ -103,5 +104,14 @@ function overrideIndex(overrides) {
   }
   return out;
 }
-function fallbackKey(s) { return `anon:${sha256(`${normalizeBrand(s.brand)}|${normalizeAddress(s.address)}|${s.coordinate.join(",")}`).slice(0, 20)}`; }
+function fallbackKey(s, identity) { return `anon:${sha256(`${normalizeComparableBrand(s.brand, identity.brandAliases) || normalizeBrand(s.brand)}|${normalizeAddress(s.address, identity.streetDictionary)}|${s.coordinate.join(",")}`).slice(0, 20)}`; }
+function houseNumber(address) {
+  const tokens = address.split(" ").filter(Boolean);
+  for (let index = tokens.length - 1; index >= 0; index--) {
+    if (!/^\d+[а-яa-z]?$/u.test(tokens[index])) continue;
+    const suffix = tokens[index + 1];
+    return suffix && /^[а-яa-z]$/u.test(suffix) ? `${tokens[index]}${suffix}` : tokens[index];
+  }
+  return undefined;
+}
 function tokenSimilarity(a, b) { if (!a || !b) return 0; const aa = new Set(a.split(" ")), bb = new Set(b.split(" ")); const common = [...aa].filter(x => bb.has(x)).length; return common / new Set([...aa, ...bb]).size; }

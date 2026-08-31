@@ -20,19 +20,36 @@ export function normalizeBrand(value) {
   return normalizeText(brandLabel(value));
 }
 
-export function normalizeComparableBrand(value) {
+export function normalizeComparableBrand(value, aliases = {}) {
   const label = brandLabel(value);
   if (/^(?:brand-id:|brand:|opaque-brand$)/u.test(label)) return "";
-  return normalizeText(label);
+  return canonicalValue(normalizeText(label), aliases);
 }
 
-export function normalizeAddress(value) {
-  const ignored = new Set(["россия", "рф", "волгоградская", "область", "обл", "город", "волгоград", "улица", "ул", "имени", "им"]);
-  const tokens = normalizeText(value).split(" ").filter(Boolean);
-  return tokens.filter((token, index) => {
-    if (ignored.has(token)) return false;
-    if (token !== "г") return true;
-    const next = tokens[index + 1];
-    return !next || /^\d/u.test(next);
-  }).join(" ");
+export function normalizeAddress(value, dictionary = {}) {
+  const protectedValue = String(value ?? "").replace(/(\d+[а-яa-z]?)\s+г(?=\s*(?:[,;.]|$|\p{L}))/giu, "$1 houseletterg");
+  const ignored = new Set(["россия", "рф", "волгоградская", "область", "обл", "город", "г", "волгоград", "улица", "ул", "имени", "им"]);
+  const tokens = normalizeText(protectedValue).split(" ").filter(token => token && !ignored.has(token)).map(token => token === "houseletterg" ? "г" : token);
+  return applyPhraseDictionary(tokens, dictionary).join(" ");
+}
+
+function canonicalValue(value, dictionary) {
+  for (const [canonical, aliases] of Object.entries(dictionary ?? {})) {
+    const normalizedCanonical = normalizeText(canonical);
+    if (value === normalizedCanonical || aliases.some(alias => value === normalizeText(alias))) return normalizedCanonical;
+  }
+  return value;
+}
+
+function applyPhraseDictionary(tokens, dictionary) {
+  const entries = Object.entries(dictionary ?? {}).flatMap(([canonical, aliases]) => [canonical, ...aliases].map(alias => ({ alias: normalizeText(alias).split(" ").filter(Boolean), canonical: normalizeText(canonical).split(" ").filter(Boolean) }))).filter(entry => entry.alias.length).sort((a, b) => b.alias.length - a.alias.length);
+  const result = [...tokens];
+  for (const entry of entries) {
+    for (let index = 0; index <= result.length - entry.alias.length; index++) {
+      if (!entry.alias.every((token, offset) => result[index + offset] === token)) continue;
+      result.splice(index, entry.alias.length, ...entry.canonical);
+      index += entry.canonical.length - 1;
+    }
+  }
+  return result;
 }

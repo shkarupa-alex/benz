@@ -40,6 +40,7 @@ function validateSemantics(config) {
   }
   const members = config.identity.manualOverrides.flatMap(o => o.members.map(m => ({ ...m, stationKey: o.stationKey })));
   uniqueBy(members, value => `${value.source}:${value.sourceStationId}`, "/identity/manualOverrides members", errors);
+  for (const override of config.identity.manualOverrides) uniqueBy(override.members, value => value.source, `/identity/manualOverrides/${override.stationKey} sources`, errors);
   const f = config.freshness;
   if (!(f.freshMinutes < f.recentMinutes && f.recentMinutes <= f.staleMinutes && f.staleMinutes <= f.expireMinutes)) errors.push("/freshness thresholds must be monotonic: fresh < recent <= stale <= expire");
   const q = config.queue.ordinalMaxVehicles;
