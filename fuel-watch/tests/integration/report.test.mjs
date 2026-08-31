@@ -8,6 +8,12 @@ test("degraded report warns that empty evidence does not mean no petrol", () => 
   assert.match(markdown,/могут запаздывать или быть неполными/);
 });
 
+test("report exposes complete optional-history loss without calling current data partial", () => {
+  const {markdown}=renderReport({fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[],sourceHealth:[{source:"benzonavt",status:"OK",code:"ACTIVITY_HISTORY_UNAVAILABLE"}],warnings:[],changes:[]});
+  assert.match(markdown,/benzonavt: OK \(ACTIVITY_HISTORY_UNAVAILABLE\)/);
+  assert.doesNotMatch(markdown,/benzonavt: PARTIAL/);
+});
+
 test("report renders one octane-level assessment, approximate age, activity and run confidence", () => {
   const item={stationKey:"s",title:"АЗС",address:"ул. Рокоссовского, 175",coordinate:[44.525837,48.748086],verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"gdebenz",status:"IN_STOCK",ageMinutes:10,approximate:true,expired:false,product:{specificity:"FAMILY_ONLY"}}],activity:[{kind:"TRANSACTIONS_RESUMED",latestEventAt:"2026-08-30T09:55:00Z",product:{family:"AI_95",productKey:"AI95_BASE"}}],productAssessments:{AI95_BASE:{verdict:"AVAILABLE",confidence:"MEDIUM",approximate:true},AI95_PREMIUM_GENERIC:{verdict:"NOT_AVAILABLE",confidence:"MEDIUM"}},availabilityRun:{basis:"FIRST_SEEN",firstObservedAt:"2026-08-30T09:50:00Z",confidence:"MEDIUM"}};
   const snapshot={fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[{source:"gdebenz",status:"OK"}],warnings:[],changes:[]};

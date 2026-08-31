@@ -48,6 +48,15 @@ test("optional history coverage is diagnostic and does not degrade healthy curre
   assert.equal(result.coverage.activityHistoryCoverage,0.5);
 });
 
+test("complete optional-history failure is visible without poisoning current health", async () => {
+  const config = await loadConfig();
+  const request = { requestedProducts: config.requestedProducts, fetchedAt: "2026-08-30T10:00:00Z" };
+  const result = okResult("benzonavt", { stations:[{id:"1",coordinate:[44.5,48.7]}], observations:[{stationId:"1",fuel:"АИ-95",status:"есть",observedAt:"2026-08-30T09:55:00Z"}], activityHistoryCoverage:0 }, request, config);
+  assert.equal(result.health.status,"OK");
+  assert.equal(result.health.code,"ACTIVITY_HISTORY_UNAVAILABLE");
+  assert.equal(result.coverage.activityHistoryCoverage,0);
+});
+
 test("normalizes named, aliased, array and opaque structured brands without erasing them", () => {
   assert.equal(brandLabel({ id: 1, name: "Роснефть" }), "Роснефть");
   assert.equal(normalizeBrand({ id: 2, alias: "Лукойл" }), "лукойл");

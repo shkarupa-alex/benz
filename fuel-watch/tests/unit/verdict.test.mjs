@@ -93,3 +93,14 @@ test("family-wide negative participates in activity timestamp arbitration", asyn
   const olderActivity = [{...activity[0],latestEventAt:"2026-08-30T09:00:00Z"}];
   assert.equal(assessRequestedUnion({observations:[negative],activity:olderActivity,config,now}).verdict,"NOT_AVAILABLE");
 });
+
+test("family-wide negative and exact positive arbitrate across sources by time", async () => {
+  const config = await loadConfig();
+  const now = new Date("2026-08-30T10:00:00Z");
+  const family = { family:"AI_95", variant:"UNKNOWN", specificity:"FAMILY_ONLY", productKey:"AI95_FAMILY" };
+  const familyNegative = minutes => ({ source:"gdebenz", product:family, status:"OUT_OF_STOCK", familyAllUnavailable:true, time:{kind:"EXACT",observedAt:new Date(now.getTime()-minutes*60000).toISOString()} });
+  const exactPositive = minutes => ({ source:"benzonavt", product, status:"IN_STOCK", time:{kind:"EXACT",observedAt:new Date(now.getTime()-minutes*60000).toISOString()} });
+  assert.equal(assessRequestedUnion({observations:[familyNegative(5),exactPositive(10)],config,now}).verdict,"CONFLICTING");
+  assert.equal(assessRequestedUnion({observations:[familyNegative(60),exactPositive(2)],config,now}).verdict,"AVAILABLE");
+  assert.equal(assessRequestedUnion({observations:[familyNegative(2),exactPositive(60)],config,now}).verdict,"NOT_AVAILABLE");
+});

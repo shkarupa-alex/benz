@@ -24,10 +24,11 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
     return [{ source, sourceStationId, product: classified, gradeLabel: String(a.gradeLabel ?? a.fuel ?? classified?.displayLabel ?? "").trim() || undefined, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? undefined : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? classified), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
   });
   const unlocatedStationIds = enumerated.filter(s => !validCoordinate(s.coordinate)).map(s => s.sourceStationId);
+  const historyUnavailable = finite(raw.activityHistoryCoverage) === 0;
   const partial = raw.partial || unlocatedStationIds.length > 0;
   const status = partial ? "PARTIAL" : "OK";
-  const code = raw.code ?? (unlocatedStationIds.length ? "COORDINATE_COVERAGE" : undefined);
-  const message = raw.message ?? (unlocatedStationIds.length ? `${unlocatedStationIds.length} enumerated station(s) lacked valid coordinates` : undefined);
+  const code = raw.code ?? (unlocatedStationIds.length ? "COORDINATE_COVERAGE" : historyUnavailable ? "ACTIVITY_HISTORY_UNAVAILABLE" : undefined);
+  const message = raw.message ?? (unlocatedStationIds.length ? `${unlocatedStationIds.length} enumerated station(s) lacked valid coordinates` : historyUnavailable ? "Optional activity history could not be loaded; current status data was preserved" : undefined);
   const coverage = coverageMetrics(enumerated, observations, raw);
   return { source, health: { source, status, code, message }, stations, observations, queues, activity, coverage, enumeratedStationIds: enumerated.map(s => s.sourceStationId), unlocatedStationIds };
 }

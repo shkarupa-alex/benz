@@ -17,6 +17,7 @@ export async function collect(request, ctx) {
 }
 
 export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs = 10000) { return String.raw`(async () => {
+  const extractorStartedAt = Date.now();
   const body = document.body?.innerText || '';
   if (/recaptcha|captcha|подтвердите,? что вы не робот/iu.test(location.href + ' ' + body.slice(0,2000))) return { challenge: true };
   try {
@@ -30,7 +31,7 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs =
     const petrolGrades = values => [...new Set((Array.isArray(values) ? values : [values]).flatMap(value => String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu)?.map(match => match.match(/92|95|98|100/u)?.[0]) || []).filter(Boolean))];
     const eventPetrolGrades = event => { if (Array.isArray(event.fuel_grades)) return petrolGrades(event.fuel_grades); const fuelSegment = String(event.detail || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(fuelSegment) ? [] : petrolGrades(fuelSegment); };
     const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
-    const detailDeadline = Date.now() + ${Number(detailBudgetMs)};
+    const detailDeadline = extractorStartedAt + ${Number(detailBudgetMs)};
     const detailRows = rows.filter(row => String(row.id ?? '') && Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat)));
     const details = await mapLimit(detailRows, 6, async row => { const remainingMs = detailDeadline - Date.now(); if (remainingMs <= 0) return; const id = String(row.id ?? ''); const detailResponse = await fetch('/api/v1/stations/' + encodeURIComponent(id), { credentials: 'same-origin', signal: AbortSignal.timeout(Math.max(1, Math.min(${Number(detailTimeoutMs)}, remainingMs))) }); if (!detailResponse.ok) return; const detail = await detailResponse.json(); return detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : undefined; });
     const detailsById = new Map(details.filter(Boolean).map(detail => [String(detail.id), detail]));
@@ -43,7 +44,7 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs =
       const updatedAt = state.updated_at;
       const unavailable = String(state.status || '').toLowerCase() === 'no';
       const currentFuels = Array.isArray(state.fuels_now) ? state.fuels_now.map(String) : [];
-      const ai95 = currentFuels.filter(fuel => /^(?:аи[-\s]?|ai[-\s]?)?95\+?$/iu.test(fuel.trim()));
+      const ai95 = currentFuels.filter(fuel => petrolGrades(fuel).includes('95'));
       const hasConflict = state.conflict != null && state.conflict !== false;
       const conflict = hasConflict ? state.conflict : undefined;
       const conflictTime = typeof conflict === 'object' ? conflict.created_at || conflict.updated_at : undefined;

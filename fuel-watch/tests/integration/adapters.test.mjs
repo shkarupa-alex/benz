@@ -246,6 +246,14 @@ test("Benzonavt handles exhaustive fuels, conflicts and structured queues conser
   assert.equal(raw.freshnessExpected,true);
 });
 
+test("Benzonavt recognizes branded AI-95 labels as available", async () => {
+  const labels=["АИ-95 Экто","G-Drive 95","Пульсар-95","95 Ultimate"];
+  const rows=labels.map((fuel,index)=>({id:index+1,lon:44.5+index/100,lat:48.7,st:{status:"yes",fuels_now:[fuel,"ДТ"],updated_at:"2026-08-30T19:40:00Z"}}));
+  const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async()=>({ok:true,json:async()=>rows}));
+  assert.equal(raw.observations.length,labels.length);
+  assert.equal(raw.observations.every(value=>value.status==="IN_STOCK"&&!value.familyAllUnavailable),true);
+});
+
 test("Benzonavt detail history preserves petrol transitions and ignores a superseded conflict", async () => {
   const rows=[{id:986,lon:44.4897613,lat:48.7095778,name:"Лукойл",brand:"Лукойл",address:"Рокоссовского, 1Р",fuels:["92","95","100","dt"],st:{status:"yes",fuels_now:["92","95","dt"],updated_at:"2026-08-31T10:52:56Z",conflict:{status:"no",created_at:"2026-08-31T08:53:36Z"}}}];
   const detail={...rows[0],recent:[
@@ -278,4 +286,31 @@ test("Benzonavt queue numbers do not suppress a station-wide petrol negative", a
   const detail={...rows[0],recent:[{created_at:"2026-08-31T08:00:00Z",status:"no",fuel_grades:[],detail:"Нет топлива · Очередь 95 машин"},{created_at:"2026-08-31T10:01:40Z",status:"yes",fuel_grades:["95"]}]};
   const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async url=>({ok:true,json:async()=>String(url).includes("/stations/986")?detail:rows}));
   assert.equal(raw.activity.some(value=>value.kind==="SOURCE_REPORTED_TRANSITION"&&value.gradeLabel==="95"),true);
+});
+
+test("optional detail budget includes time spent loading each source's current payload", async () => {
+  class SlowMainRequestDate extends Date {
+    static calls=0;
+    static now(){ return this.calls++ === 0 ? 0 : 6000; }
+  }
+  let gdebenzFetches=0;
+  const gdebenzRows={stations:[{osm_id:"s",lon:44.5,lat:48.7,status:"yes",fuels_now:"95",detail:"95",last_at:"2026-08-30 19:33:26"}]};
+  const gdebenzRaw=await Function("fetch","location","Date",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby",3500,5000)}`)(async()=>{gdebenzFetches++;return {ok:true,json:async()=>gdebenzRows};},{href:"https://gdebenz.ru/"},SlowMainRequestDate);
+  assert.equal(gdebenzFetches,1);
+  assert.equal(gdebenzRaw.activityHistoryCoverage,0);
+
+  SlowMainRequestDate.calls=0;
+  let benzonavtFetches=0;
+  const benzonavtRows=[{id:1,lon:44.5,lat:48.7,st:{status:"yes",fuels_now:["95"],updated_at:"2026-08-30T19:40:00Z"}}];
+  const benzonavtRaw=await Function("document","location","fetch","Date",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x",3500,5000)}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async()=>{benzonavtFetches++;return {ok:true,json:async()=>benzonavtRows};},SlowMainRequestDate);
+  assert.equal(benzonavtFetches,1);
+  assert.equal(benzonavtRaw.activityHistoryCoverage,0);
+
+  SlowMainRequestDate.calls=0;
+  let twogisFetches=0;
+  const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=s";
+  const twogisRows=[{station:{id:"s",lng:44.5,lat:48.7},fuel_statuses:[{fuel_type:"AI_95",available:true,last_report_at:"2026-08-30T19:40:00Z"}]}];
+  const twogisRaw=await Function("window","document","location","performance","fetch","URL","Date",`return ${twogis.twogisExtractor([[44,48],[45,48],[45,49]],3500,5000)}`)({}, {body:{innerText:"АЗС"},scripts:[]},{href:"https://2gis.ru/volgograd/search/АЗС"},{getEntriesByType:()=>[{name:liveUrl}]},async()=>{twogisFetches++;return {ok:true,json:async()=>twogisRows};},URL,SlowMainRequestDate);
+  assert.equal(twogisFetches,1);
+  assert.equal(twogisRaw.activityHistoryCoverage,0);
 });
