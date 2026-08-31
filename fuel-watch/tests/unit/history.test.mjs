@@ -82,6 +82,22 @@ test("synchronized petrol status transitions predict delivery while diesel is ab
   assert.equal(forecast.items[0].expectedAt,"2026-08-30T06:00:00.000Z");
 });
 
+test("branded variants of one octane do not masquerade as multiple delivery grades", async () => {
+  const config=await loadConfig();
+  const status=(productKey,value)=>({source:"source",productKey,kind:"PETROL_STATUS_SNAPSHOT",status:value,gradeSpecific:true,sourceTerminology:"STATUS"});
+  const statusTick=(fetchedAt,value)=>({fetchedAt,areaHash:"area",queryHash:"query",stations:[{...station("s","NOT_AVAILABLE"),activity:[status("AI95_BASE",value),status("AI95_GDRIVE",value)]}]});
+  const history={schemaVersion:1,ticks:[
+    statusTick("2026-08-27T05:45:00Z","OUT_OF_STOCK"),statusTick("2026-08-27T06:00:00Z","IN_STOCK"),
+    statusTick("2026-08-28T05:45:00Z","OUT_OF_STOCK"),statusTick("2026-08-28T06:00:00Z","IN_STOCK"),
+    statusTick("2026-08-29T05:45:00Z","OUT_OF_STOCK"),statusTick("2026-08-29T06:00:00Z","IN_STOCK"),
+    statusTick("2026-08-30T05:30:00Z","OUT_OF_STOCK")
+  ]};
+  const snapshot={fetchedAt:"2026-08-30T05:30:00Z",areaHash:"area",queryHash:"query",assessments:[station("s","NOT_AVAILABLE")]};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.equal(forecast.petrolStatusEventCount,3);
+  assert.equal(forecast.items[0].confidence,"LOW");
+});
+
 test("history keeps station continuity when a merged member source disappears", async () => {
   const config=await loadConfig();
   const physical=(stationKey,verdict,memberKeys)=>({...station(stationKey,verdict),memberKeys});

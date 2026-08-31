@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import properLockfile from "proper-lockfile";
+import { petrolOctaneKey } from "./fuels.mjs";
 import { compileBrandAliases, normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
 import { readJson, writeJsonAtomic } from "./util.mjs";
 
@@ -108,7 +109,7 @@ async function loadHistory(path) {
 }
 
 function compactTick(snapshot) {
-  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
+  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(value => ["ROLLING_SIGNAL_COUNT", "PETROL_STATUS_SNAPSHOT"].includes(value.kind)).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeKey: petrolOctaneKey(value), gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
 }
 
 function rollingActivityEvents(ticks, config, identity, brandAliases) {
@@ -116,7 +117,7 @@ function rollingActivityEvents(ticks, config, identity, brandAliases) {
   const groups = new Map();
   for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
     if (!summary.gradeSpecific || !Number.isFinite(summary.count) || !Number.isFinite(summary.windowMinutes)) continue;
-    const grade = summary.productKey ?? normalizeBrand(summary.gradeLabel);
+    const grade = summary.gradeKey ?? petrolOctaneKey(summary);
     if (!grade) continue;
     const identityId = identity.id(station);
     const key = `${identityId}|${summary.source}|${grade}`;
@@ -143,7 +144,7 @@ function petrolStatusEvents(ticks, config, identity, brandAliases) {
   const groups = new Map();
   for (const tick of ticks) for (const station of identity.stations(tick)) for (const summary of station.activity ?? []) {
     if (summary.kind !== "PETROL_STATUS_SNAPSHOT" || !summary.gradeSpecific) continue;
-    const grade = summary.productKey ?? normalizeBrand(summary.gradeLabel);
+    const grade = summary.gradeKey ?? petrolOctaneKey(summary);
     if (!grade) continue;
     const identityId = identity.id(station);
     const key = `${identityId}|${summary.source}|${grade}`;

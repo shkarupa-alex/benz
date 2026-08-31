@@ -14,7 +14,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   const snapshotHash = sha256(snapshot);
   const reportId = monitorId ? sha256(`${monitorId}${generation}${snapshotHash}`) : sha256(snapshotHash);
   const ranked = snapshot.rankedStationKeys.map(key => snapshot.assessments.find(a => a.stationKey === key)).filter(Boolean);
-  const lines = [`## Наличие АИ-95 — ${formatTime(snapshot.fetchedAt)}`, `Зона: ${snapshot.areaLabel}. Запрошены базовый АИ-95 и настроенные премиальные варианты.`, "", `Браузер: ${snapshot.runtime?.browserMode ?? "режим неизвестен"}. Источники: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
+  const lines = [`## Наличие АИ-95 — ${formatTime(snapshot.fetchedAt)}`, `Зона: ${snapshot.areaLabel}. Запрошен АИ-95 независимо от варианта и брендового названия.`, "", `Браузер: ${snapshot.runtime?.browserMode ?? "режим неизвестен"}. Источники: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
   if (recovered) lines.push(`Повтор после восстановления · reportId: ${reportId.slice(0, 12)}.`);
   for (const warning of snapshot.warnings ?? []) lines.push(`⚠ ${warning.code}: ${warning.message}`);
   if (!compact && snapshot.changes?.length) {
@@ -26,8 +26,6 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
     lines.push(`   АИ-95: ${VERDICT[item.verdict]} (${CONFIDENCE[item.confidence]}, ${freshnessText(item.observations)}) · очередь: ${item.queue?.displayText ?? "нет данных"}`);
-    const grades = gradeText(item, snapshot.requestedProducts);
-    if (grades) lines.push(`   ${grades}`);
     lines.push(`   ${activityText(item.activity)}${runText(item.availabilityRun)}источники: ${supportingSources(item)}`);
   }
   lines.push("", `Прогноз ближайшего появления (история ${snapshot.forecast?.retentionDays ?? 7} дней):`);
@@ -62,18 +60,7 @@ function supportingSources(item) { const values = [...new Set((item.observations
 function runText(run) { if (!run) return "время появления неизвестно · "; const confidence = CONFIDENCE[run.confidence] ?? "уверенность неизвестна"; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) · `; if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `впервые увидели вероятный сигнал ${formatTime(run.firstObservedAt)} (${confidence}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} (${confidence}) · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} (${confidence}) · `; }
 function activityText(activity = []) { if (activity.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "активность возобновилась (эвристика) · "; if (activity.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "активность продолжается (эвристика) · "; return ""; }
 function forecastBasis(value) { return ({ STATION: "прошлые периоды этой АЗС", BRAND: "прошлые периоды этого бренда", AREA: "прошлые периоды в зоне" })[value] ?? "история зоны"; }
-function forecastSignalBasis(value) { if (value === "ROLLING_ACTIVITY") return "per-grade rolling-count бензиновых сигналов"; if (value === "PETROL_STATUS_PATTERN") return "синхронные переходы статусов бензиновых марок"; return "переходы АИ-95 отсутствовало → появилось"; }
-function gradeText(item, requested = []) {
-  const assessments = item.productAssessments ?? {};
-  const base = assessments.AI95_BASE;
-  const premiums = requested.filter(product => product.productKey !== "AI95_BASE").map(product => assessments[product.productKey]).filter(Boolean);
-  const premium = aggregateGrades(premiums);
-  const parts = [];
-  if (base) parts.push(`95: ${VERDICT[base.verdict]} (${CONFIDENCE[base.confidence]}${base.approximate ? ", ≈" : ""})`);
-  if (premium) parts.push(`95+: ${VERDICT[premium.verdict]} (${CONFIDENCE[premium.confidence]}${premium.approximate ? ", ≈" : ""})`);
-  return parts.join(" · ");
-}
-function aggregateGrades(values) { if (!values.length) return null; const order = ["AVAILABLE", "LIKELY_AVAILABLE", "CONFLICTING", "INDIRECT", "NO_FRESH_DATA", "NOT_AVAILABLE"]; const verdict = order.find(name => values.some(value => value.verdict === name)) ?? "NO_FRESH_DATA"; const matching = values.filter(value => value.verdict === verdict); const confidence = matching.sort((a, b) => ({ NONE: 0, LOW: 1, MEDIUM: 2, HIGH: 3 })[b.confidence] - ({ NONE: 0, LOW: 1, MEDIUM: 2, HIGH: 3 })[a.confidence])[0]?.confidence ?? "NONE"; return { verdict, confidence, approximate: matching.some(value => value.approximate) }; }
+function forecastSignalBasis(value) { if (value === "ROLLING_ACTIVITY") return "rolling-count сигналов по октановым маркам"; if (value === "PETROL_STATUS_PATTERN") return "синхронные переходы статусов бензиновых марок"; return "переходы АИ-95 отсутствовало → появилось"; }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));

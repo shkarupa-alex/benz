@@ -27,6 +27,17 @@ export function classifyFuelLabel(label, requestedProducts) {
   return unknownProduct(label);
 }
 
+export function petrolOctaneKey(value = {}) {
+  const product = value.product ?? {};
+  const productKey = String(value.productKey ?? product.productKey ?? "");
+  const family = String(value.family ?? product.family ?? "");
+  const encoded = productKey.match(/^AI(92|95|98|100)(?:_|$)/u)?.[1]
+    ?? family.match(/^AI[_-]?(92|95|98|100)$/u)?.[1];
+  if (encoded) return encoded;
+  const label = normalizeFuelLabel(value.gradeLabel ?? value.displayLabel ?? product.displayLabel ?? "");
+  return label.match(/(?:^|\s)(?:аи\s*)?(92|95|98|100)(?:\s|$)/u)?.[1];
+}
+
 export function hasAi95Token(normalized) { return /(?:^|\s)(?:аи\s*)?95(?:\s|$)/u.test(normalized); }
 function isBaseAi95(normalized) { return /^(?:аи\s*)?95$/u.test(normalized); }
 function toFuelProduct(product, label) { return { family: product.family, variant: product.variant, variantKey: product.variantKey, displayLabel: String(label), specificity: "EXACT_VARIANT", productKey: product.productKey }; }

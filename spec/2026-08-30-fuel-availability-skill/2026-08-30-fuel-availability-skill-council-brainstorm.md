@@ -153,7 +153,7 @@ Yandex is expected to be the strongest current-availability and queue source, bu
 
 The automated browser previously received a transient page displaying `502` while the user's normal browser worked. Because the required browser CLI contract does not expose response status, the adapter recognizes only a fixture-validated 502 error-page title/body sentinel. That sentinel is retried once in-session and reported as `HTTP_ERROR`; an arbitrary load failure is not guessed to be HTTP 502.
 
-Grade-blind positive or negative reports never become direct evidence for a specific grade. A source that cannot represent premium AI-95 cannot directly confirm or deny `AI95_PREMIUM`.
+Grade-blind positive or negative reports never become direct evidence for a raw source variant. Raw variant scope is retained for provenance and conservative negative coverage, but every AI-95 variant contributes to one user-facing octane-grade assessment.
 
 ### 2GIS
 
@@ -308,13 +308,13 @@ interface ExecutionEnvelope { snapshot?: MonitoringSnapshot; sourceHealth: Sourc
 
 Fetch time is provenance and never substitutes for observation time.
 
-The default fuel query is a union of `AI_95` base and all configured branded/premium AI-95 variants. Plain AI-95 and each specific premium variant remain distinct products internally. A family-only observation may support the broad family query but cannot prove a particular branded variant.
+The default fuel query is all configured `AI_95` labels treated as one user-facing octane grade. Plain, premium, and branded labels remain distinguishable only in raw normalized evidence so that a negative for one label cannot be misrepresented as exhaustive family-wide absence. Reports, ranking, availability runs, and forecast activity never split them into separate products. A family-only observation may support the broad octane-grade query but remains less direct than a fresh label-specific observation.
 
 Default `requestedProducts` contains `AI95_BASE` (`АИ-95`, `АИ 95`, `95`), plus configured branded variants such as `AI95_ECTO`, `AI95_GDRIVE`, `AI95_PULSAR`, `AI95_VPOWER`, `AI95_ULTIMATE` and `AI95_PREMIUM_GENERIC`. The exact brand list is editable in `config.json`; it is data, not hard-coded parser logic. Fuel labels are normalized with Unicode NFKC, lowercase conversion, `ё→е`, Latin/Cyrillic homoglyph folding for the letters used in fuel labels, dash/underscore normalization, punctuation removal, and whitespace collapse. The matcher first requires an AI-95 family token, then chooses the longest exact configured alias. An unrecognized label that clearly belongs to AI-95 is classified as `BRANDED/UNKNOWN`, included in the default union because `includeUnrecognizedAi95Variants` is true, and never presented as a known named variant.
 
 The shipped aliases are at minimum: base (`аи 95`, `95`), Ecto (`экто`, `ecto`), G-Drive (`g drive`, `g-drive`), Pulsar (`пульсар`, `pulsar`), V-Power (`v power`, `v-power`), Ultimate (`ultimate`, `ультимейт`), and generic premium (`премиум`, `premium`). Each row is combined only with an AI-95 family token; a bare marketing word is never enough. New regional brand labels are added to config without changing code.
 
-Union assessment is explicit: any fresh positive exact member makes the union positive unless opposed by a fresh direct negative for that same exact member; negatives for one variant do not negate a positive different variant. The union is `НЕТ` only when fresh direct evidence covers every configured member, or a source explicitly reports family-all AI-95 unavailable. Family-only positive evidence yields at most `СКОРЕЕ ЕСТЬ`; family-only negative evidence cannot negate a fresh exact positive. Verdict rules are evaluated top-down, first match.
+Octane-grade assessment is explicit: any fresh positive exact AI-95 label makes `АИ-95` positive unless opposed by a fresh direct negative for that same raw label; negatives for one label do not negate a positive differently named 95. `АИ-95` is `НЕТ` only when fresh direct evidence covers every configured label, or a source explicitly reports family-all AI-95 unavailable. Family-only positive evidence yields at most `СКОРЕЕ ЕСТЬ`; family-only negative evidence cannot negate a fresh exact positive. Raw label distinctions are never rendered to the user or counted as separate grades in history. Verdict rules are evaluated top-down, first match.
 
 ## Area configuration
 
@@ -546,8 +546,8 @@ Example row:
 
 ```text
 1. Лукойл · [ул. Рокоссовского, 1Р](https://yandex.ru/maps/38/volgograd/search/%D1%83%D0%BB.%20%D0%A0%D0%BE%D0%BA%D0%BE%D1%81%D1%81%D0%BE%D0%B2%D1%81%D0%BA%D0%BE%D0%B3%D0%BE%2C%201%D0%A0%2C%20%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4/)
-   95: ЕСТЬ (средняя, 8 мин) · 95+: НЕТ (средняя, 12 мин)
-   очередь: большая · 95 появился между 15:45 и 16:00 (средняя уверенность)
+   АИ-95: ЕСТЬ (средняя, 8 мин) · очередь: большая
+   95 появился между 15:45 и 16:00 (средняя уверенность)
    источник: Яндекс · статус обновлён 16:15
 ```
 
@@ -604,8 +604,8 @@ When extraction fails because a page changed, development mode may record a reda
 | Use an agent-driven loop with wait chunks no longer than 50 seconds | adopted | Keeps delivery in the active task without one long sleep or a background browser | user |
 | Store editable settings beside scripts | adopted | Explicit user preference | user |
 | Retain compact seven-day forecast history outside temporary monitoring state | superseded/adopted | Later user requirement explicitly asks for delivery-time learning from both manual runs and monitoring; raw data and unbounded history remain rejected | user |
-| Keep AI-95 base and premium variants separate internally | adopted | Prevents grade-blind false positives and negatives | both proposals/reviews |
-| Default query includes base AI-95 and all configured premium variants | adopted | Explicit requirement | user |
+| Keep AI-95 base and premium variants separate in the user result | superseded | User later chose one result per octane grade | user |
+| Collapse base, premium, and branded variants into one octane-grade result and history series | adopted | The user does not use variant distinctions; raw labels remain only for provenance and conservative negative coverage | user |
 | Use categorical auditable confidence instead of pseudo-probability | adopted | No ground-truth calibration supports a percentage | proposal 2 + synthesis |
 | Unknown-time evidence cannot qualify current availability | adopted | Fetch time is not observation time | proposal 1/reviews |
 | Use lexicographic ranking | adopted | Avoid invented cross-unit weights | proposal 2 |
@@ -645,7 +645,7 @@ When extraction fails because a page changed, development mode may record a reda
 - Every browser transaction must finish cleanup verification before the run is reported complete.
 - Monitoring is performed by the active agent in the current task, with no heartbeat automation, daemon, or wait chunk longer than 50 seconds.
 - Monitoring cadence is 15 minutes; browsers remain closed during waits.
-- Default requested products are base AI-95 plus all configured premium/branded AI-95 variants.
+- Default requested product is AI-95 regardless of premium/branded label; configured aliases remain only for normalization, provenance, and conservative negative coverage.
 - The primary recommendation list contains only stations with positive current evidence for a requested product.
 - Grade-specific transaction/activity resumption is the strongest heuristic, followed by multi-source support, directness/confidence, freshness, optional queue data, availability-run age, and distance.
 - CAPTCHA and every degraded source are named in the user-facing report.

@@ -8,12 +8,13 @@ test("degraded report warns that empty evidence does not mean no petrol", () => 
   assert.match(markdown,/могут запаздывать или быть неполными/);
 });
 
-test("report renders grades, approximate age, activity and run confidence", () => {
+test("report renders one octane-level assessment, approximate age, activity and run confidence", () => {
   const item={stationKey:"s",title:"АЗС",address:"ул. Рокоссовского, 175",coordinate:[44.525837,48.748086],verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"gdebenz",status:"IN_STOCK",ageMinutes:10,approximate:true,expired:false,product:{specificity:"FAMILY_ONLY"}}],activity:[{kind:"TRANSACTIONS_RESUMED"}],productAssessments:{AI95_BASE:{verdict:"AVAILABLE",confidence:"MEDIUM",approximate:true},AI95_PREMIUM_GENERIC:{verdict:"NOT_AVAILABLE",confidence:"MEDIUM"}},availabilityRun:{basis:"FIRST_SEEN",firstObservedAt:"2026-08-30T09:50:00Z",confidence:"MEDIUM"}};
   const snapshot={fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",requestedProducts:[{productKey:"AI95_BASE"},{productKey:"AI95_PREMIUM_GENERIC"}],rankedStationKeys:["s"],assessments:[item],sourceHealth:[{source:"gdebenz",status:"OK"}],warnings:[],changes:[]};
   const {markdown}=renderReport(snapshot);
-  assert.match(markdown,/95: ЕСТЬ/);
-  assert.match(markdown,/95\+: НЕТ/);
+  assert.equal(markdown.match(/^\s*АИ-95:/gm)?.length,1);
+  assert.doesNotMatch(markdown,/^\s*95(?:\+)?\s*:/m);
+  assert.match(markdown,/независимо от варианта и брендового названия/);
   assert.match(markdown,/≈10 мин/);
   assert.match(markdown,/активность возобновилась \(эвристика\)/);
   assert.match(markdown,/средняя/);
@@ -38,7 +39,7 @@ test("report always includes the seven-day forecast section with timing and unce
   assert.match(markdown,/Прогноз ближайшего появления \(история 7 дней\)/);
   assert.match(markdown,/АЗС · \[Адрес\]\(https:\/\/yandex\.ru\/maps\/38\/volgograd\/search\/%D0%90%D0%B4%D1%80%D0%B5%D1%81%2C%20%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4\/\) — около/);
   assert.match(markdown,/основа: прошлые периоды в зоне, 2 эп\./);
-  assert.match(markdown,/per-grade rolling-count бензиновых сигналов/);
+  assert.match(markdown,/rolling-count сигналов по октановым маркам/);
   assert.match(markdown,/До трёх прогнозов пока не хватает/);
 });
 
