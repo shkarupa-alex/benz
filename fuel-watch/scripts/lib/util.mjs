@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const sha256 = value => createHash("sha256").update(typeof value === "string" ? value : stableJson(value)).digest("hex");
 export const stableJson = value => JSON.stringify(sortObject(value));
@@ -25,3 +27,9 @@ export async function writeJsonAtomic(path, value) {
 
 export const ageMinutes = (time, now = new Date()) => (now.getTime() - new Date(time).getTime()) / 60000;
 export const clampText = (text, length = 500) => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, length);
+
+export function isMainModule(metaUrl, argv = process.argv) {
+  if (!argv[1]) return false;
+  try { return realpathSync(fileURLToPath(metaUrl)) === realpathSync(argv[1]); }
+  catch { return metaUrl === pathToFileURL(resolve(argv[1])).href; }
+}

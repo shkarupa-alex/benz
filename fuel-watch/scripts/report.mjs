@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { loadConfig } from "./lib/config.mjs";
 import { isCurrentPositiveObservation, isFreshActivity } from "./lib/evidence.mjs";
 import { petrolOctaneKey } from "./lib/fuels.mjs";
 import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
-import { readJson, sha256, stableJson } from "./lib/util.mjs";
+import { isMainModule, readJson, sha256, stableJson } from "./lib/util.mjs";
 
 const VERDICT = { AVAILABLE: "ЕСТЬ", LIKELY_AVAILABLE: "СКОРЕЕ ЕСТЬ", CONFLICTING: "ПРОТИВОРЕЧИВО", INDIRECT: "КОСВЕННО", NOT_AVAILABLE: "НЕТ", NO_FRESH_DATA: "НЕТ СВЕЖИХ ДАННЫХ" };
 const CONFIDENCE = { HIGH: "высокая", MEDIUM: "средняя", LOW: "низкая", NONE: "нет" };
@@ -79,4 +78,4 @@ async function main() {
 }
 function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--snapshot", "--state-dir"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else if (["--json", "--recovered", "--compact"].includes(arg)) out[arg.slice(2)] = true; else throw new Error(`Unknown argument: ${arg}`); } return out; }
 async function readStdin() { let data = ""; for await (const chunk of process.stdin) data += chunk; return data; }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });
+if (isMainModule(import.meta.url)) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });

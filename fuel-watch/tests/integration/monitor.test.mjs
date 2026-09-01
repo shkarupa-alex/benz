@@ -1,12 +1,16 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { monitorCommand } from "../../scripts/monitor.mjs";
 import { loadConfig } from "../../scripts/lib/config.mjs";
 import { prepareMonitoringSnapshot } from "../../scripts/lib/prepare.mjs";
 import { renderReport } from "../../scripts/report.mjs";
+
+const testHome = await mkdtemp(join(tmpdir(), "fuel-watch-monitor-home-"));
+process.env.FUEL_WATCH_HOME = testHome;
+after(async () => { await rm(testHome, { recursive: true, force: true }); });
 
 test("monitor prepare and commit are transactional and cleanup deletes state", async () => {
   const init=await monitorCommand("init",{});
@@ -45,7 +49,7 @@ test("cleanup refuses arbitrary and unowned directories", async () => {
   await writeFile(bait,"keep");
   await assert.rejects(monitorCommand("cleanup",{"state-dir":arbitrary}),/must be a child/);
   assert.equal(await readFile(bait,"utf8"),"keep");
-  const root=join(tmpdir(),"fuel-watch");
+  const root=join(testHome,"monitors");
   await mkdir(root,{recursive:true});
   const unowned=await mkdtemp(join(root,"unowned-"));
   await writeFile(join(unowned,"keep.txt"),"keep");

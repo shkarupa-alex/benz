@@ -1,18 +1,29 @@
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import properLockfile from "proper-lockfile";
 import { normalizeFuelLabel, petrolOctaneKey } from "./fuels.mjs";
 import { compileBrandAliases, normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
 import { readJson, writeJsonAtomic } from "./util.mjs";
+import { historyPath } from "./paths.mjs";
 
 const POSITIVE = new Set(["AVAILABLE", "LIKELY_AVAILABLE"]);
 const NEGATIVE = "NOT_AVAILABLE";
 
 export function defaultHistoryPath(env = process.env) {
-  if (env.FUEL_WATCH_HISTORY_PATH) return resolve(env.FUEL_WATCH_HISTORY_PATH);
-  const stateRoot = env.XDG_STATE_HOME ? resolve(env.XDG_STATE_HOME) : join(homedir(), ".local", "state");
-  return join(stateRoot, "fuel-watch", "history.json");
+  return historyPath(env);
+}
+
+export async function ensureDefaultHistoryPath(env = process.env) {
+  const target = defaultHistoryPath(env);
+  if (env.FUEL_WATCH_HISTORY_PATH) return target;
+  const legacyRoot = env.XDG_STATE_HOME ? resolve(env.XDG_STATE_HOME) : join(env.HOME || homedir(), ".local", "state");
+  const legacy = join(legacyRoot, "fuel-watch", "history.json");
+  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+  try { await copyFile(legacy, target, constants.COPYFILE_EXCL); }
+  catch (error) { if (!['ENOENT', 'EEXIST'].includes(error.code)) throw error; }
+  return target;
 }
 
 export async function recordHistory(path, snapshot, config, { lock = properLockfile.lock } = {}) {

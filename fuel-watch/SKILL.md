@@ -1,6 +1,6 @@
 ---
 name: fuel-watch
-description: Проверяет текущее наличие АИ-95 независимо от брендового или премиального названия, свежесть сигналов и очереди на АЗС в настроенной зоне Волгограда через agent-browser, хранит 7-дневную историю и прогнозирует ближайшие появления. Используй при запросах «где есть 95-й», «проверь бензин/АЗС/очереди», «когда появится или появился бензин» и «следи каждые 15 минут». Не используй для маршрутизации, отправки пользовательских отчётов на сайты или обхода CAPTCHA.
+description: Проверяет текущее наличие АИ-95 независимо от брендового или премиального названия, свежесть сигналов и очереди на АЗС в настроенной зоне Волгограда через agent-browser, хранит 7-дневную историю и прогнозирует ближайшие появления. Используй при запросах «где есть 95-й», «проверь бензин/АЗС/очереди», «когда появится или появился бензин» и «следи за наличием». Не используй для маршрутизации, отправки пользовательских отчётов на сайты или обхода CAPTCHA.
 ---
 
 # Fuel Watch
@@ -15,11 +15,11 @@ description: Проверяет текущее наличие АИ-95 незав
 
 ## Подготовка
 
-Определи корень skill по расположению этого `SKILL.md` и используй его абсолютный путь как `FUEL_WATCH_ROOT`. Не меняй конфигурацию без явного запроса.
+Определи корень skill по расположению этого `SKILL.md` и используй его абсолютный путь как `FUEL_WATCH_ROOT`. Каталог skill — заменяемый read-only артефакт: никогда не создавай и не меняй в нём config, state, историю, `node_modules` или другие runtime-файлы. Пользовательские настройки и накопленные данные автоматически живут в `~/.fuel-watch/`: `config/`, `history/`, `state/` и `monitors/`. Переменная `FUEL_WATCH_HOME` может перенести весь этот каталог. Не меняй пользовательскую конфигурацию без явного запроса.
 
 Сначала проверь внешний runtime командами `command -v agent-browser` и `agent-browser --version` в том же окружении, где будет выполняться collection. Если команда доступна, используй установленную версию без переустановки. Никогда самостоятельно не выполняй `npm install -g agent-browser`, `npm update -g agent-browser`, `npx agent-browser` или `agent-browser install`. Если команда отсутствует или не запускается, ничего глобально не устанавливай: верни `BROWSER_UNAVAILABLE`, покажи результат проверки и запроси у пользователя отдельное разрешение на изменение окружения.
 
-Если локальный `node_modules` отсутствует, выполни `npm install --ignore-scripts` в корне skill; эта операция устанавливает только закреплённые зависимости из `package-lock.json` и не устанавливает `agent-browser` глобально.
+Runtime поставляется заранее собранным в `dist/` вместе со всеми Node.js-зависимостями. На целевой машине никогда не выполняй `npm install`, `npm ci`, `npm update` или `npx` для Fuel Watch. Отсутствие `node_modules` в установленном skill штатно. Если `dist/scripts/collect.mjs` отсутствует, верни ошибку повреждённого/неполного skill-пакета; не пытайся собирать его на целевой машине.
 
 В штатной collection сайты открываются только через `agent-browser`, которым управляют скрипты. Не добавляй `curl`, `fetch`, прямой HTTP-клиент, CAPTCHA solver, dashboard, HAR, video, trace, restore/profile или фоновый браузер.
 
@@ -35,8 +35,8 @@ BrowserRunner сначала обязательно устанавливает `
 2. Выполни:
 
    ```bash
-   node "$FUEL_WATCH_ROOT/scripts/collect.mjs" --output "$RUN_DIR/snapshot.json"
-   node "$FUEL_WATCH_ROOT/scripts/report.mjs" --snapshot "$RUN_DIR/snapshot.json"
+   node "$FUEL_WATCH_ROOT/dist/scripts/collect.mjs" --output "$RUN_DIR/snapshot.json"
+   node "$FUEL_WATCH_ROOT/dist/scripts/report.mjs" --snapshot "$RUN_DIR/snapshot.json"
    ```
 
 3. Опубликуй stdout `report.mjs` целиком и неизменным обычным Markdown даже при коде 2: он объясняет деградацию и не означает «бензина нет». Не создавай вместо него собственную сводку.
@@ -50,7 +50,7 @@ BrowserRunner сначала обязательно устанавливает `
 1. Инициализируй монитор и сохрани напечатанные `monitorId` и абсолютный `stateDir` в контексте задачи:
 
    ```bash
-   node "$FUEL_WATCH_ROOT/scripts/monitor.mjs" init
+   node "$FUEL_WATCH_ROOT/dist/scripts/monitor.mjs" init
    ```
 
 2. Перед первым и каждым следующим tick проверь `monitor.mjs due --state-dir "$STATE_DIR"`. Когда tick наступил:
@@ -62,16 +62,16 @@ BrowserRunner сначала обязательно устанавливает `
 3. Между tick’ами браузер уже закрыт. Жди foreground-командой `sleep 45` или короче. После каждого фрагмента проверяй новый пользовательский ввод, `monitor.mjs due` и `STOP` через его поле `stopped`; не запускай единый 15-минутный sleep.
 4. После четырёх пустых tick’ов используй `report.mjs --compact`, но продолжай cadence.
 5. При возобновлении задачи сначала вызови `monitor.mjs recover --state-dir "$STATE_DIR"`. Если есть pending report, повторно отрендери его с `--recovered`, сохрани тот же report ID и затем commit.
-6. При остановке вызови `node "$FUEL_WATCH_ROOT/scripts/monitor.mjs" stop --state-dir "$STATE_DIR"`, выполни одну namespace-scoped очистку последнего browser-run и заверши `node "$FUEL_WATCH_ROOT/scripts/monitor.mjs" cleanup --state-dir "$STATE_DIR"`. Подтверди удаление временного состояния.
+6. При остановке вызови `node "$FUEL_WATCH_ROOT/dist/scripts/monitor.mjs" stop --state-dir "$STATE_DIR"`, выполни одну namespace-scoped очистку последнего browser-run и заверши `node "$FUEL_WATCH_ROOT/dist/scripts/monitor.mjs" cleanup --state-dir "$STATE_DIR"`. Подтверди удаление monitor-state; общие настройки, последний snapshot и 7-дневная история сохраняются.
 
-Никогда не держи браузер во время ожидания. Любая коллекция чаще одного раза в 15 минут запрещена в monitoring mode.
+Никогда не держи браузер во время ожидания. Любая коллекция чаще настроенного `monitoring.intervalMinutes` запрещена в monitoring mode.
 
 ## Изменение зоны
 
 Для проверки anchor-координат выполни read-only команду:
 
 ```bash
-node "$FUEL_WATCH_ROOT/scripts/resolve-area.mjs" --config "$FUEL_WATCH_ROOT/config/config.json"
+node "$FUEL_WATCH_ROOT/dist/scripts/resolve-area.mjs"
 ```
 
 Покажи найденные координаты и drift пользователю. Перезапись разрешена только после явного подтверждения: повтори с `--write --confirm`. Три неуникальные или коллинеарные точки, неверные координаты и неразрешённый anchor приводят к fail-closed.

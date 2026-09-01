@@ -1,0 +1,60 @@
+{
+  "$schema": "./config.schema.json",
+  "area": {
+    "kind": "station-anchors",
+    "label": "Волгоград — настроенная зона",
+    "anchors": [
+      { "label": "Череповецкая ул., 5А", "point": [44.4825478, 48.7042007] },
+      { "label": "Ангарская ул., 131Б", "point": [44.4447156, 48.7196496] },
+      { "label": "Ангарская ул., 162", "point": [44.4590447, 48.7292752] },
+      { "label": "ул. Хорошева, 65А", "point": [44.4760565, 48.7362504] },
+      { "label": "просп. Маршала Жукова, 94А", "point": [44.4925045, 48.7393615] },
+      { "label": "ул. Рокоссовского, 129Ж", "point": [44.5238774, 48.7307008] },
+      { "label": "ул. Рокоссовского, 80А", "point": [44.530817, 48.733956] },
+      { "label": "ул. Рокоссовского, 175", "point": [44.525837, 48.748086] },
+      { "label": "ул. Пархоменко, 57А", "point": [44.5262303, 48.723571] },
+      { "label": "Глубокоовражная ул., 25", "point": [44.4975444, 48.7076565] },
+      { "label": "Симбирская ул., 1Б", "point": [44.4961665, 48.7060969] },
+      { "label": "Социалистическая ул., 43", "point": [44.4859626, 48.6943282] },
+      { "label": "Череповецкая ул., 21А", "point": [44.4722727, 48.6980531] }
+    ],
+    "boundary": "convex-hull",
+    "bufferMeters": 500,
+    "unresolvedPolicy": "fail-closed"
+  },
+  "requestedProducts": {
+    "mode": "UNION",
+    "includeUnrecognizedAi95Variants": true,
+    "products": [
+      { "productKey": "AI95_BASE", "family": "AI_95", "variant": "BASE", "variantKey": "BASE", "aliases": ["аи 95", "95"] },
+      { "productKey": "AI95_ECTO", "family": "AI_95", "variant": "BRANDED", "variantKey": "ECTO", "aliases": ["экто", "ecto"] },
+      { "productKey": "AI95_GDRIVE", "family": "AI_95", "variant": "BRANDED", "variantKey": "GDRIVE", "aliases": ["g drive", "g-drive"] },
+      { "productKey": "AI95_PULSAR", "family": "AI_95", "variant": "BRANDED", "variantKey": "PULSAR", "aliases": ["пульсар", "pulsar"] },
+      { "productKey": "AI95_VPOWER", "family": "AI_95", "variant": "PREMIUM", "variantKey": "VPOWER", "aliases": ["v power", "v-power"] },
+      { "productKey": "AI95_ULTIMATE", "family": "AI_95", "variant": "PREMIUM", "variantKey": "ULTIMATE", "aliases": ["ultimate", "ультимейт"] },
+      { "productKey": "AI95_PREMIUM_GENERIC", "family": "AI_95", "variant": "PREMIUM", "variantKey": "PREMIUM", "aliases": ["премиум", "premium"] }
+    ]
+  },
+  "sources": [
+    { "id": "yandex", "enabled": true, "order": 1, "provenanceGroup": "crowd-shared" },
+    { "id": "gdebenz", "enabled": true, "order": 2, "provenanceGroup": "crowd-shared" },
+    { "id": "2gis", "enabled": true, "order": 3, "provenanceGroup": "2gis" },
+    { "id": "benzonavt", "enabled": true, "order": 4, "provenanceGroup": "crowd-shared" }
+  ],
+  "browser": {
+    "executable": "agent-browser",
+    "configPath": "./agent-browser.json",
+    "headed": true,
+    "idleTimeoutMs": 10000,
+    "adapterTimeoutMs": 45000,
+    "cleanupReserveMs": 20000,
+    "allowedDomains": ["yandex.ru", "*.yandex.ru", "yandex.net", "*.yandex.net", "gdebenz.ru", "*.gdebenz.ru", "2gis.ru", "*.2gis.ru", "2gis.com", "*.2gis.com", "benzonavt.ru", "*.benzonavt.ru"]
+  },
+  "monitoring": { "intervalMinutes": 15, "waitChunkSeconds": 45, "compactAfterEmptyTicks": 4 },
+  "history": { "retentionDays": 7, "forecastCount": 3 },
+  "freshness": { "freshMinutes": 45, "recentMinutes": 180, "staleMinutes": 360, "expireMinutes": 360, "futureSkewSeconds": 120, "conflictWindowMinutes": 30 },
+  "activity": { "quietGapMinutes": 60, "resumeWindowMinutes": 20, "minimumEvents": 2, "strongSignalCountPerHour": 4 },
+  "queue": { "ordinalMaxVehicles": { "NONE": 0, "SHORT": 5, "MEDIUM": 12, "LONG": 25 }, "unknownPosition": "AFTER_KNOWN" },
+  "identity": { "maxCoordinateDriftMeters": 100, "ambiguityMargin": 0.18, "brandAliases": { "лукойл": ["lukoil"] }, "streetDictionary": { "рокоссовского": ["маршала рокоссовского"] }, "manualOverrides": [] },
+  "ranking": { "sourcePriority": ["yandex", "gdebenz", "2gis", "benzonavt"] }
+}

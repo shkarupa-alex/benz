@@ -1,17 +1,18 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { BrowserRunner } from "./lib/browser-runner.mjs";
 import { deriveActivityEvidence } from "./lib/activity.mjs";
-import { loadConfig } from "./lib/config.mjs";
+import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadConfig } from "./lib/config.mjs";
 import { diffSnapshots } from "./lib/diff.mjs";
 import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
-import { defaultHistoryPath, recordHistory } from "./lib/history.mjs";
+import { ensureDefaultHistoryPath, recordHistory } from "./lib/history.mjs";
+import { ensureUserConfig, latestSnapshotPath } from "./lib/paths.mjs";
 import { reconcileStations } from "./lib/identity.mjs";
 import { normalizeQueues } from "./lib/queue.mjs";
 import { rankAssessments } from "./lib/ranking.mjs";
-import { readJson, sha256, stableJson, writeJsonAtomic } from "./lib/util.mjs";
+import { isMainModule, readJson, sha256, stableJson, writeJsonAtomic } from "./lib/util.mjs";
 import { assessRequestedUnion } from "./lib/verdict.mjs";
 
 const adapters = {
@@ -140,7 +141,11 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
 function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
 function isNetworkControlsHealth(health) { return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message)); }
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-async function computeAdapterContractHash() { const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"]; return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n")); }
+async function computeAdapterContractHash() {
+  if (typeof __FUEL_WATCH_ADAPTER_CONTRACT_HASH__ !== "undefined") return __FUEL_WATCH_ADAPTER_CONTRACT_HASH__;
+  const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"];
+  return sha256((await Promise.all(names.map(name => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
+}
 function baselineKey(source, areaHash, contractHash) { return `${source}:${areaHash}:${contractHash}`; }
 export function enforceCompleteness(results, previous, areaHash, contractHash, fetchedAt, warnings) {
   const cutoff = new Date(fetchedAt).getTime() - 90 * 86400000;
@@ -167,16 +172,21 @@ export function nextCoverageBaselines(results, previous, areaHash, contractHash,
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  args.config ??= await ensureUserConfig({ templateConfigPath: defaultConfigPath, templateBrowserConfigPath: defaultBrowserConfigPath, templateSchemaPath: defaultSchemaPath });
+  const statePath = args.state ?? latestSnapshotPath();
+  const previousPath = args.previous ?? await existingPath(statePath);
   let interrupted;
   const onSigint = () => { interrupted = "SIGINT"; };
   const onSigterm = () => { interrupted = "SIGTERM"; };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: args.previous, historyPath: args.history ?? defaultHistoryPath() });
+  const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath, historyPath: args.history ?? await ensureDefaultHistoryPath() });
+  if (resolve(args.output ?? "") !== resolve(statePath)) await writeJsonAtomic(statePath, result.snapshot);
   process.removeListener("SIGINT", onSigint);
   process.removeListener("SIGTERM", onSigterm);
   process.stdout.write(`${stableJson({ snapshot: result.snapshot, exitCode: result.exitCode })}\n`);
   process.exitCode = interrupted === "SIGINT" ? 130 : interrupted === "SIGTERM" ? 143 : result.exitCode;
 }
-function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--config", "--output", "--previous", "--history"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else throw new Error(`Unknown argument: ${arg}`); } return out; }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });
+async function existingPath(path) { try { await stat(path); return path; } catch (error) { if (error.code === "ENOENT") return undefined; throw error; } }
+function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--config", "--output", "--previous", "--history", "--state"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else throw new Error(`Unknown argument: ${arg}`); } return out; }
+if (isMainModule(import.meta.url)) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });

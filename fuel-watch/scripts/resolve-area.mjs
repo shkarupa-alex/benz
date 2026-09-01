@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { BrowserRunner } from "./lib/browser-runner.mjs";
-import { loadConfig } from "./lib/config.mjs";
+import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadConfig } from "./lib/config.mjs";
+import { ensureUserConfig } from "./lib/paths.mjs";
 import { resolveArea } from "./lib/geometry.mjs";
-import { stableJson, writeJsonAtomic } from "./lib/util.mjs";
+import { isMainModule, stableJson, writeJsonAtomic } from "./lib/util.mjs";
 
 export async function verifyAnchors(configPath, browserFactory = config => new BrowserRunner(config)) {
   const config = await loadConfig(configPath);
@@ -32,6 +32,6 @@ export async function writeResolvedAnchors(configPath, values) {
   resolveArea(config.area);
   await writeJsonAtomic(resolve(configPath), config);
 }
-async function main() { const args = parseArgs(process.argv.slice(2)); const values = await verifyAnchors(args.config); process.stdout.write(`${stableJson(values)}\n`); if (args.write) { if (!args.confirm) throw new Error("--write requires --confirm"); await writeResolvedAnchors(args.config, values); } }
+async function main() { const args = parseArgs(process.argv.slice(2)); args.config ??= await ensureUserConfig({ templateConfigPath: defaultConfigPath, templateBrowserConfigPath: defaultBrowserConfigPath, templateSchemaPath: defaultSchemaPath }); const values = await verifyAnchors(args.config); process.stdout.write(`${stableJson(values)}\n`); if (args.write) { if (!args.confirm) throw new Error("--write requires --confirm"); await writeResolvedAnchors(args.config, values); } }
 function parseArgs(argv) { const out = {}; for (let i=0;i<argv.length;i++){const arg=argv[i];if(arg==="--config")out.config=resolve(argv[++i]);else if(arg==="--write")out.write=true;else if(arg==="--confirm")out.confirm=true;else throw new Error(`Unknown argument: ${arg}`);} return out; }
-if (import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode=2; });
+if (isMainModule(import.meta.url)) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode=2; });

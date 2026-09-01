@@ -30,7 +30,7 @@ test("runner strips inherited agent-browser, gateway and proxy variables", async
   } finally { process.env = original; }
 });
 
-test("runner pins the skill-owned config file", async () => {
+test("runner pins the explicitly loaded config file", async () => {
   const config = await loadConfig();
   const calls = [];
   const exec = async (command, args) => { calls.push(args); return { exitCode: 0, stdout: JSON.stringify({data:{sessions:[]}}), stderr: "" }; };

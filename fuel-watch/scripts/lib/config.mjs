@@ -6,10 +6,11 @@ import { normalizeFuelLabel } from "./fuels.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const defaultConfigPath = resolve(here, "../../config/config.json");
-const schemaPath = resolve(here, "../../config/config.schema.json");
+export const defaultSchemaPath = resolve(here, "../../config/config.schema.json");
+export const defaultBrowserConfigPath = resolve(here, "../../config/agent-browser.json");
 
 export async function loadConfig(path = defaultConfigPath) {
-  const [config, schema] = await Promise.all([readJsonWithPath(path), readJsonWithPath(schemaPath)]);
+  const [config, schema] = await Promise.all([readJsonWithPath(path), readJsonWithPath(defaultSchemaPath)]);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validate = ajv.compile(schema);
   if (!validate(config)) throw new ConfigError(validate.errors.map(formatAjvError));
