@@ -39,7 +39,7 @@ import {
   normalizeBrand,
   normalizeComparableBrand,
   normalizeText
-} from "./chunks/chunk-PGL4WRLA.mjs";
+} from "./chunks/chunk-IVODUSOD.mjs";
 import {
   __commonJS,
   __require,
@@ -2368,10 +2368,10 @@ function compactAssessment(value) {
 
 // scripts/collect.mjs
 var adapters = {
-  yandex: () => import("./chunks/yandex-G24RCINL.mjs"),
-  gdebenz: () => import("./chunks/gdebenz-APPTWP3E.mjs"),
-  "2gis": () => import("./chunks/twogis-EHBUQFN6.mjs"),
-  benzonavt: () => import("./chunks/benzonavt-72HOR4BV.mjs")
+  yandex: () => import("./chunks/yandex-2ME26BL2.mjs"),
+  gdebenz: () => import("./chunks/gdebenz-FHE2LIRQ.mjs"),
+  "2gis": () => import("./chunks/twogis-LKKY6BOH.mjs"),
+  benzonavt: () => import("./chunks/benzonavt-YTFC2O7A.mjs")
 };
 async function collectSnapshot({ configPath, outputPath, previousPath, historyPath: historyPath2, browserFactory = (config) => new BrowserRunner(config), now = /* @__PURE__ */ new Date(), cleanupNow = Date.now } = {}) {
   const config = await loadConfig(configPath);

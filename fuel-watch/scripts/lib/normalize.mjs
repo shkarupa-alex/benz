@@ -41,6 +41,7 @@ export function compileStreetDictionary(dictionary = {}) {
 }
 
 export const ADDRESS_UNIT_KINDS = new Set(["корпус", "строение", "литера", "владение", "сооружение"]);
+const BUILTIN_STREET_DICTIONARY = compileStreetDictionary({ "маршала жукова": ["маршала советского союза к жукова"] });
 
 export function isAddressUnitValue(kind, value, { allowLetter = ["корпус", "строение", "литера"].includes(kind) } = {}) {
   return allowLetter ? /^(?:\d+[а-яa-z]?|[а-яa-z])$/u.test(value ?? "") : /^\d+[а-яa-z]?$/u.test(value ?? "");
@@ -50,7 +51,7 @@ export function normalizeAddress(value, dictionary = {}) {
   const protectedValue = String(value ?? "")
     .replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s*\/\s*(\d+[а-яa-z]?)/giu, "$1 корпус $2")
     .replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s+г(?=\s*(?:[,;.]|$|\p{L}))/giu, "$1 houseletterg");
-  const ignored = new Set(["россия", "рф", "волгоградская", "область", "обл", "город", "г", "волгоград", "улица", "ул", "имени", "им"]);
+  const ignored = new Set(["россия", "рф", "волгоградская", "область", "обл", "город", "г", "волгоград", "улица", "ул", "проспект", "просп", "пр", "кт", "имени", "им"]);
   const rawTokens = normalizeText(protectedValue).split(" ").filter(token => token && !ignored.has(token) && !/^\d{6}$/u.test(token)).map(token => token === "houseletterg" ? "г" : token);
   const tokens = [];
   const unitKinds = new Map([["к", "корпус"], ["корп", "корпус"], ["корпус", "корпус"], ["стр", "строение"], ["строение", "строение"], ["лит", "литера"], ["литера", "литера"], ["влад", "владение"], ["владение", "владение"], ["соор", "сооружение"], ["сооружение", "сооружение"]]);
@@ -65,7 +66,7 @@ export function normalizeAddress(value, dictionary = {}) {
     const ambiguousSingleLetter = token === "к";
     tokens.push(unitKind && isAddressUnitValue(unitKind, next, { allowLetter: !ambiguousSingleLetter && ["корпус", "строение", "литера"].includes(unitKind) }) ? unitKind : token);
   }
-  return applyPhraseDictionary(tokens, dictionary).join(" ");
+  return applyPhraseDictionary(applyPhraseDictionary(tokens, BUILTIN_STREET_DICTIONARY), dictionary).join(" ");
 }
 
 function canonicalValue(value, dictionary) {

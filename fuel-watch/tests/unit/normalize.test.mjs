@@ -94,3 +94,8 @@ test("normalizes full and abbreviated letter qualifiers", () => {
   assert.equal(normalizeAddress("ул. Мира, 10, стр. Б"), "мира 10 строение б");
   assert.equal(normalizeAddress("ул. им. К. А. Тимирязева, 5"), "к а тимирязева 5");
 });
+
+test("normalizes short and official names of Marshal Zhukov avenue", () => {
+  assert.equal(normalizeAddress("просп. Маршала Жукова, 94А"), "маршала жукова 94а");
+  assert.equal(normalizeAddress("пр-кт им. Маршала Советского Союза Г.К. Жукова, 94а"), "маршала жукова 94а");
+});

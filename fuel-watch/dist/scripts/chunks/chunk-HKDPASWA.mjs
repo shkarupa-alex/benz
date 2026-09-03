@@ -1,7 +1,7 @@
 import { createRequire as __fuelWatchCreateRequire } from 'node:module'; const require = __fuelWatchCreateRequire(import.meta.url);
 import {
   brandLabel
-} from "./chunk-PGL4WRLA.mjs";
+} from "./chunk-IVODUSOD.mjs";
 import {
   classifyFuelLabel
 } from "./chunk-XKTP5TT3.mjs";

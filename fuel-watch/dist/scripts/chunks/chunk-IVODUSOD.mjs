@@ -38,12 +38,13 @@ function compileStreetDictionary(dictionary = {}) {
   return Object.entries(dictionary).flatMap(([canonical, aliases]) => [canonical, ...aliases].map((alias) => ({ alias: normalizeText(alias).split(" ").filter(Boolean), canonical: normalizeText(canonical).split(" ").filter(Boolean) }))).filter((entry) => entry.alias.length).sort((a, b) => b.alias.length - a.alias.length);
 }
 var ADDRESS_UNIT_KINDS = /* @__PURE__ */ new Set(["\u043A\u043E\u0440\u043F\u0443\u0441", "\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435", "\u043B\u0438\u0442\u0435\u0440\u0430", "\u0432\u043B\u0430\u0434\u0435\u043D\u0438\u0435", "\u0441\u043E\u043E\u0440\u0443\u0436\u0435\u043D\u0438\u0435"]);
+var BUILTIN_STREET_DICTIONARY = compileStreetDictionary({ "\u043C\u0430\u0440\u0448\u0430\u043B\u0430 \u0436\u0443\u043A\u043E\u0432\u0430": ["\u043C\u0430\u0440\u0448\u0430\u043B\u0430 \u0441\u043E\u0432\u0435\u0442\u0441\u043A\u043E\u0433\u043E \u0441\u043E\u044E\u0437\u0430 \u043A \u0436\u0443\u043A\u043E\u0432\u0430"] });
 function isAddressUnitValue(kind, value, { allowLetter = ["\u043A\u043E\u0440\u043F\u0443\u0441", "\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435", "\u043B\u0438\u0442\u0435\u0440\u0430"].includes(kind) } = {}) {
   return allowLetter ? /^(?:\d+[а-яa-z]?|[а-яa-z])$/u.test(value ?? "") : /^\d+[а-яa-z]?$/u.test(value ?? "");
 }
 function normalizeAddress(value, dictionary = {}) {
   const protectedValue = String(value ?? "").replace(/(?<!\d)(\d{1,4}[а-яa-z]?)\s*\/\s*(\d+[а-яa-z]?)/giu, "$1 \u043A\u043E\u0440\u043F\u0443\u0441 $2").replace(new RegExp("(?<!\\d)(\\d{1,4}[\u0430-\u044Fa-z]?)\\s+\u0433(?=\\s*(?:[,;.]|$|\\p{L}))", "giu"), "$1 houseletterg");
-  const ignored = /* @__PURE__ */ new Set(["\u0440\u043E\u0441\u0441\u0438\u044F", "\u0440\u0444", "\u0432\u043E\u043B\u0433\u043E\u0433\u0440\u0430\u0434\u0441\u043A\u0430\u044F", "\u043E\u0431\u043B\u0430\u0441\u0442\u044C", "\u043E\u0431\u043B", "\u0433\u043E\u0440\u043E\u0434", "\u0433", "\u0432\u043E\u043B\u0433\u043E\u0433\u0440\u0430\u0434", "\u0443\u043B\u0438\u0446\u0430", "\u0443\u043B", "\u0438\u043C\u0435\u043D\u0438", "\u0438\u043C"]);
+  const ignored = /* @__PURE__ */ new Set(["\u0440\u043E\u0441\u0441\u0438\u044F", "\u0440\u0444", "\u0432\u043E\u043B\u0433\u043E\u0433\u0440\u0430\u0434\u0441\u043A\u0430\u044F", "\u043E\u0431\u043B\u0430\u0441\u0442\u044C", "\u043E\u0431\u043B", "\u0433\u043E\u0440\u043E\u0434", "\u0433", "\u0432\u043E\u043B\u0433\u043E\u0433\u0440\u0430\u0434", "\u0443\u043B\u0438\u0446\u0430", "\u0443\u043B", "\u043F\u0440\u043E\u0441\u043F\u0435\u043A\u0442", "\u043F\u0440\u043E\u0441\u043F", "\u043F\u0440", "\u043A\u0442", "\u0438\u043C\u0435\u043D\u0438", "\u0438\u043C"]);
   const rawTokens = normalizeText(protectedValue).split(" ").filter((token) => token && !ignored.has(token) && !/^\d{6}$/u.test(token)).map((token) => token === "houseletterg" ? "\u0433" : token);
   const tokens = [];
   const unitKinds = /* @__PURE__ */ new Map([["\u043A", "\u043A\u043E\u0440\u043F\u0443\u0441"], ["\u043A\u043E\u0440\u043F", "\u043A\u043E\u0440\u043F\u0443\u0441"], ["\u043A\u043E\u0440\u043F\u0443\u0441", "\u043A\u043E\u0440\u043F\u0443\u0441"], ["\u0441\u0442\u0440", "\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435"], ["\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435", "\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435"], ["\u043B\u0438\u0442", "\u043B\u0438\u0442\u0435\u0440\u0430"], ["\u043B\u0438\u0442\u0435\u0440\u0430", "\u043B\u0438\u0442\u0435\u0440\u0430"], ["\u0432\u043B\u0430\u0434", "\u0432\u043B\u0430\u0434\u0435\u043D\u0438\u0435"], ["\u0432\u043B\u0430\u0434\u0435\u043D\u0438\u0435", "\u0432\u043B\u0430\u0434\u0435\u043D\u0438\u0435"], ["\u0441\u043E\u043E\u0440", "\u0441\u043E\u043E\u0440\u0443\u0436\u0435\u043D\u0438\u0435"], ["\u0441\u043E\u043E\u0440\u0443\u0436\u0435\u043D\u0438\u0435", "\u0441\u043E\u043E\u0440\u0443\u0436\u0435\u043D\u0438\u0435"]]);
@@ -58,7 +59,7 @@ function normalizeAddress(value, dictionary = {}) {
     const ambiguousSingleLetter = token === "\u043A";
     tokens.push(unitKind && isAddressUnitValue(unitKind, next, { allowLetter: !ambiguousSingleLetter && ["\u043A\u043E\u0440\u043F\u0443\u0441", "\u0441\u0442\u0440\u043E\u0435\u043D\u0438\u0435", "\u043B\u0438\u0442\u0435\u0440\u0430"].includes(unitKind) }) ? unitKind : token);
   }
-  return applyPhraseDictionary(tokens, dictionary).join(" ");
+  return applyPhraseDictionary(applyPhraseDictionary(tokens, BUILTIN_STREET_DICTIONARY), dictionary).join(" ");
 }
 function canonicalValue(value, dictionary) {
   if (dictionary instanceof Map) return dictionary.get(value) ?? value;

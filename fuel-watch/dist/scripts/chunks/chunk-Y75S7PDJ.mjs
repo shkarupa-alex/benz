@@ -77,8 +77,11 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
   if (!ranked.length) lines.push("\u0421\u0432\u0435\u0436\u0438\u0445 \u043F\u043E\u043B\u043E\u0436\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445 \u043D\u0435\u0442; \u044D\u0442\u043E \u043D\u0435 \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442, \u0447\u0442\u043E \u0431\u0435\u043D\u0437\u0438\u043D\u0430 \u043D\u0435\u0442 \u0432\u043E \u0432\u0441\u0435\u0439 \u0437\u043E\u043D\u0435.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
-    lines.push(`   \u0410\u0418-95: ${VERDICT[item.verdict]} (${CONFIDENCE[item.confidence]}, ${freshnessText(item.observations)}) \xB7 \u043E\u0447\u0435\u0440\u0435\u0434\u044C: ${item.queue?.displayText ?? "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"}`);
-    lines.push(`   ${activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy)}${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}\u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${supportingSources(item)}`);
+    lines.push(`   \u0410\u0418-95: ${VERDICT[item.verdict]} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0448\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438: ${CONFIDENCE[item.confidence]} \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044E\u0449\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B: ${freshnessText(item.observations)} \xB7 \u043E\u0447\u0435\u0440\u0435\u0434\u044C: ${item.queue?.displayText ?? "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"}`);
+    const activity = activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy);
+    if (activity) lines.push(`   ${activity}`);
+    lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
+    lines.push(`   \u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0442\u0435\u043A\u0443\u0449\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438: ${supportingSources(item)}.`);
   }
   lines.push("", `\u041F\u0440\u043E\u0433\u043D\u043E\u0437 \u0431\u043B\u0438\u0436\u0430\u0439\u0448\u0435\u0433\u043E \u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F (\u0438\u0441\u0442\u043E\u0440\u0438\u044F ${snapshot.forecast?.retentionDays ?? 7} \u0434\u043D\u0435\u0439):`);
   const forecasts = snapshot.forecast?.items ?? [];
@@ -102,7 +105,7 @@ function changeText(c) {
   if (c.type === "SCOPE_CHANGED") return c.message;
   if (c.type === "ADDED") return `${stationHeading(c.current)}: \u043F\u043E\u044F\u0432\u0438\u043B\u0430\u0441\u044C \u0432 \u0432\u044B\u0431\u043E\u0440\u043A\u0435`;
   if (c.type === "REMOVED") return `${stationHeading(c.previous)}: \u0438\u0441\u0447\u0435\u0437\u043B\u0430 \u0438\u0437 \u0432\u044B\u0431\u043E\u0440\u043A\u0438`;
-  return `${stationHeading(c.current)}: ${VERDICT[c.previous.verdict]} \u2192 ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ${CONFIDENCE[c.previous.confidence]} \u2192 ${CONFIDENCE[c.current.confidence]}` : ""}`;
+  return `${stationHeading(c.current)}: ${VERDICT[c.previous.verdict]} \u2192 ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0448\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438 ${CONFIDENCE[c.previous.confidence]} \u2192 ${CONFIDENCE[c.current.confidence]}` : ""}`;
 }
 function stationHeading(station) {
   return `${station.title}${station.address ? ` \xB7 [${escapeMarkdown(station.address)}](${yandexMapsUrl(station)})` : ""}`;
@@ -126,10 +129,10 @@ function formatTime(value) {
 }
 function freshnessText(observations = []) {
   const usable = observations.filter(isCurrentPositiveObservation);
-  if (!usable.length) return "\u0432\u043E\u0437\u0440\u0430\u0441\u0442 \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D";
+  if (!usable.length) return "\u0432\u0440\u0435\u043C\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E";
   const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0];
   const min = Math.round(freshest.ageMinutes);
-  return `${freshest.approximate ? "\u2248" : ""}${min < 1 ? "\u0442\u043E\u043B\u044C\u043A\u043E \u0447\u0442\u043E" : `${min} \u043C\u0438\u043D`}`;
+  return min < 1 ? "\u0442\u043E\u043B\u044C\u043A\u043E \u0447\u0442\u043E" : `${freshest.approximate ? "\u2248" : ""}${min} \u043C\u0438\u043D \u043D\u0430\u0437\u0430\u0434`;
 }
 function supportingSources(item) {
   const values = [...new Set((item.observations ?? []).filter(isCurrentPositiveObservation).map((o) => o.source))];
@@ -137,17 +140,17 @@ function supportingSources(item) {
 }
 function runText(run, activity = [], verdict, fetchedAt, freshness) {
   if (!run) {
-    if (!["AVAILABLE", "LIKELY_AVAILABLE"].includes(verdict)) return "\u0432\u0440\u0435\u043C\u044F \u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E \xB7 ";
+    if (!["AVAILABLE", "LIKELY_AVAILABLE"].includes(verdict)) return "\u0412\u0440\u0435\u043C\u044F \u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F: \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E.";
     const sourceTransitions = sourceTransitionCluster(activity, fetchedAt, freshness);
-    if (!sourceTransitions.length) return "\u0432\u0440\u0435\u043C\u044F \u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E \xB7 ";
-    const first = sourceTransitions[0], last = sourceTransitions.at(-1);
-    return sourceTransitions.length === 1 ? `${first.source} \u0444\u0438\u043A\u0441\u0438\u0440\u0443\u0435\u0442 \u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A \u043D\u0430\u043B\u0438\u0447\u0438\u044E \u043E\u043A\u043E\u043B\u043E ${formatTime(first.observedAt)} (\u043D\u0438\u0437\u043A\u0430\u044F) \xB7 ` : `${first.source} \u0444\u0438\u043A\u0441\u0438\u0440\u0443\u0435\u0442 \u0440\u0430\u043D\u043D\u0438\u0439 \u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u043E\u043A\u043E\u043B\u043E ${formatTime(first.observedAt)}, \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u2014 \u0434\u043E ${formatTime(last.observedAt)} (\u043D\u0438\u0437\u043A\u0430\u044F) \xB7 `;
+    if (!sourceTransitions.length) return "\u0412\u0440\u0435\u043C\u044F \u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F: \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u043E.";
+    const evidence = sourceTransitions.map((value) => `${value.source} \u2014 \u043E\u043A\u043E\u043B\u043E ${formatTime(value.observedAt)}`).join("; ");
+    return `\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A \u043D\u0430\u043B\u0438\u0447\u0438\u044E \u043F\u043E \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432: ${evidence}. \u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430: \u043D\u0438\u0437\u043A\u0430\u044F.`;
   }
-  const confidence = CONFIDENCE[run.confidence] ?? "\u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430";
-  if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `\u043F\u043E\u044F\u0432\u0438\u043B\u0441\u044F \u043C\u0435\u0436\u0434\u0443 ${formatTime(run.transitionWindow.after)} \u0438 ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) \xB7 `;
-  if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `\u0432\u043F\u0435\u0440\u0432\u044B\u0435 \u0443\u0432\u0438\u0434\u0435\u043B\u0438 \u0432\u0435\u0440\u043E\u044F\u0442\u043D\u044B\u0439 \u0441\u0438\u0433\u043D\u0430\u043B ${formatTime(run.firstObservedAt)} (${confidence}) \xB7 `;
-  if (run.basis === "FIRST_SEEN") return `\u0432\u043F\u0435\u0440\u0432\u044B\u0435 \u0443\u0432\u0438\u0434\u0435\u043B\u0438 \u0432 \u043D\u0430\u043B\u0438\u0447\u0438\u0438 ${formatTime(run.firstObservedAt)} (${confidence}) \xB7 `;
-  return `\u043D\u0430\u0431\u043B\u044E\u0434\u0430\u0435\u043C \u0441 ${formatTime(run.firstObservedAt)} (${confidence}) \xB7 `;
+  const confidence = CONFIDENCE[run.confidence] ?? "\u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430";
+  if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `\u041F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u0435: \u043C\u0435\u0436\u0434\u0443 ${formatTime(run.transitionWindow.after)} \u0438 ${formatTime(run.transitionWindow.atOrBefore)}. \u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430: ${confidence}.`;
+  if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `\u041F\u0435\u0440\u0432\u044B\u0439 \u0432\u0435\u0440\u043E\u044F\u0442\u043D\u044B\u0439 \u0441\u0438\u0433\u043D\u0430\u043B: ${formatTime(run.firstObservedAt)}. \u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u043F\u0435\u0440\u0432\u043E\u0433\u043E \u0441\u0438\u0433\u043D\u0430\u043B\u0430: ${confidence}.`;
+  if (run.basis === "FIRST_SEEN") return `\u0412\u043F\u0435\u0440\u0432\u044B\u0435 \u0443\u0432\u0438\u0434\u0435\u043B\u0438 \u0432 \u043D\u0430\u043B\u0438\u0447\u0438\u0438: ${formatTime(run.firstObservedAt)}. \u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u043F\u0435\u0440\u0432\u043E\u0433\u043E \u0441\u0438\u0433\u043D\u0430\u043B\u0430: ${confidence}.`;
+  return `\u041D\u0430\u0431\u043B\u044E\u0434\u0430\u0435\u043C \u0432 \u043D\u0430\u043B\u0438\u0447\u0438\u0438 \u0441 ${formatTime(run.firstObservedAt)}. \u0423\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0447\u0430\u043B\u0430 \u043D\u0430\u0431\u043B\u044E\u0434\u0435\u043D\u0438\u044F: ${confidence}.`;
 }
 function sourceTransitionCluster(activity, fetchedAt, freshness) {
   const values = [...activity].filter((value) => value.kind === "SOURCE_REPORTED_TRANSITION" && value.observedAt && isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness)).sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt));
@@ -161,8 +164,8 @@ function sourceTransitionCluster(activity, fetchedAt, freshness) {
 }
 function activityText(activity = [], fetchedAt, freshness) {
   const current = activity.filter((value) => isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness));
-  if (current.some((value) => value.kind === "TRANSACTIONS_RESUMED")) return "\u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u044C \u0432\u043E\u0437\u043E\u0431\u043D\u043E\u0432\u0438\u043B\u0430\u0441\u044C (\u044D\u0432\u0440\u0438\u0441\u0442\u0438\u043A\u0430) \xB7 ";
-  if (current.some((value) => value.kind === "TRANSACTIONS_ONGOING")) return "\u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u044C \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0435\u0442\u0441\u044F (\u044D\u0432\u0440\u0438\u0441\u0442\u0438\u043A\u0430) \xB7 ";
+  if (current.some((value) => value.kind === "TRANSACTIONS_RESUMED")) return "\u0410\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u044C \u0410\u0418-95: \u0432\u043E\u0437\u043E\u0431\u043D\u043E\u0432\u0438\u043B\u0430\u0441\u044C (\u044D\u0432\u0440\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B).";
+  if (current.some((value) => value.kind === "TRANSACTIONS_ONGOING")) return "\u0410\u043A\u0442\u0438\u0432\u043D\u043E\u0441\u0442\u044C \u0410\u0418-95: \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0430\u0435\u0442\u0441\u044F (\u044D\u0432\u0440\u0438\u0441\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B).";
   return "";
 }
 function isAi95Activity(value) {

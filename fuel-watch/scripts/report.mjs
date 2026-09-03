@@ -25,8 +25,11 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   if (!ranked.length) lines.push("Свежих положительных данных нет; это не означает, что бензина нет во всей зоне.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
-    lines.push(`   АИ-95: ${VERDICT[item.verdict]} (${CONFIDENCE[item.confidence]}, ${freshnessText(item.observations)}) · очередь: ${item.queue?.displayText ?? "нет данных"}`);
-    lines.push(`   ${activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy)}${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}источники: ${supportingSources(item)}`);
+    lines.push(`   АИ-95: ${VERDICT[item.verdict]} · уверенность нашей оценки: ${CONFIDENCE[item.confidence]} · последний подтверждающий сигнал: ${freshnessText(item.observations)} · очередь: ${item.queue?.displayText ?? "нет данных"}`);
+    const activity = activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy);
+    if (activity) lines.push(`   ${activity}`);
+    lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
+    lines.push(`   Источники текущей оценки: ${supportingSources(item)}.`);
   }
   lines.push("", `Прогноз ближайшего появления (история ${snapshot.forecast?.retentionDays ?? 7} дней):`);
   const forecasts = snapshot.forecast?.items ?? [];
@@ -45,7 +48,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
 }
 
 function healthText(h) { return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`; }
-function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${stationHeading(c.current)}: появилась в выборке`; if (c.type === "REMOVED") return `${stationHeading(c.previous)}: исчезла из выборки`; return `${stationHeading(c.current)}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
+function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${stationHeading(c.current)}: появилась в выборке`; if (c.type === "REMOVED") return `${stationHeading(c.previous)}: исчезла из выборки`; return `${stationHeading(c.current)}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность нашей оценки ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
 function stationHeading(station) { return `${station.title}${station.address ? ` · [${escapeMarkdown(station.address)}](${yandexMapsUrl(station)})` : ""}`; }
 function yandexMapsUrl(station) {
   const coordinate = Array.isArray(station.coordinate) && station.coordinate.length === 2 && station.coordinate.every(Number.isFinite) ? station.coordinate : undefined;
@@ -55,11 +58,24 @@ function yandexMapsUrl(station) {
 function escapeMarkdown(value) { return String(value).replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]"); }
 function encodeUrlComponent(value) { return encodeURIComponent(value).replace(/[!'()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`); }
 function formatTime(value) { return new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
-function freshnessText(observations = []) { const usable = observations.filter(isCurrentPositiveObservation); if (!usable.length) return "возраст неизвестен"; const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0]; const min = Math.round(freshest.ageMinutes); return `${freshest.approximate ? "≈" : ""}${min < 1 ? "только что" : `${min} мин`}`; }
+function freshnessText(observations = []) { const usable = observations.filter(isCurrentPositiveObservation); if (!usable.length) return "время неизвестно"; const freshest = [...usable].sort((a, b) => a.ageMinutes - b.ageMinutes)[0]; const min = Math.round(freshest.ageMinutes); return min < 1 ? "только что" : `${freshest.approximate ? "≈" : ""}${min} мин назад`; }
 function supportingSources(item) { const values = [...new Set((item.observations ?? []).filter(isCurrentPositiveObservation).map(o => o.source))]; return values.length ? values.join(", ") : "нет свежей текущей поддержки"; }
-function runText(run, activity = [], verdict, fetchedAt, freshness) { if (!run) { if (!["AVAILABLE", "LIKELY_AVAILABLE"].includes(verdict)) return "время появления неизвестно · "; const sourceTransitions = sourceTransitionCluster(activity, fetchedAt, freshness); if (!sourceTransitions.length) return "время появления неизвестно · "; const first = sourceTransitions[0], last = sourceTransitions.at(-1); return sourceTransitions.length === 1 ? `${first.source} фиксирует переход к наличию около ${formatTime(first.observedAt)} (низкая) · ` : `${first.source} фиксирует ранний переход около ${formatTime(first.observedAt)}, остальные источники — до ${formatTime(last.observedAt)} (низкая) · `; } const confidence = CONFIDENCE[run.confidence] ?? "уверенность неизвестна"; if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `появился между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)} (${confidence}) · `; if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `впервые увидели вероятный сигнал ${formatTime(run.firstObservedAt)} (${confidence}) · `; if (run.basis === "FIRST_SEEN") return `впервые увидели в наличии ${formatTime(run.firstObservedAt)} (${confidence}) · `; return `наблюдаем с ${formatTime(run.firstObservedAt)} (${confidence}) · `; }
+function runText(run, activity = [], verdict, fetchedAt, freshness) {
+  if (!run) {
+    if (!["AVAILABLE", "LIKELY_AVAILABLE"].includes(verdict)) return "Время появления: неизвестно.";
+    const sourceTransitions = sourceTransitionCluster(activity, fetchedAt, freshness);
+    if (!sourceTransitions.length) return "Время появления: неизвестно.";
+    const evidence = sourceTransitions.map(value => `${value.source} — около ${formatTime(value.observedAt)}`).join("; ");
+    return `Переход к наличию по истории источников: ${evidence}. Уверенность времени перехода: низкая.`;
+  }
+  const confidence = CONFIDENCE[run.confidence] ?? "неизвестна";
+  if (run.basis === "OBSERVED_TRANSITION" && run.transitionWindow) return `Появление: между ${formatTime(run.transitionWindow.after)} и ${formatTime(run.transitionWindow.atOrBefore)}. Уверенность времени перехода: ${confidence}.`;
+  if (run.basis === "FIRST_SEEN" && run.verdict === "LIKELY_AVAILABLE") return `Первый вероятный сигнал: ${formatTime(run.firstObservedAt)}. Уверенность времени первого сигнала: ${confidence}.`;
+  if (run.basis === "FIRST_SEEN") return `Впервые увидели в наличии: ${formatTime(run.firstObservedAt)}. Уверенность времени первого сигнала: ${confidence}.`;
+  return `Наблюдаем в наличии с ${formatTime(run.firstObservedAt)}. Уверенность начала наблюдения: ${confidence}.`;
+}
 function sourceTransitionCluster(activity, fetchedAt, freshness) { const values = [...activity].filter(value => value.kind === "SOURCE_REPORTED_TRANSITION" && value.observedAt && isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness)).sort((a, b) => new Date(a.observedAt) - new Date(b.observedAt)); const clusters = []; for (const value of values) { const current = clusters.at(-1); if (!current || new Date(value.observedAt) - new Date(current.at(-1).observedAt) > 120 * 60000) clusters.push([value]); else current.push(value); } return clusters.at(-1) ?? []; }
-function activityText(activity = [], fetchedAt, freshness) { const current = activity.filter(value => isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness)); if (current.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "активность возобновилась (эвристика) · "; if (current.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "активность продолжается (эвристика) · "; return ""; }
+function activityText(activity = [], fetchedAt, freshness) { const current = activity.filter(value => isAi95Activity(value) && isFreshActivity(value, fetchedAt, freshness)); if (current.some(value => value.kind === "TRANSACTIONS_RESUMED")) return "Активность АИ-95: возобновилась (эвристический сигнал)."; if (current.some(value => value.kind === "TRANSACTIONS_ONGOING")) return "Активность АИ-95: продолжается (эвристический сигнал)."; return ""; }
 function isAi95Activity(value) { return petrolOctaneKey(value) === "95"; }
 function forecastBasis(value) { return ({ STATION: "прошлые периоды этой АЗС", BRAND: "прошлые периоды этого бренда", AREA: "прошлые периоды в зоне" })[value] ?? "история зоны"; }
 function forecastSignalBasis(value) { if (value === "ROLLING_ACTIVITY") return "rolling-count сигналов по октановым маркам"; if (value === "SOURCE_ACTIVITY_TIMELINE") return "история возобновления активности у источника"; if (value === "SOURCE_REPORTED_STATUS") return "история переходов статуса у источника"; if (value === "PETROL_STATUS_PATTERN") return "синхронные переходы статусов бензиновых марок"; return "переходы АИ-95 отсутствовало → появилось"; }

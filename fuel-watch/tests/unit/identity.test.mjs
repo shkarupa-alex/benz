@@ -43,6 +43,16 @@ test("merges the three live representations of Rosneft at Rokossovskogo 175", as
   assert.equal(values[0].matchConfidence, "HIGH");
 });
 
+test("merges short and official-address representations of Marshal Zhukov 94A", async () => {
+  const config = await loadConfig();
+  const values = reconcileStations([
+    { source: "gdebenz", sourceStationId: "short", title: "Лукойл", brand: "Лукойл", address: "просп. Маршала Жукова, 94А", coordinate: [44.49253, 48.739326] },
+    { source: "2gis", sourceStationId: "official", title: "Лукойл", brand: "Лукойл", address: "пр-кт им. Маршала Советского Союза Г.К. Жукова, 94а", coordinate: [44.49252024295219, 48.73937005872538] }
+  ], config);
+  assert.equal(values.length, 1);
+  assert.deepEqual(values[0].members.map(member => member.source).sort(), ["2gis", "gdebenz"]);
+});
+
 for (const [label, yandexCoordinate] of [["nearby", [44.52583, 48.74810]], ["same pin", [44.5259038, 48.7481603]]]) {
   test(`merges four corroborating sources when Yandex is ${label}`, async () => {
     const config = await loadConfig();
