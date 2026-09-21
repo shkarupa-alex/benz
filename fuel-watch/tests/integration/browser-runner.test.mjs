@@ -507,3 +507,29 @@ test("a stale pid file whose process is gone is not reported as an orphan", asyn
   assert.deepEqual(await runner.leftoverProcesses(), []);
   await rm(root, { recursive: true, force: true });
 });
+
+// Ownership must survive pid reuse: a command line merely mentioning the string is not an agent-browser process,
+// and a pid we never observed serving this namespace is not ours to signal.
+test("orphan reaping refuses a pid we never observed and a process that only mentions agent-browser", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-own-"));
+  const pidPath = join(root, "namespaces", "fuel-watch-ours", "run", "source.pid");
+  await mkdir(join(root, "namespaces", "fuel-watch-ours", "run"), { recursive: true });
+  const signalled = [];
+  const make = command => new BrowserRunner(config, { exec: async () => okJson({ sessions: [] }), command: process.execPath, namespace: "fuel-watch-ours", stateRoot: root, processControl: { args: async () => command, terminate: (pid, signal) => signalled.push([pid, signal]) } });
+
+  await writeFile(pidPath, "7777\n");
+  const mentions = make("tail -f /Users/alex/.agent-browser/namespaces/fuel-watch-ours/log");
+  assert.deepEqual(await mentions.leftoverProcesses(), [], "a command line that only mentions the path is not our daemon");
+
+  const daemon = make("/opt/homebrew/Cellar/agent-browser/0.38.1/libexec/bin/agent-browser-darwin-arm64");
+  assert.equal((await daemon.leftoverProcesses()).length, 1, "the real daemon executable must still be recognised");
+
+  // Record the pid while the session is ours, then let the file name a different one: that is pid reuse, not an orphan.
+  const recycled = make("/opt/homebrew/Cellar/agent-browser/0.38.1/libexec/bin/agent-browser-darwin-arm64");
+  await recycled.rememberDaemonPid();
+  await writeFile(pidPath, "8888\n");
+  assert.deepEqual(await recycled.reapLeftoverProcesses({ terminate: true }), [], "a pid we never observed must not be signalled");
+  assert.deepEqual(signalled, []);
+  await rm(root, { recursive: true, force: true });
+});

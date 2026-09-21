@@ -1,4 +1,4 @@
-import { area as turfArea, bboxPolygon, booleanPointInPolygon, buffer, convex, featureCollection, kinks, lineString, point, polygon } from "@turf/turf";
+import { area as turfArea, bboxPolygon, booleanPointInPolygon, buffer, convex, featureCollection, kinks, lineString, point, pointOnFeature, polygon } from "@turf/turf";
 import { sha256 } from "./util.mjs";
 
 const AREA_KINDS = new Set(["rectangle", "polygon", "station-anchors", "route-corridor"]);
@@ -33,7 +33,17 @@ export function resolveArea(areaConfig) {
   const squareKm = turfArea(shape) / 1_000_000;
   if (Number.isFinite(areaConfig.maxAreaSquareKm) && squareKm > areaConfig.maxAreaSquareKm) throw new Error(`Area covers ${squareKm.toFixed(1)} km², above the configured limit of ${areaConfig.maxAreaSquareKm} km²`);
   const coordinates = shape.geometry.coordinates[0];
-  return { label: areaConfig.label, polygon: coordinates, areaHash: sha256(coordinates), feature: shape, anchors, squareKm, maxStationCount: Number.isFinite(areaConfig.maxStationCount) ? areaConfig.maxStationCount : undefined };
+  return { label: areaConfig.label, polygon: coordinates, areaHash: sha256(coordinates), feature: shape, anchors, squareKm, interiorPoint: interiorPointOf(shape, coordinates), maxStationCount: Number.isFinite(areaConfig.maxStationCount) ? areaConfig.maxStationCount : undefined };
+}
+
+// A corridor that loops back on itself buffers into a polygon with a hole, and the centroid of its outer ring can
+// land in that hole. The ranking reference point has to be a point that is actually inside the zone.
+function interiorPointOf(shape, closedRing) {
+  const ring = closedRing.length > 1 && closedRing[0][0] === closedRing.at(-1)[0] && closedRing[0][1] === closedRing.at(-1)[1] ? closedRing.slice(0, -1) : closedRing;
+  const centroid = [ring.reduce((sum, value) => sum + value[0], 0) / ring.length, ring.reduce((sum, value) => sum + value[1], 0) / ring.length];
+  if (booleanPointInPolygon(point(centroid), shape, { ignoreBoundary: false })) return centroid;
+  const fallback = pointOnFeature(shape)?.geometry?.coordinates;
+  return Array.isArray(fallback) && fallback.every(Number.isFinite) ? fallback : centroid;
 }
 
 export function isInsideArea(coordinate, resolvedArea, { anchorLabels = [], stationLabel } = {}) {

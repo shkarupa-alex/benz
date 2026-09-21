@@ -2207,8 +2207,8 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize) {
-      if (normalize !== false)
+    function getFullPath(resolver, id = "", normalize2) {
+      if (normalize2 !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -3798,7 +3798,7 @@ var require_fast_uri = __commonJS({
       }
       return decodedScheme;
     }
-    function normalize(uri, options) {
+    function normalize2(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -4169,7 +4169,7 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize,
+      normalize: normalize2,
       resolve: resolve3,
       resolveComponent,
       equal,
@@ -17631,7 +17631,7 @@ var require_d3_geo = __commonJS({
         return +lengthSum;
       }
       var coordinates = [null, null], object = { type: "LineString", coordinates };
-      function distance(a, b) {
+      function distance2(a, b) {
         coordinates[0] = a;
         coordinates[1] = b;
         return length(object);
@@ -17684,15 +17684,15 @@ var require_d3_geo = __commonJS({
         return geometry && containsGeometryType.hasOwnProperty(geometry.type) ? containsGeometryType[geometry.type](geometry, point2) : false;
       }
       function containsPoint(coordinates2, point2) {
-        return distance(coordinates2, point2) === 0;
+        return distance2(coordinates2, point2) === 0;
       }
       function containsLine(coordinates2, point2) {
         var ao, bo, ab4;
         for (var i = 0, n = coordinates2.length; i < n; i++) {
-          bo = distance(coordinates2[i], point2);
+          bo = distance2(coordinates2[i], point2);
           if (bo === 0) return true;
           if (i > 0) {
-            ab4 = distance(coordinates2[i], coordinates2[i - 1]);
+            ab4 = distance2(coordinates2[i], coordinates2[i - 1]);
             if (ab4 > 0 && ao <= ab4 && bo <= ab4 && (ao + bo - ab4) * (1 - Math.pow((ao - bo) / ab4, 2)) < epsilon22 * ab4)
               return true;
           }
@@ -18775,7 +18775,7 @@ var require_d3_geo = __commonJS({
       exports2.geoConicEquidistant = conicEquidistant;
       exports2.geoConicEquidistantRaw = conicEquidistantRaw;
       exports2.geoContains = contains;
-      exports2.geoDistance = distance;
+      exports2.geoDistance = distance2;
       exports2.geoEqualEarth = equalEarth;
       exports2.geoEqualEarthRaw = equalEarthRaw;
       exports2.geoEquirectangular = equirectangular;
@@ -19256,6 +19256,13 @@ async function loadConfig(path = defaultConfigPath) {
   config.browser.configPath = resolve2(dirname2(path), config.browser.configPath);
   return config;
 }
+async function validateAreaSpec(area2) {
+  const schema = await readJsonWithPath(defaultSchemaPath);
+  const ajv = new import__.default({ allErrors: true, strict: false });
+  const validate = ajv.compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: "#/$defs/area" });
+  if (!validate(area2)) throw new ConfigError(validate.errors.map(formatAjvError));
+  return area2;
+}
 async function readJsonWithPath(path) {
   try {
     return JSON.parse(await readFile2(path, "utf8"));
@@ -19417,12 +19424,16 @@ function radiansToLength(radians, units = "kilometers") {
   }
   return radians * factor;
 }
-function lengthToRadians(distance, units = "kilometers") {
+function lengthToRadians(distance2, units = "kilometers") {
   const factor = factors[units];
   if (!factor) {
     throw new Error(units + " units is invalid");
   }
-  return distance / factor;
+  return distance2 / factor;
+}
+function degreesToRadians(degrees) {
+  const normalisedDegrees = degrees % 360;
+  return normalisedDegrees * Math.PI / 180;
 }
 function isNumber(num) {
   return !isNaN(num) && num !== null && !Array.isArray(num);
@@ -19451,6 +19462,21 @@ function getGeom(geojson) {
     return geojson.geometry;
   }
   return geojson;
+}
+
+// node_modules/@turf/distance/dist/esm/index.js
+function distance(from, to, options = {}) {
+  var coordinates1 = getCoord(from);
+  var coordinates2 = getCoord(to);
+  var dLat = degreesToRadians(coordinates2[1] - coordinates1[1]);
+  var dLon = degreesToRadians(coordinates2[0] - coordinates1[0]);
+  var lat1 = degreesToRadians(coordinates1[1]);
+  var lat2 = degreesToRadians(coordinates2[1]);
+  var a = Math.pow(Math.sin(dLat / 2), 2) + Math.pow(Math.sin(dLon / 2), 2) * Math.cos(lat1) * Math.cos(lat2);
+  return radiansToLength(
+    2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)),
+    options.units
+  );
 }
 
 // node_modules/@turf/meta/dist/esm/index.js
@@ -20301,8 +20327,8 @@ function bufferFeature(geojson, radius, units, steps) {
   };
   var reader = new GeoJSONReader();
   var geom = reader.read(projected);
-  var distance = radiansToLength(lengthToRadians(radius, units), "meters");
-  var buffered = BufferOp.bufferOp(geom, distance, steps);
+  var distance2 = radiansToLength(lengthToRadians(radius, units), "meters");
+  var buffered = BufferOp.bufferOp(geom, distance2, steps);
   var writer = new GeoJSONWriter();
   buffered = writer.write(buffered);
   if (coordsIsNaN(buffered.coordinates)) return void 0;
@@ -20354,6 +20380,132 @@ function convex(geojson, options = {}) {
     return polygon([convexHull], options.properties);
   }
   return null;
+}
+
+// node_modules/@turf/clone/dist/esm/index.js
+function clone(geojson) {
+  if (!geojson) {
+    throw new Error("geojson is required");
+  }
+  switch (geojson.type) {
+    case "Feature":
+      return cloneFeature(geojson);
+    case "FeatureCollection":
+      return cloneFeatureCollection(geojson);
+    case "Point":
+    case "LineString":
+    case "Polygon":
+    case "MultiPoint":
+    case "MultiLineString":
+    case "MultiPolygon":
+    case "GeometryCollection":
+      return cloneGeometry(geojson);
+    default:
+      throw new Error("unknown GeoJSON type");
+  }
+}
+function cloneFeature(geojson) {
+  const cloned = { type: "Feature" };
+  Object.keys(geojson).forEach((key) => {
+    switch (key) {
+      case "type":
+      case "properties":
+      case "geometry":
+        return;
+      default:
+        cloned[key] = geojson[key];
+    }
+  });
+  cloned.properties = cloneProperties(geojson.properties);
+  if (geojson.geometry == null) {
+    cloned.geometry = null;
+  } else {
+    cloned.geometry = cloneGeometry(geojson.geometry);
+  }
+  return cloned;
+}
+function cloneProperties(properties) {
+  const cloned = {};
+  if (!properties) {
+    return cloned;
+  }
+  Object.keys(properties).forEach((key) => {
+    const value = properties[key];
+    if (typeof value === "object") {
+      if (value === null) {
+        cloned[key] = null;
+      } else if (Array.isArray(value)) {
+        cloned[key] = value.map((item) => {
+          return item;
+        });
+      } else {
+        cloned[key] = cloneProperties(value);
+      }
+    } else {
+      cloned[key] = value;
+    }
+  });
+  return cloned;
+}
+function cloneFeatureCollection(geojson) {
+  const cloned = { type: "FeatureCollection" };
+  Object.keys(geojson).forEach((key) => {
+    switch (key) {
+      case "type":
+      case "features":
+        return;
+      default:
+        cloned[key] = geojson[key];
+    }
+  });
+  cloned.features = geojson.features.map((feature2) => {
+    return cloneFeature(feature2);
+  });
+  return cloned;
+}
+function cloneGeometry(geometry) {
+  const geom = { type: geometry.type };
+  if (geometry.bbox) {
+    geom.bbox = geometry.bbox;
+  }
+  if (geometry.type === "GeometryCollection") {
+    geom.geometries = geometry.geometries.map((g) => {
+      return cloneGeometry(g);
+    });
+    return geom;
+  }
+  geom.coordinates = deepSlice(geometry.coordinates);
+  return geom;
+}
+function deepSlice(coords) {
+  const cloned = coords;
+  if (typeof cloned[0] !== "object") {
+    return cloned.slice();
+  }
+  return cloned.map((coord) => {
+    return deepSlice(coord);
+  });
+}
+
+// node_modules/@turf/explode/dist/esm/index.js
+function explode(geojson) {
+  const points = [];
+  if (geojson.type === "FeatureCollection") {
+    featureEach(geojson, function(feature2) {
+      coordEach(feature2, function(coord) {
+        points.push(point(coord, feature2.properties));
+      });
+    });
+  } else if (geojson.type === "Feature") {
+    coordEach(geojson, function(coord) {
+      points.push(point(coord, geojson.properties));
+    });
+  } else {
+    coordEach(geojson, function(coord) {
+      points.push(point(coord));
+    });
+  }
+  return featureCollection(points);
 }
 
 // node_modules/@turf/kinks/dist/esm/index.js
@@ -20458,6 +20610,142 @@ function lineIntersects(line1StartX, line1StartY, line1EndX, line1EndY, line2Sta
   }
 }
 
+// node_modules/@turf/nearest-point/dist/esm/index.js
+var __defProp = Object.defineProperty;
+var __defProps = Object.defineProperties;
+var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __propIsEnum = Object.prototype.propertyIsEnumerable;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __spreadValues = (a, b) => {
+  for (var prop in b || (b = {}))
+    if (__hasOwnProp.call(b, prop))
+      __defNormalProp(a, prop, b[prop]);
+  if (__getOwnPropSymbols)
+    for (var prop of __getOwnPropSymbols(b)) {
+      if (__propIsEnum.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    }
+  return a;
+};
+var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+function nearestPoint(targetPoint, points, options = {}) {
+  if (!targetPoint) throw new Error("targetPoint is required");
+  if (!points) throw new Error("points is required");
+  let minDist = Infinity;
+  let bestFeatureIndex = 0;
+  featureEach(points, (pt, featureIndex) => {
+    const distanceToPoint = distance(targetPoint, pt, options);
+    if (distanceToPoint < minDist) {
+      bestFeatureIndex = featureIndex;
+      minDist = distanceToPoint;
+    }
+  });
+  const nearestPoint2 = clone(points.features[bestFeatureIndex]);
+  return __spreadProps(__spreadValues({}, nearestPoint2), {
+    properties: __spreadProps(__spreadValues({}, nearestPoint2.properties), {
+      featureIndex: bestFeatureIndex,
+      distanceToPoint: minDist
+    })
+  });
+}
+
+// node_modules/@turf/point-on-feature/dist/esm/index.js
+function pointOnFeature(geojson) {
+  const fc = normalize(geojson);
+  const cent = center(fc);
+  let onSurface = false;
+  let i = 0;
+  while (!onSurface && i < fc.features.length) {
+    const geom = fc.features[i].geometry;
+    let x, y, x1, y1, x2, y2;
+    let onLine = false;
+    if (geom.type === "Point") {
+      if (cent.geometry.coordinates[0] === geom.coordinates[0] && cent.geometry.coordinates[1] === geom.coordinates[1]) {
+        onSurface = true;
+      }
+    } else if (geom.type === "MultiPoint") {
+      let onMultiPoint = false;
+      let k = 0;
+      while (!onMultiPoint && k < geom.coordinates.length) {
+        if (cent.geometry.coordinates[0] === geom.coordinates[k][0] && cent.geometry.coordinates[1] === geom.coordinates[k][1]) {
+          onSurface = true;
+          onMultiPoint = true;
+        }
+        k++;
+      }
+    } else if (geom.type === "LineString") {
+      let k = 0;
+      while (!onLine && k < geom.coordinates.length - 1) {
+        x = cent.geometry.coordinates[0];
+        y = cent.geometry.coordinates[1];
+        x1 = geom.coordinates[k][0];
+        y1 = geom.coordinates[k][1];
+        x2 = geom.coordinates[k + 1][0];
+        y2 = geom.coordinates[k + 1][1];
+        if (pointOnSegment(x, y, x1, y1, x2, y2)) {
+          onLine = true;
+          onSurface = true;
+        }
+        k++;
+      }
+    } else if (geom.type === "MultiLineString") {
+      let j = 0;
+      while (j < geom.coordinates.length) {
+        onLine = false;
+        let k = 0;
+        const line = geom.coordinates[j];
+        while (!onLine && k < line.length - 1) {
+          x = cent.geometry.coordinates[0];
+          y = cent.geometry.coordinates[1];
+          x1 = line[k][0];
+          y1 = line[k][1];
+          x2 = line[k + 1][0];
+          y2 = line[k + 1][1];
+          if (pointOnSegment(x, y, x1, y1, x2, y2)) {
+            onLine = true;
+            onSurface = true;
+          }
+          k++;
+        }
+        j++;
+      }
+    } else if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
+      if (booleanPointInPolygon(cent, geom)) {
+        onSurface = true;
+      }
+    }
+    i++;
+  }
+  if (onSurface) {
+    return cent;
+  } else {
+    const vertices = featureCollection([]);
+    for (let f = 0; f < fc.features.length; f++) {
+      vertices.features = vertices.features.concat(
+        explode(fc.features[f]).features
+      );
+    }
+    return point(nearestPoint(cent, vertices).geometry.coordinates);
+  }
+}
+function normalize(geojson) {
+  if (geojson.type !== "FeatureCollection") {
+    if (geojson.type !== "Feature") {
+      return featureCollection([feature(geojson)]);
+    }
+    return featureCollection([geojson]);
+  }
+  return geojson;
+}
+function pointOnSegment(x, y, x1, y1, x2, y2) {
+  const ab4 = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+  const ap = Math.sqrt((x - x1) * (x - x1) + (y - y1) * (y - y1));
+  const pb = Math.sqrt((x2 - x) * (x2 - x) + (y2 - y) * (y2 - y));
+  return ab4 === ap + pb;
+}
+
 // scripts/lib/geometry.mjs
 var AREA_KINDS = /* @__PURE__ */ new Set(["rectangle", "polygon", "station-anchors", "route-corridor"]);
 function resolveArea(areaConfig) {
@@ -20488,15 +20776,22 @@ function resolveArea(areaConfig) {
   const squareKm = area(shape) / 1e6;
   if (Number.isFinite(areaConfig.maxAreaSquareKm) && squareKm > areaConfig.maxAreaSquareKm) throw new Error(`Area covers ${squareKm.toFixed(1)} km\xB2, above the configured limit of ${areaConfig.maxAreaSquareKm} km\xB2`);
   const coordinates = shape.geometry.coordinates[0];
-  return { label: areaConfig.label, polygon: coordinates, areaHash: sha256(coordinates), feature: shape, anchors, squareKm, maxStationCount: Number.isFinite(areaConfig.maxStationCount) ? areaConfig.maxStationCount : void 0 };
+  return { label: areaConfig.label, polygon: coordinates, areaHash: sha256(coordinates), feature: shape, anchors, squareKm, interiorPoint: interiorPointOf(shape, coordinates), maxStationCount: Number.isFinite(areaConfig.maxStationCount) ? areaConfig.maxStationCount : void 0 };
+}
+function interiorPointOf(shape, closedRing) {
+  const ring = closedRing.length > 1 && closedRing[0][0] === closedRing.at(-1)[0] && closedRing[0][1] === closedRing.at(-1)[1] ? closedRing.slice(0, -1) : closedRing;
+  const centroid = [ring.reduce((sum2, value) => sum2 + value[0], 0) / ring.length, ring.reduce((sum2, value) => sum2 + value[1], 0) / ring.length];
+  if (booleanPointInPolygon(point(centroid), shape, { ignoreBoundary: false })) return centroid;
+  const fallback = pointOnFeature(shape)?.geometry?.coordinates;
+  return Array.isArray(fallback) && fallback.every(Number.isFinite) ? fallback : centroid;
 }
 function isInsideArea(coordinate, resolvedArea, { anchorLabels = [], stationLabel } = {}) {
   if (stationLabel && anchorLabels.some((label) => samePlace(label, stationLabel))) return true;
   return booleanPointInPolygon(point(coordinate), resolvedArea.feature, { ignoreBoundary: false });
 }
 function samePlace(a, b) {
-  const normalize = (value) => String(value).normalize("NFKC").toLowerCase().replaceAll("\u0451", "\u0435").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/^(г\s+)?волгоград\s+/u, "").trim();
-  const aa2 = normalize(a), bb2 = normalize(b);
+  const normalize2 = (value) => String(value).normalize("NFKC").toLowerCase().replaceAll("\u0451", "\u0435").replace(/[^\p{L}\p{N}]+/gu, " ").replace(/^(г\s+)?волгоград\s+/u, "").trim();
+  const aa2 = normalize2(a), bb2 = normalize2(b);
   return Boolean(aa2) && aa2 === bb2;
 }
 function haversineMeters(a, b) {
@@ -20535,6 +20830,7 @@ export {
   defaultSchemaPath,
   defaultBrowserConfigPath,
   loadConfig,
+  validateAreaSpec,
   resolveArea,
   isInsideArea,
   haversineMeters

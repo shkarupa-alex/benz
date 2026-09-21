@@ -19,6 +19,16 @@ export async function loadConfig(path = defaultConfigPath) {
   return config;
 }
 
+// A one-off area arrives from a file that is not the config, so it gets the same schema treatment rather than
+// reaching turf unvalidated and failing with an internal geometry error instead of a named field.
+export async function validateAreaSpec(area) {
+  const schema = await readJsonWithPath(defaultSchemaPath);
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  const validate = ajv.compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: "#/$defs/area" });
+  if (!validate(area)) throw new ConfigError(validate.errors.map(formatAjvError));
+  return area;
+}
+
 async function readJsonWithPath(path) {
   try { return JSON.parse(await readFile(path, "utf8")); }
   catch (error) { throw new ConfigError([`${path}: ${error.message}`]); }

@@ -3,10 +3,10 @@ import {
   isCurrentPositiveObservation,
   isFreshActivity,
   rankAssessments
-} from "./chunk-ZLS72LVM.mjs";
+} from "./chunk-P5HXBZCC.mjs";
 import {
   sha256
-} from "./chunk-NKNPTJQQ.mjs";
+} from "./chunk-OFV4LHTC.mjs";
 import {
   petrolOctaneKey
 } from "./chunk-XKTP5TT3.mjs";
@@ -85,7 +85,7 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
     lines.push(`   \u043E\u043A\u043D\u043E ${formatTime(forecast.windowStartAt)} \u2014 ${formatTime(forecast.windowEndAt)} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ${CONFIDENCE[forecast.confidence]} \xB7 \u0441\u0438\u0433\u043D\u0430\u043B: ${forecastSignalBasis(forecast.signalBasis)} \xB7 \u043E\u0441\u043D\u043E\u0432\u0430: ${forecastBasis(forecast.basis)}, ${forecast.sampleSize} \u044D\u043F.`);
   }
   if (forecasts.length > 0 && forecasts.length < 3) lines.push("\u0414\u043E \u0442\u0440\u0451\u0445 \u043F\u0440\u043E\u0433\u043D\u043E\u0437\u043E\u0432 \u043F\u043E\u043A\u0430 \u043D\u0435 \u0445\u0432\u0430\u0442\u0430\u0435\u0442 7-\u0434\u043D\u0435\u0432\u043D\u043E\u0439 \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0438.");
-  const graded = snapshot.assessments.filter((a) => a.sellsRequestedFamily !== false);
+  const graded = snapshot.assessments.filter((a) => a.sellsRequestedFamily !== false || ["AVAILABLE", "LIKELY_AVAILABLE"].includes(a.verdict));
   const notSoldCount = snapshot.assessments.length - graded.length;
   const conflictCount = graded.filter((a) => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
   const negativeCount = graded.filter((a) => a.verdict === "NOT_AVAILABLE").length;
@@ -130,10 +130,12 @@ function sourceAvailabilityText(snapshot) {
   const attempted = (snapshot.sourceHealth ?? []).filter((h) => h.status !== "DISABLED");
   const contributing = attempted.filter((h) => snapshot.sourceCoverage?.[h.source]);
   const unavailable = attempted.filter((h) => !snapshot.sourceCoverage?.[h.source]);
-  if (!unavailable.length) return `\u0412\u0441\u0435 ${attempted.length} \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A(\u043E\u0432) \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438.`;
+  const degraded = contributing.filter((h) => h.status !== "OK");
+  const partialText = degraded.length ? ` \u041D\u0435\u043F\u043E\u043B\u043D\u043E \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438: ${degraded.map((h) => h.source).join(", ")} \u2014 \u0447\u0430\u0441\u0442\u044C \u0434\u0430\u043D\u043D\u044B\u0445 \u043C\u043E\u0433\u043B\u0430 \u043D\u0435 \u043F\u043E\u043F\u0430\u0441\u0442\u044C \u0432 \u043E\u0446\u0435\u043D\u043A\u0443.` : "";
+  if (!unavailable.length) return `\u0412\u0441\u0435 ${attempted.length} \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A(\u043E\u0432) \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438.${partialText}`;
   const reasons = unavailable.map((h) => `${h.source} \u2014 ${SOURCE_FAILURE[h.code] ?? SOURCE_FAILURE[h.status] ?? "\u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B"}`).join("; ");
   if (!contributing.length) return `\u041D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${reasons}. \u0414\u0430\u043D\u043D\u044B\u0445 \u0434\u043B\u044F \u043E\u0446\u0435\u043D\u043A\u0438 \u043D\u0430\u043B\u0438\u0447\u0438\u044F \u043D\u0435\u0442; \u044D\u0442\u043E \u043D\u0435 \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442, \u0447\u0442\u043E \u0431\u0435\u043D\u0437\u0438\u043D\u0430 \u043D\u0435\u0442.`;
-  return `\u041D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${reasons}. \u041E\u0446\u0435\u043D\u043A\u0430 \u043D\u0438\u0436\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D\u0430 \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E \u043E\u0441\u0442\u0430\u0432\u0448\u0438\u043C\u0441\u044F: ${contributing.map((h) => h.source).join(", ")}.`;
+  return `\u041D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${reasons}. \u041E\u0446\u0435\u043D\u043A\u0430 \u043D\u0438\u0436\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D\u0430 \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E \u043E\u0441\u0442\u0430\u0432\u0448\u0438\u043C\u0441\u044F: ${contributing.map((h) => h.source).join(", ")}.${partialText}`;
 }
 function changeText(c) {
   if (c.type === "SCOPE_CHANGED") return c.message;

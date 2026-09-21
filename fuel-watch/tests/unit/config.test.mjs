@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultConfigPath, loadConfig } from "../../scripts/lib/config.mjs";
+import { defaultConfigPath, loadConfig, validateAreaSpec } from "../../scripts/lib/config.mjs";
 
 test("config loading rejects two manual members from the same source", async () => {
   const directory = await mkdtemp(join(tmpdir(), "fuel-watch-config-"));
@@ -16,4 +16,13 @@ test("config loading rejects two manual members from the same source", async () 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// A one-off area file is not the config, so it gets the same schema treatment instead of crashing inside turf.
+test("a one-off area spec is validated against the same schema as the configured zone", async () => {
+  const corridor = { kind: "route-corridor", label: "Коридор", waypoints: [[44.49, 48.72], [44.60, 48.80]], corridorWidthMeters: 4000 };
+  assert.deepEqual(await validateAreaSpec(corridor), corridor);
+  await assert.rejects(() => validateAreaSpec({ kind: "route-corridor", label: "Коридор", waypoints: [[44.49, 48.72], [44.60, 48.80]] }), error => error.name === "ConfigError" && error.errors.join(" ").includes("corridorWidthMeters"));
+  await assert.rejects(() => validateAreaSpec({ kind: "не-такой", label: "x" }), error => error.name === "ConfigError");
+  await assert.rejects(() => validateAreaSpec({ kind: "route-corridor", label: "Коридор", waypoints: [[44.49, 48.72]], corridorWidthMeters: 4000 }), error => error.name === "ConfigError");
 });

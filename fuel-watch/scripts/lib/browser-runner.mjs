@@ -26,6 +26,22 @@ export class BrowserRunner {
     this.expectedUrl = undefined;
     this.stateRoot = options.stateRoot ?? agentBrowserStateRoot();
     this.processControl = options.processControl ?? defaultProcessControl;
+    this.observedDaemonPids = new Map();
+  }
+
+  // Recorded while the session is demonstrably ours, so reaping can require that the pid left behind is the very
+  // one we saw serving this namespace. Without it a recycled pid landing on another session's daemon would pass.
+  async rememberDaemonPid(namespace = this.namespace) {
+    if (this.observedDaemonPids.has(namespace)) return;
+    const pid = await this.readDaemonPid(namespace);
+    if (pid) this.observedDaemonPids.set(namespace, pid);
+  }
+
+  async readDaemonPid(namespace) {
+    try {
+      const pid = Number(String(await readFile(join(this.stateRoot, "namespaces", namespace, "run", `${this.sessionName}.pid`), "utf8")).trim());
+      return Number.isInteger(pid) && pid > 1 && pid !== process.pid ? pid : undefined;
+    } catch { return undefined; }
   }
 
   // agent-browser leaves a per-namespace daemon pid file and removes it on a clean close, so a pid file that
@@ -36,10 +52,10 @@ export class BrowserRunner {
   async leftoverProcesses() {
     const out = [];
     for (const namespace of this.namespaceHistory) {
-      let pid;
-      try { pid = Number(String(await readFile(join(this.stateRoot, "namespaces", namespace, "run", `${this.sessionName}.pid`), "utf8")).trim()); }
-      catch { continue; }
-      if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) continue;
+      const pid = await this.readDaemonPid(namespace);
+      if (!pid) continue;
+      const observed = this.observedDaemonPids.get(namespace);
+      if (observed !== undefined && observed !== pid) continue;
       const command = await this.processControl.args(pid);
       if (!isAgentBrowserProcess(command)) continue;
       out.push({ namespace, sessionName: this.sessionName, pid, command: clampText(command, 200) });
@@ -77,6 +93,7 @@ export class BrowserRunner {
 
   async ensureRunSession() {
     if (!this.probed) await this.probe();
+    await this.rememberDaemonPid();
     return { namespace: this.namespace, sessionName: this.sessionName };
   }
 
@@ -177,14 +194,25 @@ export class BrowserRunner {
   // person deals with it in the browser window, re-reads the page, and gives up when the budget runs out. Read-only
   // by construction: nothing here types, clicks or submits, and a failing read ends the wait instead of retrying.
   async awaitManualChallengeResolution({ waitMs, pollMs = 5000, challengePattern = CHALLENGE_PATTERN } = {}) {
+    const visible = async () => {
+      let probe;
+      try { probe = await this.probePage(); } catch { return undefined; }
+      return challengePattern.test(`${probe.url} ${probe.textPrefix}`);
+    };
+    // An adapter can flag a challenge its extractor saw in the page's own data, which leaves nothing for us to
+    // watch. Without a visible marker we cannot tell when it is gone, so we refuse to hold the window and never
+    // report the challenge as cleared; a blind retry after a fixed pause would be exactly the wrong guess.
+    const initial = await visible();
+    if (initial === undefined) return "UNREADABLE";
+    if (!initial) return "NOT_OBSERVABLE";
     const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, Math.max(0, Math.min(pollMs, deadline - Date.now()))));
-      let probe;
-      try { probe = await this.probePage(); } catch { return false; }
-      if (!challengePattern.test(`${probe.url} ${probe.textPrefix}`)) return true;
+      const still = await visible();
+      if (still === undefined) return "UNREADABLE";
+      if (!still) return "CLEARED";
     }
-    return false;
+    return "TIMED_OUT";
   }
 
   async evalJson(expression) {
@@ -325,7 +353,9 @@ export async function execute(command, args, { env, timeoutMs = 25000, input } =
 }
 
 function agentBrowserStateRoot(env = process.env) { return env.AGENT_BROWSER_HOME ? resolve(env.AGENT_BROWSER_HOME) : join(env.HOME || homedir(), ".agent-browser"); }
-function isAgentBrowserProcess(command) { return typeof command === "string" && /agent-browser/.test(command); }
+// Matched against the executable path of some argument, not the whole command line: "tail -f ~/.agent-browser/log"
+// mentions the string but is not an agent-browser process and must never be signalled.
+function isAgentBrowserProcess(command) { return String(command ?? "").trim().split(/\s+/).some(token => /(?:^|\/)agent-browser(?:-[\w.-]+)?$/.test(token)); }
 const defaultProcessControl = {
   args: pid => new Promise(resolvePromise => {
     const child = spawn("ps", ["-o", "args=", "-p", String(pid)], { stdio: ["ignore", "pipe", "ignore"] });
@@ -336,7 +366,8 @@ const defaultProcessControl = {
   }),
   terminate: (pid, signal) => { process.kill(pid, signal); }
 };
-const CHALLENGE_PATTERN = /captcha|showcaptcha|challenge|подтвердите,? что вы не робот|провер.{0,20}(?:робот|человек)/iu;
+// Kept in step with the adapters' own challenge detection, including the 2GIS "robot museum" landing page.
+const CHALLENGE_PATTERN = /captcha|showcaptcha|challenge|\/museum|музей\s+роботов|подтвердите,? что вы не робот|провер.{0,20}(?:робот|человек)/iu;
 function unwrapJson(json) {
   if (json == null) return null;
   const value = Object.hasOwn(json, "data") ? json.data : json;

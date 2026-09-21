@@ -5,10 +5,10 @@ import {
   isFreshActivity,
   normalizeQueues,
   rankAssessments
-} from "./chunks/chunk-ZLS72LVM.mjs";
+} from "./chunks/chunk-P5HXBZCC.mjs";
 import {
   BrowserRunner
-} from "./chunks/chunk-JQS5FQKK.mjs";
+} from "./chunks/chunk-67NBBQ32.mjs";
 import {
   ensureUserConfig,
   historyPath,
@@ -27,8 +27,9 @@ import {
   resolveArea,
   sha256,
   stableJson,
+  validateAreaSpec,
   writeJsonAtomic
-} from "./chunks/chunk-NKNPTJQQ.mjs";
+} from "./chunks/chunk-OFV4LHTC.mjs";
 import {
   ADDRESS_UNIT_KINDS,
   brandLabel,
@@ -2132,7 +2133,7 @@ function nextMoscowMinute(value, nowMs) {
 }
 
 // scripts/lib/identity.mjs
-function reconcileStations(stations, config, previousSnapshot, diagnostics = []) {
+function reconcileStations(stations, config, previousSnapshot, diagnostics = [], { useSpatialIndex = true } = {}) {
   const identity = { ...config.identity, brandAliases: compileBrandAliases(config.identity.brandAliases), streetDictionary: compileStreetDictionary(config.identity.streetDictionary) };
   const overrides = overrideIndex(config.identity.manualOverrides);
   const groups = /* @__PURE__ */ new Map();
@@ -2149,7 +2150,7 @@ function reconcileStations(stations, config, previousSnapshot, diagnostics = [])
   let merged;
   do {
     merged = false;
-    const neighbors = spatialNeighbors(values, identity);
+    const neighbors = spatialNeighbors(values, identity, useSpatialIndex);
     outer: for (let i = 0; i < values.length; i++) {
       if (!values[i]) continue;
       for (const j of neighbors(i)) {
@@ -2157,9 +2158,9 @@ function reconcileStations(stations, config, previousSnapshot, diagnostics = [])
         const a = values[i], b = values[j];
         if (!a || !b || sourcesOverlap(a, b) || conflictingManualKeys(a, b)) continue;
         const score = groupMatchScore(a, b, identity);
-        if (score < 0.82) continue;
+        if (!(score >= 0.82)) continue;
         const runnerUp = Math.max(secondBestScore(values, i, j, identity, neighbors), secondBestScore(values, j, i, identity, neighbors));
-        if (score - runnerUp < identity.ambiguityMargin) {
+        if (!(score - runnerUp >= identity.ambiguityMargin)) {
           recordDiagnostic(diagnostics, { kind: "AMBIGUOUS_MATCH", members: [...a.members, ...b.members].map((member) => `${member.source}:${member.sourceStationId}`).sort(), score: Number(score.toFixed(4)), runnerUpScore: Number(runnerUp.toFixed(4)) });
           continue;
         }
@@ -2181,7 +2182,9 @@ function recordDiagnostic(diagnostics, entry) {
 function stableDiagnosticKey(entry) {
   return `${entry.kind}|${entry.members?.join(",") ?? `${entry.source}:${entry.sourceStationId}`}`;
 }
-function spatialNeighbors(values, identity) {
+function spatialNeighbors(values, identity, enabled = true) {
+  const everyLiveIndex = values.map((group, index) => group ? index : -1).filter((index) => index >= 0);
+  if (!enabled) return () => everyLiveIndex;
   const coordinates = values.flatMap((group) => group ? group.members.map((member) => member.coordinate) : []);
   const maxAbsLat = Math.max(0, ...coordinates.map((coordinate) => Math.abs(Number(coordinate?.[1]))).filter(Number.isFinite));
   const latCell = identity.maxCoordinateDriftMeters / 111320;
@@ -2212,9 +2215,8 @@ function spatialNeighbors(values, identity) {
       cells.set(key, bucket);
     }
   }
-  const everyIndex = values.map((group, index) => group ? index : -1).filter((index) => index >= 0);
   return (index) => {
-    if (!keysByIndex.has(index)) return everyIndex;
+    if (!keysByIndex.has(index)) return everyLiveIndex;
     const out = new Set(unindexed);
     for (const key of keysByIndex.get(index)) {
       const [x, y] = key.split(":").map(Number);
@@ -2432,7 +2434,7 @@ function compactAssessment(value) {
 // scripts/collect.mjs
 var adapters = {
   yandex: () => import("./chunks/yandex-C3MTKDP7.mjs"),
-  gdebenz: () => import("./chunks/gdebenz-WR7LYKSI.mjs"),
+  gdebenz: () => import("./chunks/gdebenz-VFQFX42Q.mjs"),
   "2gis": () => import("./chunks/twogis-IW2I2NAG.mjs"),
   benzonavt: () => import("./chunks/benzonavt-LZ42GKJV.mjs")
 };
@@ -2456,8 +2458,9 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
     try {
       return await runner.close(deadline);
     } finally {
+      const graceMs = Math.min(3e3, Math.max(250, deadline - cleanupNow()));
       try {
-        const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans });
+        const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans, graceMs });
         if (reaped?.length) orphanProcesses.push(...reaped);
       } catch (error) {
         orphanProcesses.push({ namespace: runner.namespace, outcome: `FAILED: ${error.message}` });
@@ -2530,7 +2533,6 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
   const stations = results.flatMap((r) => r.stations);
   const identityDiagnostics = [];
   const merged = reconcileStations(stations, config, previous, identityDiagnostics);
-  if (Number.isFinite(area.maxStationCount) && merged.length > area.maxStationCount) throw Object.assign(new Error(`Area resolved ${merged.length} stations, above its limit of ${area.maxStationCount}; narrow the area or raise maxStationCount`), { code: "AREA_STATION_LIMIT" });
   const sourceGroups = Object.fromEntries(config.sources.map((s) => [s.id, s.provenanceGroup]));
   const requestedOctane = [...new Set(config.requestedProducts.products.map((product) => petrolOctaneKey(product)).filter(Boolean))];
   const assessments = [];
@@ -2540,11 +2542,12 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
     const queueObservations = results.flatMap((r) => r.queues).filter((o) => memberKeys.has(`${o.source}:${o.sourceStationId}`));
     const activity = deriveActivityEvidence(results.flatMap((r) => r.activity).filter((o) => memberKeys.has(`${o.source}:${o.sourceStationId}`)), config, fetchedAt);
     const assessment = assessRequestedUnion({ observations, activity, config, sourceGroups, now });
-    const anchorLabels = config.area.kind === "station-anchors" ? config.area.anchors.map((a) => a.label) : [];
+    const anchorLabels = (area.anchors ?? []).map((a) => a.label);
     if (!isInsideArea(station.coordinate, area, { anchorLabels, stationLabel: station.address })) continue;
     assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now), ...stationCatalogue(station.members, requestedOctane) });
   }
-  const referencePoint = config.ranking.referencePoint ?? centroid(area.polygon);
+  if (Number.isFinite(area.maxStationCount) && assessments.length > area.maxStationCount) throw Object.assign(new Error(`Area contains ${assessments.length} stations, above its limit of ${area.maxStationCount}; narrow the area or raise maxStationCount`), { code: "AREA_STATION_LIMIT" });
+  const referencePoint = config.ranking.referencePoint ?? area.interiorPoint;
   const adapterContractHash = await computeAdapterContractHash();
   enforceCompleteness(results, previous, area.areaHash, adapterContractHash, fetchedAt, warnings);
   const snapshot = {
@@ -2583,11 +2586,11 @@ function challengeHandoverPolicy(config, records) {
   return {
     mayOffer: () => enabled && used < policy.maxPerRun,
     hold: async (source, runner) => {
-      used += 1;
       const record = { source, namespace: runner.namespace, sessionName: runner.sessionName, url: runner.expectedUrl, waitSeconds: policy.waitSeconds, requestedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      const resolved = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1e3, pollMs: policy.pollSeconds * 1e3 });
-      records.push({ ...record, resolved, outcome: resolved ? "SOLVED_BY_USER" : "TIMED_OUT" });
-      return resolved;
+      const outcome = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1e3, pollMs: policy.pollSeconds * 1e3 });
+      if (["CLEARED", "TIMED_OUT"].includes(outcome)) used += 1;
+      records.push({ ...record, outcome });
+      return outcome === "CLEARED";
     }
   };
 }
@@ -2597,16 +2600,12 @@ function stationCatalogue(members, requestedOctane) {
   const limits = members.flatMap((member) => (member.limits ?? []).map((limit) => ({ ...limit, source: member.source })));
   return { assortment, sellsRequestedFamily: assortment ? requestedOctane.some((octane) => assortment.includes(octane)) : void 0, limits: limits.length ? limits : void 0 };
 }
-function centroid(points) {
-  const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points;
-  return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length];
-}
 function isNetworkControlsHealth(health) {
   return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message));
 }
 var moduleDir = dirname2(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
-  if (true) return "d0714d766bc12160b00e9e9fd09c6e2fc600f24b97ca014e2778fd5f5897cb43";
+  if (true) return "75a5f4d887ca1cd776a4a846f5cf8098760364a693c2172c99ec069c43507296";
   const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"];
   return sha256((await Promise.all(names.map((name) => readFile2(resolve2(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
 }
@@ -2653,7 +2652,7 @@ async function main() {
   };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  const areaOverride = args.area ? areaSpec(await readJson(args.area)) : void 0;
+  const areaOverride = args.area ? await validateAreaSpec(areaSpec(await readJson(args.area))) : void 0;
   if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
   const result2 = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: areaOverride ? void 0 : previousPath, historyPath: areaOverride ? void 0 : args.history ?? await ensureDefaultHistoryPath(), areaOverride });
   if (!areaOverride && resolve2(args.output ?? "") !== resolve2(statePath)) await writeJsonAtomic(statePath, result2.snapshot);
@@ -2690,7 +2689,9 @@ if (isMainModule(import.meta.url)) main().catch((error) => {
   process.exitCode = 2;
 });
 export {
+  challengeHandoverPolicy,
   collectSnapshot,
   enforceCompleteness,
-  nextCoverageBaselines
+  nextCoverageBaselines,
+  stationCatalogue
 };

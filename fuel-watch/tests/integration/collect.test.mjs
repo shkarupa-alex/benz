@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectSnapshot } from "../../scripts/collect.mjs";
+import { challengeHandoverPolicy, collectSnapshot, stationCatalogue } from "../../scripts/collect.mjs";
 import { BrowserRunner } from "../../scripts/lib/browser-runner.mjs";
 import { loadConfig } from "../../scripts/lib/config.mjs";
 
@@ -209,7 +209,7 @@ test("challenge handover is off by default and never touches the page when it is
     open: async url => { retries++; return { finalUrl: challengeSolved ? url : "https://2gis.ru/captcha", pageTextPrefix: challengeSolved ? "АЗС" : "captcha" }; },
     waitReady: async () => {},
     evalJson: async () => ({ stations: [], observations: [], queues: [], activity: [], schemaChanged: true }),
-    awaitManualChallengeResolution: async () => { challengeSolved = true; return true; },
+    awaitManualChallengeResolution: async () => { challengeSolved = true; return "CLEARED"; },
     close: async () => ({ sessionsRemaining: 0, warnings: [] })
   });
 
@@ -226,9 +226,69 @@ test("challenge handover is off by default and never touches the page when it is
   const on = await collectSnapshot({ configPath, browserFactory: () => makeRunner(), now: new Date("2026-09-21T10:00:00Z") });
   const records = on.snapshot.runtime.challengeHandovers;
   assert.equal(records.length, 1, "maxPerRun must cap handovers at one per run");
-  assert.equal(records[0].outcome, "SOLVED_BY_USER");
+  assert.equal(records[0].outcome, "CLEARED");
   assert.equal(records[0].waitSeconds, 10);
   await rm(dir, { recursive: true, force: true });
+});
+
+// CLEARED says the challenge page is gone, not that a person made it go; an unobservable one must not be claimed.
+test("a handover we could not observe is reported as such and does not spend the per-run budget", async () => {
+  const records = [];
+  const config = { browser: { headed: true, challengeHandover: { enabled: true, waitSeconds: 10, pollSeconds: 2, maxPerRun: 1 } } };
+  const policy = challengeHandoverPolicy(config, records);
+  const runner = outcome => ({ namespace: "ns", sessionName: "source", expectedUrl: "https://2gis.ru/", awaitManualChallengeResolution: async () => outcome });
+  assert.equal(await policy.hold("2gis", runner("NOT_OBSERVABLE")), false);
+  assert.equal(await policy.hold("2gis", runner("UNREADABLE")), false);
+  assert.equal(policy.mayOffer(), true, "an unobservable challenge must not consume maxPerRun");
+  assert.deepEqual(records.map(value => value.outcome), ["NOT_OBSERVABLE", "UNREADABLE"]);
+  assert.ok(records.every(value => !("resolved" in value)), "no field may imply a human acted");
+  assert.equal(await policy.hold("2gis", runner("TIMED_OUT")), false);
+  assert.equal(policy.mayOffer(), false, "a held-but-unsolved handover does consume maxPerRun");
+});
+
+// A headless run has no window to hand over, so the offer must never be made there whatever the config says.
+test("challenge handover is refused without a visible window", () => {
+  const withHeaded = headed => challengeHandoverPolicy({ browser: { headed, challengeHandover: { enabled: true, waitSeconds: 10, pollSeconds: 2, maxPerRun: 1 } } }, []);
+  assert.equal(withHeaded(true).mayOffer(), true);
+  assert.equal(withHeaded(false).mayOffer(), false);
+  assert.equal(challengeHandoverPolicy({ browser: { headed: true } }, []).mayOffer(), false);
+});
+
+// The catalogue is a union across only the members that publish one, and absent stays unknown rather than negative.
+test("collect merges the grade catalogue and litre limits across the sources of one station", async () => {
+  const members = [
+    { source: "2gis", sourceStationId: "a", assortment: ["92", "95"], limits: [{ gradeLabel: "AI_95", liters: 40 }] },
+    { source: "benzonavt", sourceStationId: "b", assortment: ["95", "98"], limits: [{ gradeLabel: "95", liters: 20 }] },
+    { source: "yandex", sourceStationId: "c" }
+  ];
+  const merged = stationCatalogue(members, ["95"]);
+  assert.deepEqual(merged.assortment, ["92", "95", "98"]);
+  assert.equal(merged.sellsRequestedFamily, true);
+  assert.deepEqual(merged.limits.map(limit => [limit.source, limit.liters]), [["2gis", 40], ["benzonavt", 20]]);
+
+  const dieselOnly = stationCatalogue([{ source: "2gis", sourceStationId: "a", assortment: [] }], ["95"]);
+  assert.deepEqual(dieselOnly.assortment, []);
+  assert.equal(dieselOnly.sellsRequestedFamily, false, "a published catalogue without AI-95 means the station does not sell it");
+
+  const unknown = stationCatalogue([{ source: "yandex", sourceStationId: "c" }], ["95"]);
+  assert.equal(unknown.assortment, undefined);
+  assert.equal(unknown.sellsRequestedFamily, undefined, "no published catalogue must stay unknown, never negative");
+  assert.equal(unknown.limits, undefined);
+});
+
+// A one-off zone must not inherit the standing zone's anchor exemptions, which bypass the polygon test entirely.
+test("a one-off area does not admit stations exempted by the configured zone's anchors", async () => {
+  const runner = {
+    namespace: "fixture-anchor", probe: async () => ({}),
+    open: async url => ({ finalUrl: url, pageTextPrefix: "АЗС" }), waitReady: async () => {},
+    evalJson: async () => ({ stations: [{ id: "far", coordinate: [44.20, 48.50], title: "АЗС", address: "Череповецкая ул., 5А" }, { id: "near", coordinate: [44.50, 48.74], title: "АЗС", address: "ул. Рядом, 1" }], observations: [], queues: [], activity: [] }),
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  };
+  const corridor = { kind: "route-corridor", label: "Разовый коридор", waypoints: [[44.49, 48.72], [44.60, 48.80]], corridorWidthMeters: 4000 };
+  const oneOff = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: corridor });
+  assert.deepEqual(oneOff.snapshot.assessments.map(a => a.address), ["ул. Рядом, 1"], "the configured zone's anchor label must not exempt a station 30 km outside the corridor");
+  const configured = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z") });
+  assert.ok(configured.snapshot.assessments.some(a => a.address === "Череповецкая ул., 5А"), "the configured zone still exempts its own anchors");
 });
 
 // Waiting is read-only by construction: the runner may look at the page, never type, click or submit on it.
@@ -243,9 +303,40 @@ test("waiting for a human to clear a challenge only reads the page and gives up 
     return { exitCode: 0, stdout: JSON.stringify({ data: { sessions: [] } }), stderr: "" };
   };
   const runner = new BrowserRunner(config, { exec, command: process.execPath });
-  assert.equal(await runner.awaitManualChallengeResolution({ waitMs: 3000, pollMs: 100 }), true);
+  assert.equal(await runner.awaitManualChallengeResolution({ waitMs: 3000, pollMs: 100 }), "CLEARED");
   assert.ok(commands.every(args => !args.some(value => ["click", "type", "fill", "press", "submit", "solve"].includes(value))), "the wait must never act on the page");
 
   const stuck = new BrowserRunner(config, { exec: async (command, args) => args.includes("url") ? { exitCode: 0, stdout: JSON.stringify({ data: { url: "https://2gis.ru/captcha" } }), stderr: "" } : { exitCode: 0, stdout: JSON.stringify({ data: { pageTitle: "", pageText: "captcha", selectorReady: false } }), stderr: "" }, command: process.execPath });
-  assert.equal(await stuck.awaitManualChallengeResolution({ waitMs: 300, pollMs: 100 }), false);
+  assert.equal(await stuck.awaitManualChallengeResolution({ waitMs: 300, pollMs: 100 }), "TIMED_OUT");
+});
+
+// An adapter can flag a challenge from the page's own data; with no visible marker we must not claim it cleared.
+test("an unobservable challenge is never reported as cleared after a blind pause", async () => {
+  const config = await loadConfig();
+  const page = (url, text) => async (command, args) => ({ exitCode: 0, stdout: JSON.stringify({ data: args.includes("url") ? { url } : { pageTitle: "", pageText: text, selectorReady: true } }), stderr: "" });
+  const invisible = new BrowserRunner(config, { exec: page("https://benzonavt.ru/", "Бензонавт"), command: process.execPath });
+  const startedAt = Date.now();
+  assert.equal(await invisible.awaitManualChallengeResolution({ waitMs: 5000, pollMs: 100 }), "NOT_OBSERVABLE");
+  assert.ok(Date.now() - startedAt < 1000, "an unobservable challenge must return at once rather than waiting out the budget");
+
+  // 2GIS answers automation with its "robot museum" landing page, which the adapters treat as a challenge.
+  const museum = new BrowserRunner(config, { exec: page("https://2gis.ru/museum", "Вы попали в музей роботов"), command: process.execPath });
+  assert.equal(await museum.awaitManualChallengeResolution({ waitMs: 250, pollMs: 100 }), "TIMED_OUT");
+
+  const broken = new BrowserRunner(config, { exec: async () => ({ exitCode: 1, stdout: "", stderr: "session gone" }), command: process.execPath });
+  assert.equal(await broken.awaitManualChallengeResolution({ waitMs: 250, pollMs: 100 }), "UNREADABLE");
+});
+
+// The ceiling must measure the zone, not the sources: gdebenz searches a radius and 2GIS answers city-wide.
+test("the one-off station ceiling counts only stations inside the zone", async () => {
+  const runner = {
+    namespace: "fixture-ceiling", probe: async () => ({}),
+    open: async url => ({ finalUrl: url, pageTextPrefix: "АЗС" }), waitReady: async () => {},
+    evalJson: async () => ({ stations: [{ id: "in", coordinate: [44.50, 48.74], title: "АЗС", address: "ул. Внутри, 1" }, ...Array.from({ length: 30 }, (value, index) => ({ id: `out-${index}`, coordinate: [44.00 + index * 0.01, 48.20], title: "АЗС", address: `ул. Снаружи, ${index}` }))], observations: [], queues: [], activity: [] }),
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  };
+  const corridor = { kind: "route-corridor", label: "Коридор", waypoints: [[44.49, 48.72], [44.60, 48.80]], corridorWidthMeters: 4000, maxStationCount: 5 };
+  const result = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: corridor });
+  assert.equal(result.snapshot.assessments.length, 1, "31 enumerated stations, one inside the corridor, ceiling of 5");
+  await assert.rejects(() => collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: { ...corridor, maxStationCount: 0.5 } }), error => error.code === "AREA_STATION_LIMIT");
 });

@@ -2,7 +2,7 @@ import { haversineMeters } from "./geometry.mjs";
 import { ADDRESS_UNIT_KINDS, brandLabel, compileBrandAliases, compileStreetDictionary, isAddressUnitValue, normalizeAddress, normalizeBrand, normalizeComparableBrand, normalizeText } from "./normalize.mjs";
 import { sha256 } from "./util.mjs";
 
-export function reconcileStations(stations, config, previousSnapshot, diagnostics = []) {
+export function reconcileStations(stations, config, previousSnapshot, diagnostics = [], { useSpatialIndex = true } = {}) {
   const identity = { ...config.identity, brandAliases: compileBrandAliases(config.identity.brandAliases), streetDictionary: compileStreetDictionary(config.identity.streetDictionary) };
   const overrides = overrideIndex(config.identity.manualOverrides);
   const groups = new Map();
@@ -19,7 +19,7 @@ export function reconcileStations(stations, config, previousSnapshot, diagnostic
   let merged;
   do {
     merged = false;
-    const neighbors = spatialNeighbors(values, identity);
+    const neighbors = spatialNeighbors(values, identity, useSpatialIndex);
     outer: for (let i = 0; i < values.length; i++) {
       if (!values[i]) continue;
       for (const j of neighbors(i)) {
@@ -27,9 +27,11 @@ export function reconcileStations(stations, config, previousSnapshot, diagnostic
         const a = values[i], b = values[j];
         if (!a || !b || sourcesOverlap(a, b) || conflictingManualKeys(a, b)) continue;
         const score = groupMatchScore(a, b, identity);
-        if (score < 0.82) continue;
+        // Negated comparisons so a NaN score (an unusable coordinate makes the distance NaN) fails closed instead
+        // of slipping past both thresholds: NaN < 0.82 and NaN >= 0.82 are both false.
+        if (!(score >= 0.82)) continue;
         const runnerUp = Math.max(secondBestScore(values, i, j, identity, neighbors), secondBestScore(values, j, i, identity, neighbors));
-        if (score - runnerUp < identity.ambiguityMargin) {
+        if (!(score - runnerUp >= identity.ambiguityMargin)) {
           recordDiagnostic(diagnostics, { kind: "AMBIGUOUS_MATCH", members: [...a.members, ...b.members].map(member => `${member.source}:${member.sourceStationId}`).sort(), score: Number(score.toFixed(4)), runnerUpScore: Number(runnerUp.toFixed(4)) });
           continue;
         }
@@ -56,7 +58,10 @@ function stableDiagnosticKey(entry) { return `${entry.kind}|${entry.members?.joi
 // Any pair farther apart than maxCoordinateDriftMeters already scores -Infinity, and secondBestScore floors at 0,
 // so restricting both scans to spatial neighbours changes which pairs are examined, never which pair wins. Groups
 // without a usable coordinate keep the full scan, because distance alone never rejects them.
-function spatialNeighbors(values, identity) {
+function spatialNeighbors(values, identity, enabled = true) {
+  const everyLiveIndex = values.map((group, index) => group ? index : -1).filter(index => index >= 0);
+  // Turning the index off must leave exactly the exhaustive scan behind, which is what the equivalence test compares against.
+  if (!enabled) return () => everyLiveIndex;
   const coordinates = values.flatMap(group => group ? group.members.map(member => member.coordinate) : []);
   const maxAbsLat = Math.max(0, ...coordinates.map(coordinate => Math.abs(Number(coordinate?.[1]))).filter(Number.isFinite));
   const latCell = identity.maxCoordinateDriftMeters / 111320;
@@ -80,9 +85,8 @@ function spatialNeighbors(values, identity) {
     keysByIndex.set(index, keys);
     for (const key of keys) { const bucket = cells.get(key) ?? new Set(); bucket.add(index); cells.set(key, bucket); }
   }
-  const everyIndex = values.map((group, index) => group ? index : -1).filter(index => index >= 0);
   return index => {
-    if (!keysByIndex.has(index)) return everyIndex;
+    if (!keysByIndex.has(index)) return everyLiveIndex;
     const out = new Set(unindexed);
     for (const key of keysByIndex.get(index)) {
       const [x, y] = key.split(":").map(Number);

@@ -496,3 +496,38 @@ test("an absent or empty grade catalogue is left unknown rather than read as an 
   assert.deepEqual(petrolAssortment(["dt","lpg"]),[]);
   assert.deepEqual(petrolAssortment(["АИ-95","аи 92"]),["92","95"]);
 });
+
+// A diesel-only side is an enumeration, not silence: keying the check off the petrol lists missed these entirely.
+test("gdebenz flags a conflict even when one side enumerates no petrol at all", async () => {
+  const run = async (detail, fuelsNow) => {
+    const rows=[{osm_id:"811",brand:"Лукойл",name:"Лукойл",addr:"ул. Тестовая, 3",lat:48.72,lon:44.49,status:"yes",detail,fuels_now:fuelsNow,last_at:"2026-09-21 12:00:09"}];
+    return Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+  };
+  const hiddenOnly=await run("ДТ","95,ДТ");
+  assert.equal(hiddenOnly.observations[0].normalizedStatus,"UNCERTAIN");
+  assert.deepEqual(hiddenOnly.observations[0].conflict.visibleGrades,[]);
+  assert.deepEqual(hiddenOnly.observations[0].conflict.hiddenGrades,["95"]);
+  const visibleOnly=await run("95, ДТ","ДТ");
+  assert.equal(visibleOnly.observations[0].normalizedStatus,"UNCERTAIN");
+  assert.deepEqual(visibleOnly.observations[0].conflict.hiddenGrades,[]);
+  const agreeing=await run("92, 95, ДТ","92,95,ДТ");
+  assert.equal(agreeing.observations[0].normalizedStatus,"IN_STOCK");
+  assert.equal(agreeing.observations[0].conflict,undefined);
+  // Genuine silence on one side is still not a conflict: an empty field says nothing to disagree with.
+  const silent=await run("","92,95,ДТ");
+  assert.equal(silent.observations[0].conflict,undefined);
+  assert.equal(silent.observations[0].normalizedStatus,"IN_STOCK");
+});
+
+// A cap written for another grade must not be shown as the AI-95 cap.
+test("a gdebenz litre limit keeps the grade it names", async () => {
+  const config=await loadConfig();
+  const run = async detail => {
+    const rows=[{osm_id:"812",brand:"Лукойл",name:"Лукойл",addr:"ул. Тестовая, 4",lat:48.72,lon:44.49,status:"yes",detail,fuels_now:"92,95",last_at:"2026-09-21 12:00:09"}];
+    const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+    const browser={open:async()=>({finalUrl:"https://gdebenz.ru/",pageTitle:"Где бензин",pageTextPrefix:"карта"}),waitReady:async()=>{},evalJson:async()=>raw};
+    return (await gdebenz.collect(request(config),{browser,config})).stations[0].limits;
+  };
+  assert.deepEqual((await run("92, 95 · Лимит 40 л")).map(l=>[l.gradeLabel,l.liters]),[[undefined,40]]);
+  assert.deepEqual((await run("92, 95 · Лимит 10 л на АИ-92")).map(l=>[l.gradeLabel,l.liters]),[["АИ-92",10]]);
+});

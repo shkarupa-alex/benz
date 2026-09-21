@@ -47,16 +47,21 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500, detailBudgetMs 
       const id = String(row.osm_id || row.id || '');
       if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
       const detail = String(row.detail || '');
-      // meta.f is the station's own grade catalogue and the detail text carries a station-wide litre limit.
-      const limitLiters = Number(detail.match(/лимит\s*([0-9]+(?:[.,][0-9]+)?)\s*л/iu)?.[1]?.replace(',', '.'));
-      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.addr, url: location.href, assortment: Array.isArray(row.meta?.f) ? row.meta.f : undefined, limits: Number.isFinite(limitLiters) ? [{ liters: limitLiters, observedAt: isoTime(row.last_at) }] : undefined });
+      // meta.f is the station's own grade catalogue; the detail text carries a litre limit that is station-wide
+      // unless it names a grade. Dropping that grade would show an AI-92-only cap as the AI-95 cap.
+      const limitMatch = detail.match(/лимит\s*([0-9]+(?:[.,][0-9]+)?)\s*л(?:\s*(?:на|для)\s*((?:аи[-\s]?)?(?:92|95|98|100)|дт|дизел\p{L}*))?/iu);
+      const limitLiters = Number(limitMatch?.[1]?.replace(',', '.'));
+      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.addr, url: location.href, assortment: Array.isArray(row.meta?.f) ? row.meta.f : undefined, limits: Number.isFinite(limitLiters) ? [{ liters: limitLiters, gradeLabel: limitMatch?.[2], observedAt: isoTime(row.last_at) }] : undefined });
       // The visible card text and the hidden fuels_now field enumerate grades independently and can disagree
       // (observed on Глубокоовражная, 25: card '92 · Очередь 100+ машин' against fuels_now '92,95,ДТ'). Unioning them
       // silently invented an AI-95 positive, so a grade only one side lists becomes a recorded conflict, not a signal.
       const visibleFuels = fuelSegmentOf(detail), hiddenFuels = String(row.fuels_now || '');
       const listed = hiddenFuels + ',' + visibleFuels;
       const visibleGrades = petrolGrades(visibleFuels), hiddenGrades = petrolGrades(hiddenFuels);
-      const disputed = grade => visibleGrades.length > 0 && hiddenGrades.length > 0 && visibleGrades.includes(grade) !== hiddenGrades.includes(grade);
+      // Both sides must have *enumerated* something for a disagreement to be meaningful, and a diesel-only list is
+      // an enumeration: keying this off the petrol lists would read "ДТ" as "said nothing" and miss the conflict.
+      const bothEnumerate = visibleFuels.trim().length > 0 && hiddenFuels.trim().length > 0;
+      const disputed = grade => bothEnumerate && visibleGrades.includes(grade) !== hiddenGrades.includes(grade);
       const ai95Disputed = disputed('95');
       const hasAi95 = /(?:^|[\s,;/])(?:аи[-\s]?|ai[-\s]?)?95\+?(?=$|[\s,;/])/iu.test(listed);
       const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);

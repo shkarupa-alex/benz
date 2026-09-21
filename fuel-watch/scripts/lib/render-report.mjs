@@ -35,7 +35,9 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   }
   if (forecasts.length > 0 && forecasts.length < 3) lines.push("До трёх прогнозов пока не хватает 7-дневной статистики.");
   // A station whose own grade catalogue has no AI-95 is not out of AI-95; counting it as a negative read as a shortage.
-  const graded = snapshot.assessments.filter(a => a.sellsRequestedFamily !== false);
+  // A live positive still wins: the catalogue is a union over only the sources that publish one, so a station we
+  // can currently see selling AI-95 is never filed under "does not sell it".
+  const graded = snapshot.assessments.filter(a => a.sellsRequestedFamily !== false || ["AVAILABLE", "LIKELY_AVAILABLE"].includes(a.verdict));
   const notSoldCount = snapshot.assessments.length - graded.length;
   const conflictCount = graded.filter(a => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
   const negativeCount = graded.filter(a => a.verdict === "NOT_AVAILABLE").length;
@@ -85,10 +87,12 @@ function sourceAvailabilityText(snapshot) {
   const attempted = (snapshot.sourceHealth ?? []).filter(h => h.status !== "DISABLED");
   const contributing = attempted.filter(h => snapshot.sourceCoverage?.[h.source]);
   const unavailable = attempted.filter(h => !snapshot.sourceCoverage?.[h.source]);
-  if (!unavailable.length) return `Все ${attempted.length} источник(ов) ответили.`;
+  const degraded = contributing.filter(h => h.status !== "OK");
+  const partialText = degraded.length ? ` Неполно ответили: ${degraded.map(h => h.source).join(", ")} — часть данных могла не попасть в оценку.` : "";
+  if (!unavailable.length) return `Все ${attempted.length} источник(ов) ответили.${partialText}`;
   const reasons = unavailable.map(h => `${h.source} — ${SOURCE_FAILURE[h.code] ?? SOURCE_FAILURE[h.status] ?? "не ответил"}`).join("; ");
   if (!contributing.length) return `Недоступны все источники: ${reasons}. Данных для оценки наличия нет; это не означает, что бензина нет.`;
-  return `Недоступные источники: ${reasons}. Оценка ниже построена только по оставшимся: ${contributing.map(h => h.source).join(", ")}.`;
+  return `Недоступные источники: ${reasons}. Оценка ниже построена только по оставшимся: ${contributing.map(h => h.source).join(", ")}.${partialText}`;
 }
 function changeText(c) { if (c.type === "SCOPE_CHANGED") return c.message; if (c.type === "ADDED") return `${stationHeading(c.current)}: появилась в выборке`; if (c.type === "REMOVED") return `${stationHeading(c.previous)}: исчезла из выборки`; return `${stationHeading(c.current)}: ${VERDICT[c.previous.verdict]} → ${VERDICT[c.current.verdict]}${c.previous.confidence !== c.current.confidence ? `, уверенность нашей оценки ${CONFIDENCE[c.previous.confidence]} → ${CONFIDENCE[c.current.confidence]}` : ""}`; }
 function stationHeading(station) { return `${station.title}${station.address ? ` · [${escapeMarkdown(station.address)}](${yandexMapsUrl(station)})` : ""}`; }

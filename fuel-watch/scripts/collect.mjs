@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserRunner } from "./lib/browser-runner.mjs";
 import { deriveActivityEvidence } from "./lib/activity.mjs";
-import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadConfig } from "./lib/config.mjs";
+import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadConfig, validateAreaSpec } from "./lib/config.mjs";
 import { diffSnapshots } from "./lib/diff.mjs";
 import { petrolOctaneKey } from "./lib/fuels.mjs";
 import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
@@ -45,7 +45,9 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
     const deadline = startedAt + cleanupRemainingMs;
     try { return await runner.close(deadline); }
     finally {
-      try { const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans }); if (reaped?.length) orphanProcesses.push(...reaped); }
+      // Kept inside the same cleanup budget as close(), so a stuck daemon cannot stretch the run past cleanupReserveMs.
+      const graceMs = Math.min(3000, Math.max(250, deadline - cleanupNow()));
+      try { const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans, graceMs }); if (reaped?.length) orphanProcesses.push(...reaped); }
       catch (error) { orphanProcesses.push({ namespace: runner.namespace, outcome: `FAILED: ${error.message}` }); }
       cleanupRemainingMs = Math.max(0, cleanupRemainingMs - Math.max(0, cleanupNow() - startedAt));
     }
@@ -114,8 +116,6 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
   // Identity uncertainty is a matching signal for the agent, not an availability statement for the user.
   const identityDiagnostics = [];
   const merged = reconcileStations(stations, config, previous, identityDiagnostics);
-  // A one-off area states its own ceiling, and going over it fails the run rather than emitting a truncated zone.
-  if (Number.isFinite(area.maxStationCount) && merged.length > area.maxStationCount) throw Object.assign(new Error(`Area resolved ${merged.length} stations, above its limit of ${area.maxStationCount}; narrow the area or raise maxStationCount`), { code: "AREA_STATION_LIMIT" });
   const sourceGroups = Object.fromEntries(config.sources.map(s => [s.id, s.provenanceGroup]));
   const requestedOctane = [...new Set(config.requestedProducts.products.map(product => petrolOctaneKey(product)).filter(Boolean))];
   const assessments = [];
@@ -125,11 +125,15 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
     const queueObservations = results.flatMap(r => r.queues).filter(o => memberKeys.has(`${o.source}:${o.sourceStationId}`));
     const activity = deriveActivityEvidence(results.flatMap(r => r.activity).filter(o => memberKeys.has(`${o.source}:${o.sourceStationId}`)), config, fetchedAt);
     const assessment = assessRequestedUnion({ observations, activity, config, sourceGroups, now });
-    const anchorLabels = config.area.kind === "station-anchors" ? config.area.anchors.map(a => a.label) : [];
+    // The anchors of the zone actually in force, so a one-off area cannot inherit the configured zone's anchor exemptions.
+    const anchorLabels = (area.anchors ?? []).map(a => a.label);
     if (!isInsideArea(station.coordinate, area, { anchorLabels, stationLabel: station.address })) continue;
     assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now), ...stationCatalogue(station.members, requestedOctane) });
   }
-  const referencePoint = config.ranking.referencePoint ?? centroid(area.polygon);
+  // The ceiling counts the stations actually inside the zone, not everything the sources enumerated around it:
+  // gdebenz searches a radius and 2GIS answers city-wide, so the raw count says nothing about the zone's size.
+  if (Number.isFinite(area.maxStationCount) && assessments.length > area.maxStationCount) throw Object.assign(new Error(`Area contains ${assessments.length} stations, above its limit of ${area.maxStationCount}; narrow the area or raise maxStationCount`), { code: "AREA_STATION_LIMIT" });
+  const referencePoint = config.ranking.referencePoint ?? area.interiorPoint;
   const adapterContractHash = await computeAdapterContractHash();
   enforceCompleteness(results, previous, area.areaHash, adapterContractHash, fetchedAt, warnings);
   const snapshot = {
@@ -161,31 +165,32 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
 // User-in-the-loop CAPTCHA handling, off unless the config asks for it. The skill never solves or bypasses a
 // challenge: it holds the already-visible session open for a bounded time so a person can solve it in the window,
 // then re-reads the page. Headless runs never offer it, because there would be no window to hand over.
-function challengeHandoverPolicy(config, records) {
+export function challengeHandoverPolicy(config, records) {
   const policy = config.browser.challengeHandover;
   const enabled = policy?.enabled === true && config.browser.headed === true;
   let used = 0;
   return {
     mayOffer: () => enabled && used < policy.maxPerRun,
     hold: async (source, runner) => {
-      used += 1;
       const record = { source, namespace: runner.namespace, sessionName: runner.sessionName, url: runner.expectedUrl, waitSeconds: policy.waitSeconds, requestedAt: new Date().toISOString() };
-      const resolved = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1000, pollMs: policy.pollSeconds * 1000 });
-      records.push({ ...record, resolved, outcome: resolved ? "SOLVED_BY_USER" : "TIMED_OUT" });
-      return resolved;
+      const outcome = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1000, pollMs: policy.pollSeconds * 1000 });
+      // CLEARED says the challenge page is gone, not who made it go: we cannot observe that a person solved it.
+      // A handover we could not even hold does not spend the per-run budget.
+      if (["CLEARED", "TIMED_OUT"].includes(outcome)) used += 1;
+      records.push({ ...record, outcome });
+      return outcome === "CLEARED";
     }
   };
 }
 
 // A station's own grade catalogue tells "AI-95 ran out here" apart from "this station never sells AI-95". The second
 // is not a shortage: it must not be reported as one and must not train the delivery-time forecast for that station.
-function stationCatalogue(members, requestedOctane) {
+export function stationCatalogue(members, requestedOctane) {
   const published = members.filter(member => Array.isArray(member.assortment));
   const assortment = published.length ? [...new Set(published.flatMap(member => member.assortment))].sort((a, b) => Number(a) - Number(b)) : undefined;
   const limits = members.flatMap(member => (member.limits ?? []).map(limit => ({ ...limit, source: member.source })));
   return { assortment, sellsRequestedFamily: assortment ? requestedOctane.some(octane => assortment.includes(octane)) : undefined, limits: limits.length ? limits : undefined };
 }
-function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
 function isNetworkControlsHealth(health) { return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message)); }
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
@@ -228,7 +233,7 @@ async function main() {
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
   // A one-off area writes only where it is told: it must not touch the monitored snapshot or the shared history.
-  const areaOverride = args.area ? areaSpec(await readJson(args.area)) : undefined;
+  const areaOverride = args.area ? await validateAreaSpec(areaSpec(await readJson(args.area))) : undefined;
   if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
   const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: areaOverride ? undefined : previousPath, historyPath: areaOverride ? undefined : args.history ?? await ensureDefaultHistoryPath(), areaOverride });
   if (!areaOverride && resolve(args.output ?? "") !== resolve(statePath)) await writeJsonAtomic(statePath, result.snapshot);

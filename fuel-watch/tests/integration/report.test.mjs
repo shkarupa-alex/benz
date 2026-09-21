@@ -173,3 +173,21 @@ test("the not-sold bucket disappears when every station sells AI-95", () => {
   const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[item],sourceHealth:[],warnings:[],changes:[]};
   assert.doesNotMatch(renderReport(snapshot).markdown,/не продают АИ-95/);
 });
+
+// The catalogue is a union over only the sources that publish one, so a live positive must outrank a partial catalogue.
+test("a station we can currently see selling AI-95 is never filed under does not sell it", () => {
+  const item={stationKey:"s",title:"АЗС",verdict:"AVAILABLE",confidence:"HIGH",observations:[{source:"yandex",status:"IN_STOCK",ageMinutes:3,expired:false,product:{specificity:"EXACT_VARIANT"}}],activity:[],productAssessments:{},assortment:["92"],sellsRequestedFamily:false};
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[],warnings:[],changes:[]};
+  const {markdown}=renderReport(snapshot);
+  assert.match(markdown,/АИ-95: ЕСТЬ/);
+  assert.doesNotMatch(markdown,/не продают АИ-95/);
+});
+
+// A source that answered but only partly is neither "all fine" nor "unavailable"; the report must say so in Russian.
+test("a source that answered incompletely is named in plain language rather than only as an enum", () => {
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[],changes:[],warnings:[],
+    sourceHealth:[{source:"gdebenz",status:"PARTIAL",code:"TRUNCATED"},{source:"2gis",status:"OK"}],
+    sourceCoverage:{gdebenz:{stationCount:3},"2gis":{stationCount:9}}};
+  const {markdown}=renderReport(snapshot);
+  assert.match(markdown,/Неполно ответили: gdebenz — часть данных могла не попасть в оценку\./);
+});

@@ -46,3 +46,13 @@ test("a one-off area carries its station ceiling through to the resolved zone", 
   assert.equal(resolveArea({ kind: "rectangle", label: "z", south: 48.7, west: 44.4, north: 48.8, east: 44.5 }).maxStationCount, undefined);
   assert.equal(resolveArea({ kind: "route-corridor", label: "z", waypoints: [[44.49, 48.72], [44.60, 48.80]], corridorWidthMeters: 2000, maxStationCount: 40 }).maxStationCount, 40);
 });
+
+// A corridor that loops back on itself buffers into a polygon with a hole; the ranking reference point must not
+// land in that hole, and it must stay bit-identical to the plain centroid for ordinary convex zones.
+test("the zone's reference point is always inside the zone", () => {
+  const hull = resolveArea({ kind: "rectangle", label: "z", south: 48.70, west: 44.40, north: 48.80, east: 44.60 });
+  assert.deepEqual(hull.interiorPoint, [44.5, 48.75]);
+  assert.equal(isInsideArea(hull.interiorPoint, hull), true);
+  const loop = resolveArea({ kind: "route-corridor", label: "кольцо", waypoints: [[44.45, 48.70], [44.60, 48.70], [44.60, 48.82], [44.45, 48.82], [44.46, 48.705]], corridorWidthMeters: 1500 });
+  assert.equal(isInsideArea(loop.interiorPoint, loop), true, "a ring-shaped corridor must not place the reference point in its hole");
+});

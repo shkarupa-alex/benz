@@ -264,19 +264,46 @@ test("rejects a manual group containing two stations from one source", async () 
   assert.throws(() => reconcileStations([], config), /multiple 2gis stations/u);
 });
 
-// The spatial index only decides which pairs are examined; a pair beyond the drift limit already scored -Infinity.
-test("spatially indexed reconciliation reproduces the exhaustive result on a dense area", async () => {
+// The spatial index only decides which pairs are examined, so it must reproduce the exhaustive scan exactly.
+// The oracle is the same scoring code with the index switched off, and the fixtures put matching pairs across
+// cell boundaries on purpose: with maxCoordinateDriftMeters at 100 a cell is ~0.0009 lat by ~0.0014 lon here.
+test("spatially indexed reconciliation reproduces the exhaustive scan across cell boundaries", async () => {
   const config = await loadConfig();
+  const grouping = stations => reconcileStations(stations, config).map(group => group.members.map(member => `${member.source}:${member.sourceStationId}`).sort().join("+")).sort();
+  const exhaustive = stations => reconcileStations(stations, config, undefined, [], { useSpatialIndex: false }).map(group => group.members.map(member => `${member.source}:${member.sourceStationId}`).sort().join("+")).sort();
+  let seed = 20260921;
+  const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const brands = ["Лукойл", "Роснефть", "Газпромнефть", "Татнефть"];
-  const stations = [];
-  for (let index = 0; index < 60; index++) {
-    const lon = 44.45 + (index % 10) * 0.004, lat = 48.70 + Math.floor(index / 10) * 0.004;
-    for (const source of ["yandex", "gdebenz", "2gis", "benzonavt"]) stations.push({ source, sourceStationId: `${source}-${index}`, title: brands[index % 4], brand: brands[index % 4], address: `ул. Тестовая, ${index + 1}`, coordinate: [lon + (source === "yandex" ? 0 : 0.00002), lat] });
+  let boundaryCrossings = 0;
+  const latCell = 100 / 111320, lonCell = 100 / (111320 * Math.cos(48.75 * Math.PI / 180));
+  for (let iteration = 0; iteration < 400; iteration++) {
+    const stations = [];
+    for (let index = 0; index < 14; index++) {
+      // Anchor deliberately near a cell edge, then scatter members by up to ~90 m: inside the drift limit, across cells.
+      const lon = 44.45 + Math.round(random() * 40) * lonCell + lonCell * 0.97;
+      const lat = 48.70 + Math.round(random() * 40) * latCell + latCell * 0.97;
+      for (const source of ["yandex", "gdebenz", "2gis", "benzonavt"]) {
+        if (random() < 0.2) continue;
+        const point = [lon + (random() - 0.5) * lonCell * 1.6, lat + (random() - 0.5) * latCell * 1.6];
+        if (Math.floor(point[0] / lonCell) !== Math.floor(lon / lonCell) || Math.floor(point[1] / latCell) !== Math.floor(lat / latCell)) boundaryCrossings++;
+        stations.push({ source, sourceStationId: `${source}-${index}`, title: brands[index % 4], brand: brands[index % 4], address: `ул. Тестовая, ${index + 1}`, coordinate: point });
+      }
+    }
+    assert.deepEqual(grouping(stations), exhaustive(stations), `iteration ${iteration} diverged from the exhaustive scan`);
   }
-  const indexed = reconcileStations(stations, config);
-  const exhaustive = exhaustiveReconcile(stations, config);
-  assert.deepEqual(indexed.map(group => group.members.map(member => `${member.source}:${member.sourceStationId}`).sort()).sort(), exhaustive);
-  assert.ok(indexed.every(group => new Set(group.members.map(member => member.source)).size === group.members.length));
+  assert.ok(boundaryCrossings > 200, `fixture must actually straddle cell boundaries, saw ${boundaryCrossings}`);
+});
+
+// A station with an unusable coordinate scores NaN against everything; NaN must fail closed, not slip past both
+// thresholds. `NaN < 0.82` and `NaN >= 0.82` are equally false, so the comparison has to be written as a negation.
+test("an unusable coordinate never merges two unrelated stations", async () => {
+  const config = await loadConfig();
+  const groups = reconcileStations([
+    { source: "yandex", sourceStationId: "y1", title: "АЗС", address: "ул. Тестовая, 7", coordinate: [44.45, 48.70] },
+    { source: "gdebenz", sourceStationId: "g1", title: "Магазин", address: "просп. Ленина, 7", coordinate: [NaN, NaN] }
+  ], config);
+  assert.equal(groups.length, 2, "a NaN match score must fail closed instead of merging");
+  assert.ok(groups.every(group => group.members.length === 1));
 });
 
 test("identity diagnostics name opaque brands and ambiguous candidates without claiming an availability problem", async () => {
@@ -292,19 +319,3 @@ test("identity diagnostics name opaque brands and ambiguous candidates without c
   assert.ok(diagnostics.every(entry => !/налич|available/i.test(JSON.stringify(entry))));
 });
 
-function exhaustiveReconcile(stations, config) {
-  const groups = stations.map(station => [station]);
-  let merged;
-  do {
-    merged = false;
-    outer: for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
-      if (!groups[i] || !groups[j]) continue;
-      const pair = [...groups[i], ...groups[j]];
-      if (new Set(pair.map(member => member.source)).size !== pair.length) continue;
-      const scored = reconcileStations(pair, config);
-      if (scored.length !== 1) continue;
-      groups[i] = pair; groups[j] = null; merged = true; break outer;
-    }
-  } while (merged);
-  return groups.filter(Boolean).map(group => group.map(member => `${member.source}:${member.sourceStationId}`).sort()).sort();
-}
