@@ -159,6 +159,25 @@ test("report shows the tightest known litre limit for AI-95 and ignores other gr
   assert.match(markdown,/очередь: нет данных · лимит: 20 л/);
 });
 
+// A litre cap is a claim about right now. An expired one taken into the minimum would be printed as the current cap.
+test("an expired litre limit is dropped and an ageing one is printed with its age", () => {
+  const freshnessPolicy={freshMinutes:30,recentMinutes:120,staleMinutes:240,expireMinutes:360,futureSkewSeconds:120};
+  const render=limits=>{
+    const item={stationKey:"s",title:"АЗС",verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"2gis",status:"IN_STOCK",ageMinutes:5,expired:false,product:{specificity:"EXACT_VARIANT"}}],activity:[],productAssessments:{},limits};
+    return renderReport({fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[],warnings:[],changes:[],freshnessPolicy}).markdown;
+  };
+  const stale=render([{gradeLabel:"95",liters:20,source:"benzonavt",observedAt:"2026-09-17T10:00:00Z"},{gradeLabel:"95",liters:40,source:"2gis",observedAt:"2026-09-21T09:50:00Z"}]);
+  assert.match(stale,/лимит: 40 л/);
+  assert.doesNotMatch(stale,/лимит: 20 л/,"a four-day-old cap must not win the minimum as if it were current");
+  assert.doesNotMatch(stale,/40 л \(/,"a cap observed ten minutes ago needs no age note");
+  const ageing=render([{gradeLabel:"95",liters:20,source:"benzonavt",observedAt:"2026-09-21T07:00:00Z"}]);
+  assert.match(ageing,/лимит: 20 л \(3 ч назад\)/);
+  const undated=render([{gradeLabel:"95",liters:20,source:"2gis"}]);
+  assert.match(undated,/лимит: 20 л$/m,"a source that never dates its caps still shows one, without inventing an age");
+  const allExpired=render([{gradeLabel:"95",liters:20,source:"benzonavt",observedAt:"2026-09-17T10:00:00Z"}]);
+  assert.doesNotMatch(allExpired,/лимит/,"nothing usable means no cap is claimed at all");
+});
+
 // A station whose own catalogue has no AI-95 has nothing to run out of; counting it as a negative read as a shortage.
 test("a station that does not sell AI-95 is counted apart from stations that ran out", () => {
   const notSold={stationKey:"a",title:"Дизельная",verdict:"NO_FRESH_DATA",confidence:"NONE",observations:[],activity:[],productAssessments:{},assortment:["92"],sellsRequestedFamily:false};

@@ -2,7 +2,7 @@ import { createRequire as __fuelWatchCreateRequire } from 'node:module'; const r
 import {
   clampText,
   uniqueId
-} from "./chunk-OFV4LHTC.mjs";
+} from "./chunk-Q2QRNGMD.mjs";
 
 // scripts/lib/browser-runner.mjs
 import { spawn } from "node:child_process";
@@ -70,7 +70,10 @@ var BrowserRunner = class {
     if (!terminate) return leftovers.map((value) => ({ ...value, outcome: "REPORTED" }));
     const out = [];
     for (const leftover of leftovers) {
-      const stillOurs = async () => isAgentBrowserProcess(await this.processControl.args(leftover.pid));
+      const stillOurs = async () => {
+        const command = await this.processControl.args(leftover.pid);
+        return isAgentBrowserProcess(command) && clampText(command, 200) === leftover.command;
+      };
       let outcome;
       try {
         this.processControl.terminate(leftover.pid, "SIGTERM");
@@ -96,7 +99,6 @@ var BrowserRunner = class {
   }
   async ensureRunSession() {
     if (!this.probed) await this.probe();
-    await this.rememberDaemonPid();
     return { namespace: this.namespace, sessionName: this.sessionName };
   }
   async open(url, attempt = 0) {
@@ -118,6 +120,7 @@ var BrowserRunner = class {
       throw classifyCommandFailure(result, "open");
     }
     this.started = true;
+    await this.rememberDaemonPid();
     if (networkControls.length) this.networkControlsStatus = "ACTIVE";
     const opened = commandPayload(result.json);
     const reportedUrl = String(opened?.url ?? opened?.finalUrl ?? "");
@@ -211,7 +214,7 @@ var BrowserRunner = class {
     while (Date.now() < deadline) {
       await new Promise((resolve2) => setTimeout(resolve2, Math.max(0, Math.min(pollMs, deadline - Date.now()))));
       const still = await visible();
-      if (still === void 0) return "UNREADABLE";
+      if (still === void 0) return "LOST_WHILE_HELD";
       if (!still) return "CLEARED";
     }
     return "TIMED_OUT";

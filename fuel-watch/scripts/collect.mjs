@@ -45,8 +45,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
     const deadline = startedAt + cleanupRemainingMs;
     try { return await runner.close(deadline); }
     finally {
-      // Kept inside the same cleanup budget as close(), so a stuck daemon cannot stretch the run past cleanupReserveMs.
-      const graceMs = Math.min(3000, Math.max(250, deadline - cleanupNow()));
+      const graceMs = reapGraceMs(deadline - cleanupNow());
       try { const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans, graceMs }); if (reaped?.length) orphanProcesses.push(...reaped); }
       catch (error) { orphanProcesses.push({ namespace: runner.namespace, outcome: `FAILED: ${error.message}` }); }
       cleanupRemainingMs = Math.max(0, cleanupRemainingMs - Math.max(0, cleanupNow() - startedAt));
@@ -175,13 +174,19 @@ export function challengeHandoverPolicy(config, records) {
       const record = { source, namespace: runner.namespace, sessionName: runner.sessionName, url: runner.expectedUrl, waitSeconds: policy.waitSeconds, requestedAt: new Date().toISOString() };
       const outcome = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1000, pollMs: policy.pollSeconds * 1000 });
       // CLEARED says the challenge page is gone, not who made it go: we cannot observe that a person solved it.
-      // A handover we could not even hold does not spend the per-run budget.
-      if (["CLEARED", "TIMED_OUT"].includes(outcome)) used += 1;
+      // Only a handover we could not even start (nothing visible to watch, or an unreadable page from the first
+      // probe) is free; once the window has actually been held, the attempt is spent however it ended.
+      if (["CLEARED", "TIMED_OUT", "LOST_WHILE_HELD"].includes(outcome)) used += 1;
       records.push({ ...record, outcome });
       return outcome === "CLEARED";
     }
   };
 }
+
+// Reaping shares close()'s cleanup budget, so it gets what is left of it and never more than a few seconds: a stuck
+// daemon must not stretch the run past cleanupReserveMs. The floor keeps an exhausted budget from degenerating into
+// "SIGTERM then SIGKILL in the same tick", which would report a process as surviving before it could exit.
+export function reapGraceMs(remainingMs) { return Math.min(3000, Math.max(250, Number.isFinite(remainingMs) ? remainingMs : 0)); }
 
 // A station's own grade catalogue tells "AI-95 ran out here" apart from "this station never sells AI-95". The second
 // is not a shortage: it must not be reported as one and must not train the delivery-time forecast for that station.

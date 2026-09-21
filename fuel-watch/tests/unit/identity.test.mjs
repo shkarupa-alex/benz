@@ -274,7 +274,7 @@ test("spatially indexed reconciliation reproduces the exhaustive scan across cel
   let seed = 20260921;
   const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const brands = ["Лукойл", "Роснефть", "Газпромнефть", "Татнефть"];
-  let boundaryCrossings = 0;
+  let boundaryCrossings = 0, unindexedCount = 0;
   const latCell = 100 / 111320, lonCell = 100 / (111320 * Math.cos(48.75 * Math.PI / 180));
   for (let iteration = 0; iteration < 400; iteration++) {
     const stations = [];
@@ -286,12 +286,17 @@ test("spatially indexed reconciliation reproduces the exhaustive scan across cel
         if (random() < 0.2) continue;
         const point = [lon + (random() - 0.5) * lonCell * 1.6, lat + (random() - 0.5) * latCell * 1.6];
         if (Math.floor(point[0] / lonCell) !== Math.floor(lon / lonCell) || Math.floor(point[1] / latCell) !== Math.floor(lat / latCell)) boundaryCrossings++;
-        stations.push({ source, sourceStationId: `${source}-${index}`, title: brands[index % 4], brand: brands[index % 4], address: `ул. Тестовая, ${index + 1}`, coordinate: point });
+        // Stations the index cannot place take the unindexed path through the grid. They must survive it, stay
+        // unmerged and leave every other grouping decision untouched, indexed or not.
+        const unplaceable = random() < 0.08;
+        if (unplaceable) unindexedCount++;
+        stations.push({ source, sourceStationId: `${source}-${index}`, title: brands[index % 4], brand: brands[index % 4], address: `ул. Тестовая, ${index + 1}`, coordinate: unplaceable ? undefined : point });
       }
     }
     assert.deepEqual(grouping(stations), exhaustive(stations), `iteration ${iteration} diverged from the exhaustive scan`);
   }
   assert.ok(boundaryCrossings > 200, `fixture must actually straddle cell boundaries, saw ${boundaryCrossings}`);
+  assert.ok(unindexedCount > 200, `fixture must also contain stations the index cannot place, saw ${unindexedCount}`);
 });
 
 // A station with an unusable coordinate scores NaN against everything; NaN must fail closed, not slip past both

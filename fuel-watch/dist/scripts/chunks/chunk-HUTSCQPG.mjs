@@ -3,10 +3,10 @@ import {
   isCurrentPositiveObservation,
   isFreshActivity,
   rankAssessments
-} from "./chunk-P5HXBZCC.mjs";
+} from "./chunk-PYVMKYQI.mjs";
 import {
   sha256
-} from "./chunk-OFV4LHTC.mjs";
+} from "./chunk-Q2QRNGMD.mjs";
 import {
   petrolOctaneKey
 } from "./chunk-XKTP5TT3.mjs";
@@ -71,7 +71,7 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
   if (!ranked.length) lines.push("\u0421\u0432\u0435\u0436\u0438\u0445 \u043F\u043E\u043B\u043E\u0436\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445 \u043D\u0435\u0442; \u044D\u0442\u043E \u043D\u0435 \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442, \u0447\u0442\u043E \u0431\u0435\u043D\u0437\u0438\u043D\u0430 \u043D\u0435\u0442 \u0432\u043E \u0432\u0441\u0435\u0439 \u0437\u043E\u043D\u0435.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
-    lines.push(`   \u0410\u0418-95: ${VERDICT[item.verdict]} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0448\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438: ${CONFIDENCE[item.confidence]} \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044E\u0449\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B: ${freshnessText(item.observations)} \xB7 \u043E\u0447\u0435\u0440\u0435\u0434\u044C: ${item.queue?.displayText ?? "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"}${limitText(item)}`);
+    lines.push(`   \u0410\u0418-95: ${VERDICT[item.verdict]} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0448\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438: ${CONFIDENCE[item.confidence]} \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044E\u0449\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B: ${freshnessText(item.observations)} \xB7 \u043E\u0447\u0435\u0440\u0435\u0434\u044C: ${item.queue?.displayText ?? "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"}${limitText(item, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
     const activity = activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy);
     if (activity) lines.push(`   ${activity}`);
     lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
@@ -104,10 +104,18 @@ var USER_WARNING = {
 function userWarnings(warnings = []) {
   return [...new Set(warnings.filter((w) => !TECHNICAL_WARNING_CODES.has(w.code)).map((w) => USER_WARNING[w.code] ?? `${w.code}: ${w.message}`))];
 }
-function limitText(item) {
+function limitText(item, fetchedAt, freshness = {}) {
   const relevant = (item.limits ?? []).filter((limit) => !limit.gradeLabel || petrolOctaneKey({ gradeLabel: limit.gradeLabel }) === "95");
-  if (!relevant.length) return "";
-  return ` \xB7 \u043B\u0438\u043C\u0438\u0442: ${Math.min(...relevant.map((limit) => limit.liters))} \u043B`;
+  const usable = relevant.filter((limit) => Number.isFinite(limit.liters) && (limit.observedAt === void 0 || isFreshActivity({ observedAt: limit.observedAt }, fetchedAt, freshness)));
+  if (!usable.length) return "";
+  const chosen = usable.reduce((best, limit) => limit.liters < best.liters ? limit : best);
+  return ` \xB7 \u043B\u0438\u043C\u0438\u0442: ${chosen.liters} \u043B${limitAgeText(chosen, fetchedAt, freshness)}`;
+}
+function limitAgeText(limit, fetchedAt, freshness) {
+  const ageMinutes = (new Date(fetchedAt).getTime() - new Date(limit.observedAt ?? NaN).getTime()) / 6e4;
+  if (!Number.isFinite(ageMinutes)) return "";
+  if (ageMinutes <= Number(freshness.freshMinutes ?? 0)) return "";
+  return ageMinutes < 90 ? ` (${Math.max(1, Math.round(ageMinutes))} \u043C\u0438\u043D \u043D\u0430\u0437\u0430\u0434)` : ` (${Math.round(ageMinutes / 60)} \u0447 \u043D\u0430\u0437\u0430\u0434)`;
 }
 function healthText(h) {
   return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`;

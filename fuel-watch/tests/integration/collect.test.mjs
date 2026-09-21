@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { challengeHandoverPolicy, collectSnapshot, stationCatalogue } from "../../scripts/collect.mjs";
+import { challengeHandoverPolicy, collectSnapshot, reapGraceMs, stationCatalogue } from "../../scripts/collect.mjs";
 import { BrowserRunner } from "../../scripts/lib/browser-runner.mjs";
 import { loadConfig } from "../../scripts/lib/config.mjs";
 
@@ -339,4 +339,56 @@ test("the one-off station ceiling counts only stations inside the zone", async (
   const result = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: corridor });
   assert.equal(result.snapshot.assessments.length, 1, "31 enumerated stations, one inside the corridor, ceiling of 5");
   await assert.rejects(() => collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: { ...corridor, maxStationCount: 0.5 } }), error => error.code === "AREA_STATION_LIMIT");
+});
+
+// stationCatalogue is only useful if the snapshot actually carries it: a unit test of the helper cannot tell whether
+// collect still calls it, and the catalogue is what keeps "never sells AI-95" apart from "AI-95 ran out here".
+test("the grade catalogue and litre limits reach the snapshot through a full collection", async () => {
+  const station = { id: "s1", coordinate: [44.50, 48.74], title: "АЗС A", address: "ул. Первая, 1" };
+  const runner = {
+    namespace: "fixture-catalogue", probe: async () => ({}),
+    open: async url => ({ finalUrl: url, pageTextPrefix: "АЗС" }), waitReady: async () => {},
+    evalJson: async () => ({
+      stations: [{ ...station, assortment: ["92", "98"], limits: [{ liters: 20, gradeLabel: "95", observedAt: "2026-09-21T09:40:00Z" }] }],
+      observations: [], queues: [], activity: []
+    }),
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  };
+  const result = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z") });
+  const assessment = result.snapshot.assessments.find(value => value.address === "ул. Первая, 1");
+  assert.ok(assessment, "the fixture station must be assessed");
+  assert.deepEqual(assessment.assortment, ["92", "98"]);
+  assert.equal(assessment.sellsRequestedFamily, false, "a published catalogue without AI-95 must reach the snapshot");
+  assert.deepEqual(assessment.limits.map(limit => limit.liters), [20, 20, 20, 20]);
+});
+
+// Once the window has actually been held, the attempt is spent however it ended: otherwise every source could hold
+// its window for the full wait and the per-run cap would never bite.
+test("a page lost mid-hold spends the per-run handover budget", async () => {
+  const records = [];
+  const config = { browser: { headed: true, challengeHandover: { enabled: true, waitSeconds: 10, pollSeconds: 2, maxPerRun: 1 } } };
+  const policy = challengeHandoverPolicy(config, records);
+  const runner = { namespace: "ns", sessionName: "source", expectedUrl: "https://2gis.ru/", awaitManualChallengeResolution: async () => "LOST_WHILE_HELD" };
+  assert.equal(await policy.hold("2gis", runner), false);
+  assert.deepEqual(records.map(value => value.outcome), ["LOST_WHILE_HELD"]);
+  assert.equal(policy.mayOffer(), false, "a window we did hold must consume maxPerRun even when the page died");
+});
+
+// Reaping shares the cleanup reserve with close(), so its grace must stay bounded whatever close() left over.
+test("orphan reaping gets a bounded grace whether cleanup time is plentiful or gone", async () => {
+  const graces = [];
+  const makeRunner = closeDelayMs => ({
+    namespace: "fixture-grace", probe: async () => ({}),
+    open: async url => ({ finalUrl: url, pageTextPrefix: "АЗС" }), waitReady: async () => {},
+    evalJson: async () => ({ stations: [], observations: [], queues: [], activity: [] }),
+    reapLeftoverProcesses: async ({ graceMs }) => { graces.push(graceMs); return []; },
+    close: async () => { await new Promise(resolve => setTimeout(resolve, closeDelayMs)); return { sessionsRemaining: 0, warnings: [] }; }
+  });
+  await collectSnapshot({ browserFactory: () => makeRunner(0), now: new Date("2026-09-21T10:00:00Z") });
+  assert.ok(graces.length >= 4, "every closed runner is reaped");
+  assert.ok(graces.every(value => value >= 250 && value <= 3000), `grace must stay within [250, 3000], got ${graces.join(", ")}`);
+  assert.equal(reapGraceMs(120000), 3000, "a large remaining reserve must not become a long wait for a stuck daemon");
+  assert.equal(reapGraceMs(1200), 1200, "what is left of the reserve is what reaping gets");
+  assert.equal(reapGraceMs(-5000), 250, "an exhausted reserve still leaves room for SIGTERM to take effect");
+  assert.equal(reapGraceMs(Number.NaN), 250);
 });

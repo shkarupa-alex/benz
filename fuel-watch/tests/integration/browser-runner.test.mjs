@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { loadConfig } from "../../scripts/lib/config.mjs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { BrowserRunner } from "../../scripts/lib/browser-runner.mjs";
 
 test("runner strips inherited agent-browser, gateway and proxy variables", async () => {
@@ -532,4 +532,60 @@ test("orphan reaping refuses a pid we never observed and a process that only men
   assert.deepEqual(await recycled.reapLeftoverProcesses({ terminate: true }), [], "a pid we never observed must not be signalled");
   assert.deepEqual(signalled, []);
   await rm(root, { recursive: true, force: true });
+});
+
+// The ownership check is only worth anything if the pid is actually recorded during a real run. The daemon and its
+// pid file come into existence with "open", so recording any earlier silently leaves the check with nothing.
+test("the daemon pid is recorded by a real open, so a recycled pid is refused afterwards", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-open-"));
+  const namespace = "fuel-watch-open";
+  const pidPath = join(root, "namespaces", namespace, "run", "source.pid");
+  const exec = async (command, args) => {
+    if (args.includes("open")) { await mkdir(dirname(pidPath), { recursive: true }); await writeFile(pidPath, "4242\n"); return okJson({ url: "https://2gis.ru/volgograd" }); }
+    if (args.includes("url")) return okJson({ url: "https://2gis.ru/volgograd" });
+    if (args.includes("eval")) return okJson({ pageTitle: "2GIS", pageText: "АЗС", selectorReady: true });
+    return okJson({ sessions: [] });
+  };
+  const signalled = [];
+  const daemon = "/opt/homebrew/Cellar/agent-browser/0.38.1/libexec/bin/agent-browser-darwin-arm64";
+  const runner = new BrowserRunner(config, { exec, command: process.execPath, namespace, stateRoot: root, processControl: { args: async () => daemon, terminate: (pid, signal) => signalled.push([pid, signal]) } });
+  await runner.open("https://2gis.ru/volgograd");
+  assert.deepEqual([...runner.observedDaemonPids], [[namespace, 4242]], "open must record the pid it left behind");
+  assert.deepEqual((await runner.leftoverProcesses()).map(value => value.pid), [4242]);
+  await writeFile(pidPath, "9999\n");
+  assert.deepEqual(await runner.reapLeftoverProcesses({ terminate: true }), [], "a pid that replaced the one we observed is not ours");
+  assert.deepEqual(signalled, []);
+  await rm(root, { recursive: true, force: true });
+});
+
+// Escalation happens after a wait, so the process must still be the very one we decided to reap; "some agent-browser"
+// under the same pid can be a different invocation that inherited a recycled pid while we waited.
+test("SIGKILL is withheld when the process under the pid changed while we waited", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-escalate-"));
+  await mkdir(join(root, "namespaces", "fuel-watch-ours", "run"), { recursive: true });
+  await writeFile(join(root, "namespaces", "fuel-watch-ours", "run", "source.pid"), "4242\n");
+  const signalled = [];
+  let command = "/opt/agent-browser/bin/agent-browser-darwin-arm64 --session source";
+  const runner = new BrowserRunner(config, { exec: async () => okJson({ sessions: [] }), command: process.execPath, namespace: "fuel-watch-ours", stateRoot: root, processControl: { args: async () => command, terminate: (pid, signal) => { signalled.push([pid, signal]); command = "/opt/agent-browser/bin/agent-browser-darwin-arm64 --session other"; } } });
+  const reaped = await runner.reapLeftoverProcesses({ terminate: true, graceMs: 50, pollMs: 5 });
+  assert.deepEqual(reaped.map(value => value.outcome), ["TERMINATED"]);
+  assert.deepEqual(signalled, [[4242, "SIGTERM"]], "a different agent-browser invocation under the same pid must never be killed");
+  await rm(root, { recursive: true, force: true });
+});
+
+// The initial probe failing costs nothing; losing the page after the window has been held for a while does not, and
+// treating both as free would let four sources hold windows for the full wait each while the budget stays untouched.
+test("a page lost during the hold is distinguished from one unreadable before it", async () => {
+  const config = await loadConfig();
+  let probes = 0;
+  const exec = async (command, args) => {
+    if (args.includes("url")) { probes += 1; return probes > 1 ? { exitCode: 1, stdout: "", stderr: "session gone" } : okJson({ url: "https://2gis.ru/captcha" }); }
+    if (args.includes("eval")) return okJson({ pageTitle: "Проверка", pageText: "Подтвердите, что вы не робот", selectorReady: false });
+    return okJson({ sessions: [] });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  runner.expectedUrl = "https://2gis.ru/captcha";
+  assert.equal(await runner.awaitManualChallengeResolution({ waitMs: 60, pollMs: 10 }), "LOST_WHILE_HELD");
 });

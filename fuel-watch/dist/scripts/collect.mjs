@@ -5,10 +5,10 @@ import {
   isFreshActivity,
   normalizeQueues,
   rankAssessments
-} from "./chunks/chunk-P5HXBZCC.mjs";
+} from "./chunks/chunk-PYVMKYQI.mjs";
 import {
   BrowserRunner
-} from "./chunks/chunk-67NBBQ32.mjs";
+} from "./chunks/chunk-XI2JTR44.mjs";
 import {
   ensureUserConfig,
   historyPath,
@@ -29,7 +29,7 @@ import {
   stableJson,
   validateAreaSpec,
   writeJsonAtomic
-} from "./chunks/chunk-OFV4LHTC.mjs";
+} from "./chunks/chunk-Q2QRNGMD.mjs";
 import {
   ADDRESS_UNIT_KINDS,
   brandLabel,
@@ -2244,8 +2244,8 @@ function matchScore(a, b, identity) {
   const brandA = normalizeComparableBrand(a.brand, identity.brandAliases), brandB = normalizeComparableBrand(b.brand, identity.brandAliases);
   if (brandLabel(a.brand) && !brandA || brandLabel(b.brand) && !brandB) return -Infinity;
   if (brandA && brandB && brandA !== brandB) return -Infinity;
-  const distance = haversineMeters(a.coordinate, b.coordinate);
-  if (distance > identity.maxCoordinateDriftMeters) return -Infinity;
+  const distance = Array.isArray(a.coordinate) && Array.isArray(b.coordinate) ? haversineMeters(a.coordinate, b.coordinate) : NaN;
+  if (!(distance <= identity.maxCoordinateDriftMeters)) return -Infinity;
   const addressA = normalizeAddress(a.address, identity.streetDictionary), addressB = normalizeAddress(b.address, identity.streetDictionary);
   const titleA = normalizeText(a.title), titleB = normalizeText(b.title);
   const addressScore = tokenSimilarity(addressA, addressB);
@@ -2434,7 +2434,7 @@ function compactAssessment(value) {
 // scripts/collect.mjs
 var adapters = {
   yandex: () => import("./chunks/yandex-C3MTKDP7.mjs"),
-  gdebenz: () => import("./chunks/gdebenz-VFQFX42Q.mjs"),
+  gdebenz: () => import("./chunks/gdebenz-B7VWDKRB.mjs"),
   "2gis": () => import("./chunks/twogis-IW2I2NAG.mjs"),
   benzonavt: () => import("./chunks/benzonavt-LZ42GKJV.mjs")
 };
@@ -2458,7 +2458,7 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
     try {
       return await runner.close(deadline);
     } finally {
-      const graceMs = Math.min(3e3, Math.max(250, deadline - cleanupNow()));
+      const graceMs = reapGraceMs(deadline - cleanupNow());
       try {
         const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans, graceMs });
         if (reaped?.length) orphanProcesses.push(...reaped);
@@ -2588,11 +2588,14 @@ function challengeHandoverPolicy(config, records) {
     hold: async (source, runner) => {
       const record = { source, namespace: runner.namespace, sessionName: runner.sessionName, url: runner.expectedUrl, waitSeconds: policy.waitSeconds, requestedAt: (/* @__PURE__ */ new Date()).toISOString() };
       const outcome = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1e3, pollMs: policy.pollSeconds * 1e3 });
-      if (["CLEARED", "TIMED_OUT"].includes(outcome)) used += 1;
+      if (["CLEARED", "TIMED_OUT", "LOST_WHILE_HELD"].includes(outcome)) used += 1;
       records.push({ ...record, outcome });
       return outcome === "CLEARED";
     }
   };
+}
+function reapGraceMs(remainingMs) {
+  return Math.min(3e3, Math.max(250, Number.isFinite(remainingMs) ? remainingMs : 0));
 }
 function stationCatalogue(members, requestedOctane) {
   const published = members.filter((member) => Array.isArray(member.assortment));
@@ -2605,7 +2608,7 @@ function isNetworkControlsHealth(health) {
 }
 var moduleDir = dirname2(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
-  if (true) return "75a5f4d887ca1cd776a4a846f5cf8098760364a693c2172c99ec069c43507296";
+  if (true) return "07bb47886db713af64b99dcd7aba481164baacfcebd60b94438f239b5eb32578";
   const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"];
   return sha256((await Promise.all(names.map((name) => readFile2(resolve2(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
 }
@@ -2693,5 +2696,6 @@ export {
   collectSnapshot,
   enforceCompleteness,
   nextCoverageBaselines,
+  reapGraceMs,
   stationCatalogue
 };

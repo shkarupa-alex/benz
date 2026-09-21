@@ -19251,7 +19251,7 @@ async function loadConfig(path = defaultConfigPath) {
   const [config, schema] = await Promise.all([readJsonWithPath(path), readJsonWithPath(defaultSchemaPath)]);
   const ajv = new import__.default({ allErrors: true, strict: false });
   const validate = ajv.compile(schema);
-  if (!validate(config)) throw new ConfigError(validate.errors.map(formatAjvError));
+  if (!validate(config)) throw new ConfigError(schemaErrors(validate.errors));
   validateSemantics(config);
   config.browser.configPath = resolve2(dirname2(path), config.browser.configPath);
   return config;
@@ -19260,7 +19260,7 @@ async function validateAreaSpec(area2) {
   const schema = await readJsonWithPath(defaultSchemaPath);
   const ajv = new import__.default({ allErrors: true, strict: false });
   const validate = ajv.compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: "#/$defs/area" });
-  if (!validate(area2)) throw new ConfigError(validate.errors.map(formatAjvError));
+  if (!validate(area2)) throw new ConfigError(schemaErrors(validate.errors));
   return area2;
 }
 async function readJsonWithPath(path) {
@@ -19272,6 +19272,10 @@ async function readJsonWithPath(path) {
 }
 function formatAjvError(error) {
   return `${error.instancePath || "/"} ${error.message}`;
+}
+function schemaErrors(errors) {
+  const concrete = errors.filter((error) => error.keyword !== "if");
+  return (concrete.length ? concrete : errors).map(formatAjvError);
 }
 function validateSemantics(config) {
   const errors = [];

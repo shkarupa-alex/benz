@@ -13,7 +13,7 @@ export async function loadConfig(path = defaultConfigPath) {
   const [config, schema] = await Promise.all([readJsonWithPath(path), readJsonWithPath(defaultSchemaPath)]);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validate = ajv.compile(schema);
-  if (!validate(config)) throw new ConfigError(validate.errors.map(formatAjvError));
+  if (!validate(config)) throw new ConfigError(schemaErrors(validate.errors));
   validateSemantics(config);
   config.browser.configPath = resolve(dirname(path), config.browser.configPath);
   return config;
@@ -25,7 +25,7 @@ export async function validateAreaSpec(area) {
   const schema = await readJsonWithPath(defaultSchemaPath);
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const validate = ajv.compile({ $schema: schema.$schema, $defs: schema.$defs, $ref: "#/$defs/area" });
-  if (!validate(area)) throw new ConfigError(validate.errors.map(formatAjvError));
+  if (!validate(area)) throw new ConfigError(schemaErrors(validate.errors));
   return area;
 }
 
@@ -35,6 +35,12 @@ async function readJsonWithPath(path) {
 }
 
 function formatAjvError(error) { return `${error.instancePath || "/"} ${error.message}`; }
+// The kind dispatch adds a bookkeeping "must match then schema" alongside the real error; it is dropped only when
+// a concrete error survives, so a failure never turns into an empty error list.
+function schemaErrors(errors) {
+  const concrete = errors.filter(error => error.keyword !== "if");
+  return (concrete.length ? concrete : errors).map(formatAjvError);
+}
 
 function validateSemantics(config) {
   const errors = [];

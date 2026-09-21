@@ -20,7 +20,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   if (!ranked.length) lines.push("Свежих положительных данных нет; это не означает, что бензина нет во всей зоне.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
-    lines.push(`   АИ-95: ${VERDICT[item.verdict]} · уверенность нашей оценки: ${CONFIDENCE[item.confidence]} · последний подтверждающий сигнал: ${freshnessText(item.observations)} · очередь: ${item.queue?.displayText ?? "нет данных"}${limitText(item)}`);
+    lines.push(`   АИ-95: ${VERDICT[item.verdict]} · уверенность нашей оценки: ${CONFIDENCE[item.confidence]} · последний подтверждающий сигнал: ${freshnessText(item.observations)} · очередь: ${item.queue?.displayText ?? "нет данных"}${limitText(item, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
     const activity = activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy);
     if (activity) lines.push(`   ${activity}`);
     lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
@@ -60,11 +60,24 @@ const USER_WARNING = {
 function userWarnings(warnings = []) {
   return [...new Set(warnings.filter(w => !TECHNICAL_WARNING_CODES.has(w.code)).map(w => USER_WARNING[w.code] ?? `${w.code}: ${w.message}`))];
 }
-// Several sources may cap litres differently; the smallest known cap is the one that decides whether the trip is worth it.
-function limitText(item) {
+// Several sources may cap litres differently; the smallest known cap is the one that decides whether the trip is
+// worth it. A cap is a claim about right now, so expired observations are dropped first: without that, a days-old
+// number would win the minimum and be printed as the current cap. Whatever survives is printed with its age when
+// it is no longer fresh, because an undated or ageing cap is a weaker promise than a just-observed one.
+function limitText(item, fetchedAt, freshness = {}) {
   const relevant = (item.limits ?? []).filter(limit => !limit.gradeLabel || petrolOctaneKey({ gradeLabel: limit.gradeLabel }) === "95");
-  if (!relevant.length) return "";
-  return ` · лимит: ${Math.min(...relevant.map(limit => limit.liters))} л`;
+  const usable = relevant.filter(limit => Number.isFinite(limit.liters) && (limit.observedAt === undefined || isFreshActivity({ observedAt: limit.observedAt }, fetchedAt, freshness)));
+  if (!usable.length) return "";
+  const chosen = usable.reduce((best, limit) => limit.liters < best.liters ? limit : best);
+  return ` · лимит: ${chosen.liters} л${limitAgeText(chosen, fetchedAt, freshness)}`;
+}
+function limitAgeText(limit, fetchedAt, freshness) {
+  const ageMinutes = (new Date(fetchedAt).getTime() - new Date(limit.observedAt ?? NaN).getTime()) / 60000;
+  // Sources that publish a cap without a timestamp state it as current alongside their current status; the line
+  // already carries the age of the confirming signal, so an invented "unknown time" note would only add noise.
+  if (!Number.isFinite(ageMinutes)) return "";
+  if (ageMinutes <= Number(freshness.freshMinutes ?? 0)) return "";
+  return ageMinutes < 90 ? ` (${Math.max(1, Math.round(ageMinutes))} мин назад)` : ` (${Math.round(ageMinutes / 60)} ч назад)`;
 }
 
 function healthText(h) { return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`; }

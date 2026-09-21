@@ -68,7 +68,9 @@ export class BrowserRunner {
     if (!terminate) return leftovers.map(value => ({ ...value, outcome: "REPORTED" }));
     const out = [];
     for (const leftover of leftovers) {
-      const stillOurs = async () => isAgentBrowserProcess(await this.processControl.args(leftover.pid));
+      // Identity for escalation is the command line we saw at detection, not merely "some agent-browser": a pid
+      // recycled onto a different agent-browser invocation while we waited reads as a different process here.
+      const stillOurs = async () => { const command = await this.processControl.args(leftover.pid); return isAgentBrowserProcess(command) && clampText(command, 200) === leftover.command; };
       let outcome;
       try {
         this.processControl.terminate(leftover.pid, "SIGTERM");
@@ -93,7 +95,6 @@ export class BrowserRunner {
 
   async ensureRunSession() {
     if (!this.probed) await this.probe();
-    await this.rememberDaemonPid();
     return { namespace: this.namespace, sessionName: this.sessionName };
   }
 
@@ -116,6 +117,9 @@ export class BrowserRunner {
       throw classifyCommandFailure(result, "open");
     }
     this.started = true;
+    // Recorded here and not in ensureRunSession: the daemon (and its pid file) only exists once "open" has
+    // succeeded, so remembering any earlier would leave the ownership check with nothing and silently disarm it.
+    await this.rememberDaemonPid();
     if (networkControls.length) this.networkControlsStatus = "ACTIVE";
     const opened = commandPayload(result.json);
     const reportedUrl = String(opened?.url ?? opened?.finalUrl ?? "");
@@ -209,7 +213,8 @@ export class BrowserRunner {
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, Math.max(0, Math.min(pollMs, deadline - Date.now()))));
       const still = await visible();
-      if (still === undefined) return "UNREADABLE";
+      // Distinct from the initial UNREADABLE: the window was already held for a while, so the attempt is spent.
+      if (still === undefined) return "LOST_WHILE_HELD";
       if (!still) return "CLEARED";
     }
     return "TIMED_OUT";

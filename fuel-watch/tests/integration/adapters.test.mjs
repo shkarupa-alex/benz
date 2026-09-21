@@ -497,6 +497,22 @@ test("an absent or empty grade catalogue is left unknown rather than read as an 
   assert.deepEqual(petrolAssortment(["АИ-95","аи 92"]),["92","95"]);
 });
 
+// The fuel list is not always the first segment of the card. Reading only segment 0 made a card that leads with
+// prose look like it enumerated nothing, so a hidden-only AI-95 slipped through as a plain positive.
+test("gdebenz finds the card's fuel list behind a leading prose segment", async () => {
+  const run = async detail => {
+    const rows=[{osm_id:"812",brand:"Лукойл",name:"Лукойл",addr:"ул. Тестовая, 4",lat:48.72,lon:44.49,status:"queue",detail,fuels_now:"92,95,ДТ",last_at:"2026-09-21 12:00:09"}];
+    return Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+  };
+  const proseFirst=await run("Очередь 100+ машин · 92, ДТ");
+  assert.equal(proseFirst.observations[0].normalizedStatus,"UNCERTAIN","a card listing 92 behind prose still disagrees with fuels_now");
+  assert.deepEqual(proseFirst.observations[0].conflict.visibleGrades,["92"]);
+  const noFuelList=await run("Очередь 100+ машин · Только наличные");
+  assert.equal(noFuelList.observations[0].normalizedStatus,"IN_STOCK","a card that enumerates nothing has nothing to disagree with");
+  assert.equal(noFuelList.observations[0].conflict,undefined);
+  assert.equal(noFuelList.activity.some(value=>value.gradeLabel==="100"),false,"a queue size is not a grade");
+});
+
 // A diesel-only side is an enumeration, not silence: keying the check off the petrol lists missed these entirely.
 test("gdebenz flags a conflict even when one side enumerates no petrol at all", async () => {
   const run = async (detail, fuelsNow) => {

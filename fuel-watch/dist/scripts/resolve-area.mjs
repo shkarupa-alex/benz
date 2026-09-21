@@ -2,7 +2,7 @@
 import { createRequire as __fuelWatchCreateRequire } from 'node:module'; const require = __fuelWatchCreateRequire(import.meta.url);
 import {
   BrowserRunner
-} from "./chunks/chunk-67NBBQ32.mjs";
+} from "./chunks/chunk-XI2JTR44.mjs";
 import {
   ensureUserConfig
 } from "./chunks/chunk-NO6Q45EE.mjs";
@@ -15,7 +15,7 @@ import {
   resolveArea,
   stableJson,
   writeJsonAtomic
-} from "./chunks/chunk-OFV4LHTC.mjs";
+} from "./chunks/chunk-Q2QRNGMD.mjs";
 import "./chunks/chunk-XKTP5TT3.mjs";
 
 // scripts/resolve-area.mjs

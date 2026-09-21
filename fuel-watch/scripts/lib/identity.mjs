@@ -56,8 +56,11 @@ function recordDiagnostic(diagnostics, entry) {
 function stableDiagnosticKey(entry) { return `${entry.kind}|${entry.members?.join(",") ?? `${entry.source}:${entry.sourceStationId}`}`; }
 
 // Any pair farther apart than maxCoordinateDriftMeters already scores -Infinity, and secondBestScore floors at 0,
-// so restricting both scans to spatial neighbours changes which pairs are examined, never which pair wins. Groups
-// without a usable coordinate keep the full scan, because distance alone never rejects them.
+// so restricting both scans to spatial neighbours changes which pairs are examined, never which pair wins. A group
+// the index cannot place is still offered to every comparison and still receives the full scan itself. That is
+// deliberately belt-and-braces: such a group scores -Infinity today whatever it is compared against, so the two
+// branches cannot change an outcome now, and they are what keeps the index from deciding matches if scoring ever
+// learns to identify a station without usable coordinates.
 function spatialNeighbors(values, identity, enabled = true) {
   const everyLiveIndex = values.map((group, index) => group ? index : -1).filter(index => index >= 0);
   // Turning the index off must leave exactly the exhaustive scan behind, which is what the equivalence test compares against.
@@ -116,8 +119,11 @@ function matchScore(a, b, identity) {
   const brandA = normalizeComparableBrand(a.brand, identity.brandAliases), brandB = normalizeComparableBrand(b.brand, identity.brandAliases);
   if (brandLabel(a.brand) && !brandA || brandLabel(b.brand) && !brandB) return -Infinity;
   if (brandA && brandB && brandA !== brandB) return -Infinity;
-  const distance = haversineMeters(a.coordinate, b.coordinate);
-  if (distance > identity.maxCoordinateDriftMeters) return -Infinity;
+  // A member can reach matching without a coordinate at all (a manual override or a previous snapshot, never an
+  // adapter, which drops unlocated stations). Distance is then unknown, which is NaN and fails closed below,
+  // rather than a crash that would take the whole collection down.
+  const distance = Array.isArray(a.coordinate) && Array.isArray(b.coordinate) ? haversineMeters(a.coordinate, b.coordinate) : NaN;
+  if (!(distance <= identity.maxCoordinateDriftMeters)) return -Infinity;
   const addressA = normalizeAddress(a.address, identity.streetDictionary), addressB = normalizeAddress(b.address, identity.streetDictionary);
   const titleA = normalizeText(a.title), titleB = normalizeText(b.title);
   const addressScore = tokenSimilarity(addressA, addressB);
