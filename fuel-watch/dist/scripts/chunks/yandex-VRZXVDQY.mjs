@@ -3,7 +3,7 @@ import {
   errorResult,
   healthResult,
   okResult
-} from "./chunk-HKDPASWA.mjs";
+} from "./chunk-JQF3L5JB.mjs";
 import "./chunk-IVODUSOD.mjs";
 import "./chunk-XKTP5TT3.mjs";
 
@@ -14,9 +14,10 @@ async function collect(request, ctx) {
   try {
     const center = centroid(request.area.polygon);
     const url = `https://yandex.ru/maps/38/volgograd/search/${encodeURIComponent("\u0410\u0417\u0421 \u0410\u0418-95")}/?ll=${center[0]}%2C${center[1]}&z=12`;
-    const opened = await ctx.browser.open(url);
+    let opened = await ctx.browser.open(url);
+    if (isRateLimited(opened) && typeof ctx.browser.useRealisticUserAgent === "function" && await ctx.browser.useRealisticUserAgent()) opened = await ctx.browser.open(url);
     if (/captcha|showcaptcha/i.test(`${opened.finalUrl} ${opened.pageTextPrefix}`)) return healthResult(id, "CHALLENGE", "CHALLENGE", "Yandex presented a challenge");
-    if (/^limited$/i.test(opened.pageTextPrefix.trim())) return healthResult(id, "HTTP_ERROR", "HTTP_429_LIMITED", "Yandex returned its automation rate-limit page");
+    if (isRateLimited(opened)) return healthResult(id, "HTTP_ERROR", "HTTP_429_LIMITED", "Yandex returned its automation rate-limit page");
     await ctx.browser.waitReady({ anyOfSelectors: ["[data-chunk=search-result]", ".search-snippet-view", "script"], urlRejectPatterns: ["showcaptcha", "captcha"], timeoutMs: Math.min(2e4, ctx.config.browser.adapterTimeoutMs) });
     let raw = await ctx.browser.evalJson(YANDEX_EXTRACTOR);
     if (raw.schemaChanged) return healthResult(id, "SCHEMA_CHANGED", "SCHEMA_CHANGED", raw.message ?? "No recognizable station structures");
@@ -70,7 +71,8 @@ var YANDEX_EXTRACTOR = String.raw`(() => {
         const perGradeObservedAt = isoTime(f.lastSignalTimestamp || f.updatedAt || f.timestamp);
         if (isGasoline(fuel) && perGradeObservedAt && Number.isFinite(perGradeSignals)) activity.push({ stationId: id, fuel, gradeLabel: fuel, kind: 'ROLLING_SIGNAL_COUNT', observedAt: perGradeObservedAt, latestEventAt: perGradeObservedAt, count: perGradeSignals, windowMinutes: 60, gradeSpecific: true, sourceTerminology: 'SIGNAL' });
       }
-      if (fuels.queueStatus || fuels.localizedQueueSize) queues.push({ stationId: id, value: fuels.localizedQueueSize || fuels.queueStatus, ordinal: fuels.queueStatus, observedAt: isoTime(fuels.lastSignalTimestamp) });
+      const queueStatus = String(fuels.queueStatus ?? '');
+      if ((queueStatus && queueStatus.toUpperCase() !== 'UNKNOWN') || fuels.localizedQueueSize) queues.push({ stationId: id, value: fuels.localizedQueueSize || queueStatus, ordinal: queueStatus || undefined, observedAt: isoTime(fuels.lastSignalTimestamp) });
     }
     const q = raw.queue || raw.queueStatus || raw.properties?.queue;
     if (id && q) queues.push({ stationId: id, value: typeof q === 'object' ? q.label || q.status || q.value : q, vehicleCount: q?.vehicleCount, observedAt: q?.updatedAt });
@@ -83,6 +85,9 @@ var YANDEX_EXTRACTOR = String.raw`(() => {
   const stations = [...stationMap.values()];
   return { stations, observations, queues, activity, schemaChanged: stations.length === 0, message: stations.length ? undefined : 'Yandex station enumeration returned no station records' };
 })()`;
+function isRateLimited(opened) {
+  return /^limited$/i.test(String(opened.pageTextPrefix ?? "").trim());
+}
 function centroid(points) {
   const ring = points.at(-1)?.[0] === points[0]?.[0] && points.at(-1)?.[1] === points[0]?.[1] ? points.slice(0, -1) : points;
   return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length];

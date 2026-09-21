@@ -5,18 +5,11 @@ import {
   rankAssessments
 } from "./chunk-WCGSC67K.mjs";
 import {
-  isMainModule,
-  loadConfig,
-  readJson,
-  sha256,
-  stableJson
+  sha256
 } from "./chunk-GQHB3NSD.mjs";
 import {
   petrolOctaneKey
 } from "./chunk-XKTP5TT3.mjs";
-
-// scripts/report.mjs
-import { resolve } from "node:path";
 
 // scripts/lib/state.mjs
 function updateAvailabilityRuns(previousRuns = [], assessments, previousSnapshot, fetchedAt) {
@@ -59,7 +52,7 @@ function prepareMonitoringSnapshot(state, snapshot, config) {
   return { snapshot: prepared, availabilityRuns };
 }
 
-// scripts/report.mjs
+// scripts/lib/render-report.mjs
 var VERDICT = { AVAILABLE: "\u0415\u0421\u0422\u042C", LIKELY_AVAILABLE: "\u0421\u041A\u041E\u0420\u0415\u0415 \u0415\u0421\u0422\u042C", CONFLICTING: "\u041F\u0420\u041E\u0422\u0418\u0412\u041E\u0420\u0415\u0427\u0418\u0412\u041E", INDIRECT: "\u041A\u041E\u0421\u0412\u0415\u041D\u041D\u041E", NOT_AVAILABLE: "\u041D\u0415\u0422", NO_FRESH_DATA: "\u041D\u0415\u0422 \u0421\u0412\u0415\u0416\u0418\u0425 \u0414\u0410\u041D\u041D\u042B\u0425" };
 var CONFIDENCE = { HIGH: "\u0432\u044B\u0441\u043E\u043A\u0430\u044F", MEDIUM: "\u0441\u0440\u0435\u0434\u043D\u044F\u044F", LOW: "\u043D\u0438\u0437\u043A\u0430\u044F", NONE: "\u043D\u0435\u0442" };
 function renderReport(snapshot, { monitorId, generation = 0, recovered = false, compact = false } = {}) {
@@ -67,6 +60,7 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
   const reportId = monitorId ? sha256(`${monitorId}${generation}${snapshotHash}`) : sha256(snapshotHash);
   const ranked = snapshot.rankedStationKeys.map((key) => snapshot.assessments.find((a) => a.stationKey === key)).filter(Boolean);
   const lines = [`## \u041D\u0430\u043B\u0438\u0447\u0438\u0435 \u0410\u0418-95 \u2014 ${formatTime(snapshot.fetchedAt)}`, `\u0417\u043E\u043D\u0430: ${snapshot.areaLabel}. \u041D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u043D\u044B\u0435 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B \u0438 \u0431\u0440\u0435\u043D\u0434\u043E\u0432\u044B\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F \u043E\u0431\u044A\u0435\u0434\u0438\u043D\u0435\u043D\u044B \u0432 \u0410\u0418-95.`, "", `\u0411\u0440\u0430\u0443\u0437\u0435\u0440: ${snapshot.runtime?.browserMode ?? "\u0440\u0435\u0436\u0438\u043C \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D"}. \u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
+  lines.push(sourceAvailabilityText(snapshot));
   if (recovered) lines.push(`\u041F\u043E\u0432\u0442\u043E\u0440 \u043F\u043E\u0441\u043B\u0435 \u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u044F \xB7 reportId: ${reportId.slice(0, 12)}.`);
   for (const warning of snapshot.warnings ?? []) lines.push(`\u26A0 ${warning.code}: ${warning.message}`);
   if (!compact && snapshot.changes?.length) {
@@ -100,6 +94,29 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
 }
 function healthText(h) {
   return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`;
+}
+var SOURCE_FAILURE = {
+  CHALLENGE: "\u043F\u043E\u043A\u0430\u0437\u0430\u043B \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0443 \u043D\u0430 \u0440\u043E\u0431\u043E\u0442\u0430",
+  HTTP_429_LIMITED: "\u043E\u0433\u0440\u0430\u043D\u0438\u0447\u0438\u043B \u0447\u0430\u0441\u0442\u043E\u0442\u0443 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432",
+  HTTP_ERROR_PAGE: "\u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0435\u0439 \u043E\u0448\u0438\u0431\u043A\u0438",
+  HTTP_ERROR: "\u043E\u0442\u0432\u0435\u0442\u0438\u043B \u043E\u0448\u0438\u0431\u043A\u043E\u0439",
+  TIMEOUT: "\u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0432\u043E\u0432\u0440\u0435\u043C\u044F",
+  PAGE_LOST: "\u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u043B\u0430\u0441\u044C",
+  NAVIGATION_FAILED: "\u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043D\u0435 \u0441\u043C\u043E\u0433 \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044C \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0443",
+  RESOURCE_BLOCKED: "\u0443\u0432\u0451\u043B \u0437\u0430 \u043F\u0440\u0435\u0434\u0435\u043B\u044B \u0440\u0430\u0437\u0440\u0435\u0448\u0451\u043D\u043D\u044B\u0445 \u0434\u043E\u043C\u0435\u043D\u043E\u0432",
+  SCHEMA_CHANGED: "\u0438\u0437\u043C\u0435\u043D\u0438\u043B \u0441\u0442\u0440\u0443\u043A\u0442\u0443\u0440\u0443 \u0434\u0430\u043D\u043D\u044B\u0445",
+  NOT_ATTEMPTED: "\u043D\u0435 \u043E\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u0441\u044F \u0438\u0437-\u0437\u0430 \u043E\u0431\u0449\u0435\u0433\u043E \u0441\u0431\u043E\u044F \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0430",
+  BROWSER_UNAVAILABLE: "\u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043E\u043A\u0430\u0437\u0430\u043B\u0441\u044F \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D",
+  INTERNAL_ADAPTER_ERROR: "\u043D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u0442\u044C"
+};
+function sourceAvailabilityText(snapshot) {
+  const attempted = (snapshot.sourceHealth ?? []).filter((h) => h.status !== "DISABLED");
+  const contributing = attempted.filter((h) => snapshot.sourceCoverage?.[h.source]);
+  const unavailable = attempted.filter((h) => !snapshot.sourceCoverage?.[h.source]);
+  if (!unavailable.length) return `\u0412\u0441\u0435 ${attempted.length} \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A(\u043E\u0432) \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438.`;
+  const reasons = unavailable.map((h) => `${h.source} \u2014 ${SOURCE_FAILURE[h.code] ?? SOURCE_FAILURE[h.status] ?? "\u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B"}`).join("; ");
+  if (!contributing.length) return `\u041D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B \u0432\u0441\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${reasons}. \u0414\u0430\u043D\u043D\u044B\u0445 \u0434\u043B\u044F \u043E\u0446\u0435\u043D\u043A\u0438 \u043D\u0430\u043B\u0438\u0447\u0438\u044F \u043D\u0435\u0442; \u044D\u0442\u043E \u043D\u0435 \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442, \u0447\u0442\u043E \u0431\u0435\u043D\u0437\u0438\u043D\u0430 \u043D\u0435\u0442.`;
+  return `\u041D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u044B\u0435 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${reasons}. \u041E\u0446\u0435\u043D\u043A\u0430 \u043D\u0438\u0436\u0435 \u043F\u043E\u0441\u0442\u0440\u043E\u0435\u043D\u0430 \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E \u043E\u0441\u0442\u0430\u0432\u0448\u0438\u043C\u0441\u044F: ${contributing.map((h) => h.source).join(", ")}.`;
 }
 function changeText(c) {
   if (c.type === "SCOPE_CHANGED") return c.message;
@@ -181,40 +198,6 @@ function forecastSignalBasis(value) {
   if (value === "PETROL_STATUS_PATTERN") return "\u0441\u0438\u043D\u0445\u0440\u043E\u043D\u043D\u044B\u0435 \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u044B \u0441\u0442\u0430\u0442\u0443\u0441\u043E\u0432 \u0431\u0435\u043D\u0437\u0438\u043D\u043E\u0432\u044B\u0445 \u043C\u0430\u0440\u043E\u043A";
   return "\u043F\u0435\u0440\u0435\u0445\u043E\u0434\u044B \u0410\u0418-95 \u043E\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u043E\u0432\u0430\u043B\u043E \u2192 \u043F\u043E\u044F\u0432\u0438\u043B\u043E\u0441\u044C";
 }
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  let snapshot = args.snapshot ? await readJson(args.snapshot) : JSON.parse(await readStdin());
-  let state;
-  if (args["state-dir"]) state = await readJson(resolve(args["state-dir"], "state.json"));
-  if (state) {
-    const config = await loadConfig(state.configPath);
-    snapshot = prepareMonitoringSnapshot(state, snapshot, config).snapshot;
-  }
-  const result = renderReport(snapshot, { monitorId: state?.monitorId, generation: state?.generation, recovered: args.recovered, compact: args.compact });
-  process.stdout.write(args.json ? `${stableJson(result)}
-` : `${result.markdown}
-`);
-}
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (["--snapshot", "--state-dir"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]);
-    else if (["--json", "--recovered", "--compact"].includes(arg)) out[arg.slice(2)] = true;
-    else throw new Error(`Unknown argument: ${arg}`);
-  }
-  return out;
-}
-async function readStdin() {
-  let data = "";
-  for await (const chunk of process.stdin) data += chunk;
-  return data;
-}
-if (isMainModule(import.meta.url)) main().catch((error) => {
-  process.stderr.write(`${error.stack ?? error}
-`);
-  process.exitCode = 2;
-});
 
 export {
   prepareMonitoringSnapshot,

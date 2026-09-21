@@ -6,7 +6,7 @@ import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadCon
 import { ensureUserConfig, monitorRoot } from "./lib/paths.mjs";
 import { prepareMonitoringSnapshot } from "./lib/prepare.mjs";
 import { isMainModule, readJson, stableJson, writeJsonAtomic } from "./lib/util.mjs";
-import { renderReport } from "./report.mjs";
+import { renderReport } from "./lib/render-report.mjs";
 
 const OWNER_FILE = "owner.json";
 

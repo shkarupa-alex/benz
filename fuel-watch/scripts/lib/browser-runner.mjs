@@ -18,6 +18,8 @@ export class BrowserRunner {
     this.started = false;
     this.probed = false;
     this.networkControlsStatus = "PENDING";
+    this.userAgent = config.browser.userAgent || undefined;
+    this.userAgentStatus = this.userAgent ? "CONFIGURED" : "BROWSER_DEFAULT";
     this.runtimeWarnings = [];
     this.cleanupWarningsByNamespace = new Map([[this.namespace, []]]);
     this.expectedUrl = undefined;
@@ -45,7 +47,7 @@ export class BrowserRunner {
         await this.degradeNetworkControls();
         return this.open(url, attempt + 1);
       }
-      if (attempt < 2 && isBrowserLevelFailure(result)) {
+      if (attempt < 2 && (isBrowserLevelFailure(result) || isTransientNavigationFailure(result))) {
         await this.closeSessionBestEffort();
         this.rotateNamespace();
         this.started = false;
@@ -68,6 +70,15 @@ export class BrowserRunner {
         await this.degradeNetworkControls();
         return this.open(url, attempt + 1);
       }
+      // A tab that comes up blank or on a Chrome error page never recovers by re-navigating the same session,
+      // so the only useful retry is a fresh namespace. Real drift to another origin is deliberately not retried.
+      if (attempt < 2 && error.code === "PAGE_LOST" && isUnusableLandingUrl(error.details?.actual)) {
+        await this.closeSessionBestEffort();
+        this.rotateNamespace();
+        this.started = false;
+        this.expectedUrl = undefined;
+        return this.open(url, attempt + 1);
+      }
       throw error;
     }
     return { finalUrl: snapshot.url, pageTitle: snapshot.title, pageTextPrefix: snapshot.textPrefix };
@@ -80,6 +91,25 @@ export class BrowserRunner {
     this.rotateNamespace();
     this.started = false;
     this.expectedUrl = undefined;
+  }
+
+  // Some sources answer a headless-signalling User-Agent with an automation rate-limit page instead of content.
+  // Reuse the real browser identity with the "Headless" token removed rather than inventing a different browser.
+  async useRealisticUserAgent() {
+    if (this.userAgentStatus !== "BROWSER_DEFAULT") return false;
+    let reported;
+    try { reported = String(await this.evalJsonUnchecked("navigator.userAgent") ?? ""); }
+    catch { return false; }
+    const realistic = reported.replace(/Headless/g, "").replace(/\s{2,}/g, " ").trim();
+    if (!realistic || realistic === reported) { this.userAgentStatus = "NOT_HEADLESS"; return false; }
+    this.userAgent = realistic;
+    this.userAgentStatus = "DEHEADLESSED";
+    this.runtimeWarnings.push(`browser reported a headless User-Agent and the source answered with its automation rate-limit page; retried once with the same browser identity without the "Headless" token`);
+    await this.closeSessionBestEffort();
+    this.rotateNamespace();
+    this.started = false;
+    this.expectedUrl = undefined;
+    return true;
   }
 
   rotateNamespace() {
@@ -205,8 +235,9 @@ export class BrowserRunner {
 
   async commandJson(args, options = {}) {
     const launchMode = this.config.browser.headed ? ["--headed"] : [];
+    const userAgent = this.userAgent ? ["--user-agent", this.userAgent] : [];
     const namespace = options.namespace ?? this.namespace;
-    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, ...launchMode, "--namespace", namespace, "--session", this.sessionName, ...args], { env: this.environment(namespace), timeoutMs: options.timeoutMs, input: options.input });
+    const result = await this.exec(this.command, ["--config", this.config.browser.configPath, ...launchMode, ...userAgent, "--namespace", namespace, "--session", this.sessionName, ...args], { env: this.environment(namespace), timeoutMs: options.timeoutMs, input: options.input });
     let json;
     try { json = result.stdout.trim() ? JSON.parse(result.stdout) : null; } catch { json = null; }
     return { ...result, json };
@@ -239,8 +270,9 @@ function assertSameOrigin(expected, actual) {
   try {
     const expectedUrl = new URL(expected), actualUrl = new URL(actual);
     if (actualUrl.protocol === "about:" || expectedUrl.origin !== actualUrl.origin) throw new Error();
-  } catch { throw new BrowserError("PAGE_LOST", `Browser page changed unexpectedly: expected ${expected}, got ${actual || "empty URL"}`); }
+  } catch { throw new BrowserError("PAGE_LOST", `Browser page changed unexpectedly: expected ${expected}, got ${actual || "empty URL"}`, { expected, actual: String(actual ?? "") }); }
 }
+export function isUnusableLandingUrl(value) { const text = String(value ?? "").trim(); return text === "" || /^(?:about:|chrome-error:)/i.test(text); }
 function assertAllowedLanding(actual, allowedDomains) {
   try {
     const url = new URL(actual);
@@ -251,11 +283,18 @@ function domainMatches(hostname, pattern) { const host = hostname.toLowerCase(),
 function isNetworkControlsFailure(result) { return isNetworkControlsFailureText(`${result.stderr} ${result.stdout}`); }
 function isNetworkControlsFailureText(text) { return /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(text)); }
 function isBrowserLevelFailure(result) { return /daemon|connection|failed to connect|browser.*closed|target.*closed|session with given id not found|no session with given id|cannot find default execution context|execution context.*(?:destroyed|not found)|socket|econn/i.test(`${result.stderr} ${result.stdout}`); }
+// A freshly launched browser profile can fail its first navigation (observed: ERR_CERT_AUTHORITY_INVALID on every
+// source of one run) even though the same host answers correctly moments later, so these are retried once elsewhere.
+const TRANSIENT_NAVIGATION_ERRORS = /net::ERR_(?:CERT_AUTHORITY_INVALID|CERT_COMMON_NAME_INVALID|CERT_DATE_INVALID|NETWORK_CHANGED|TIMED_OUT|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_ABORTED|EMPTY_RESPONSE|SOCKET_NOT_CONNECTED|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|ADDRESS_UNREACHABLE)\b/i;
+export function isTransientNavigationFailure(result) { const text = `${result.stderr} ${result.stdout}`; return /navigation failed/i.test(text) && TRANSIENT_NAVIGATION_ERRORS.test(text); }
+function navigationErrorCode(text) { return String(text).match(/net::(ERR_[A-Z0-9_]+)/)?.[1]; }
 function classifyCommandFailure(result, operation) {
   const text = `${result.stderr} ${result.stdout}`;
   if (result.exitCode === 124) return new BrowserError("TIMEOUT", `${operation} timed out`);
   if (/captcha|recaptcha|challenge/i.test(text)) return new BrowserError("CHALLENGE", clampText(text));
   if (/allowed.?domain|blocked/i.test(text)) return new BrowserError("RESOURCE_BLOCKED", clampText(text));
+  const navigationError = /navigation failed/i.test(text) ? navigationErrorCode(text) : undefined;
+  if (navigationError) return new BrowserError("NAVIGATION_FAILED", `${operation} could not load the page (${navigationError})`);
   return new BrowserError(isBrowserLevelFailure(result) ? "BROWSER_UNAVAILABLE" : "INTERNAL_ADAPTER_ERROR", clampText(text) || `${operation} failed with ${result.exitCode}`);
 }
 async function resolveExecutable(command, env) {

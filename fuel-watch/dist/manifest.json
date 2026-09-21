@@ -1,22 +1,22 @@
 {
   "schemaVersion": 1,
-  "adapterContractHash": "6ea899694346cf37355f395a30641699175b055a13c50cc0a0b373ef934027e8",
+  "adapterContractHash": "22b84604c0f8188e6499aa869d377f56078372c9726871cb199b904813a53025",
   "files": {
-    "dist/scripts/chunks/benzonavt-YTFC2O7A.mjs": 11152,
+    "dist/scripts/chunks/benzonavt-5CQJPN7E.mjs": 11490,
     "dist/scripts/chunks/chunk-GQHB3NSD.mjs": 896311,
-    "dist/scripts/chunks/chunk-HKDPASWA.mjs": 9316,
     "dist/scripts/chunks/chunk-IVODUSOD.mjs": 7206,
-    "dist/scripts/chunks/chunk-MZX7FDTW.mjs": 15346,
+    "dist/scripts/chunks/chunk-JQF3L5JB.mjs": 9841,
     "dist/scripts/chunks/chunk-NO6Q45EE.mjs": 1906,
+    "dist/scripts/chunks/chunk-RDSBUZQS.mjs": 23776,
     "dist/scripts/chunks/chunk-WCGSC67K.mjs": 5307,
     "dist/scripts/chunks/chunk-XKTP5TT3.mjs": 4769,
-    "dist/scripts/chunks/chunk-Y75S7PDJ.mjs": 21523,
-    "dist/scripts/chunks/gdebenz-FHE2LIRQ.mjs": 15365,
-    "dist/scripts/chunks/twogis-LKKY6BOH.mjs": 9895,
-    "dist/scripts/chunks/yandex-2ME26BL2.mjs": 9058,
+    "dist/scripts/chunks/chunk-ZNFTAGFH.mjs": 18024,
+    "dist/scripts/chunks/gdebenz-BXUPTQC7.mjs": 15365,
+    "dist/scripts/chunks/twogis-YTIGV6R2.mjs": 10219,
+    "dist/scripts/chunks/yandex-VRZXVDQY.mjs": 9409,
     "dist/scripts/collect.mjs": 114434,
     "dist/scripts/monitor.mjs": 9293,
-    "dist/scripts/report.mjs": 355,
+    "dist/scripts/report.mjs": 1808,
     "dist/scripts/resolve-area.mjs": 4082
   }
 }

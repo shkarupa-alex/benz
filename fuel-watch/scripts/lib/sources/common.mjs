@@ -15,7 +15,7 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
   const queues = (raw.queues ?? []).flatMap(q => {
     const sourceStationId = String(q.stationId ?? q.sourceStationId ?? "");
     if (!stationIds.has(sourceStationId)) return [];
-    return [{ source, sourceStationId, time: normalizeTime(q), kind: normalizeQueueKind(q), vehicleCount: finite(q.vehicleCount), ordinal: normalizeOrdinal(q.ordinal ?? q.value), rawValue: String(q.rawValue ?? q.value ?? "") }];
+    return [{ source, sourceStationId, time: normalizeTime(q), kind: normalizeQueueKind(q), vehicleCount: finite(q.vehicleCount), ordinal: queueOrdinal(q), rawValue: String(q.rawValue ?? q.value ?? "") }];
   });
   const activity = (raw.activity ?? []).flatMap(a => {
     const sourceStationId = String(a.stationId ?? a.sourceStationId ?? "");
@@ -39,7 +39,7 @@ export function detailTiming(config) {
   return { requestTimeoutMs: Math.max(250, Math.min(3500, Math.floor(adapterTimeoutMs / 4))), budgetMs: Math.max(1000, Math.min(10000, Math.floor(adapterTimeoutMs / 2))) };
 }
 export function errorResult(source, error) {
-  const map = { CHALLENGE: "CHALLENGE", TIMEOUT: "TIMEOUT", RESOURCE_BLOCKED: "RESOURCE_BLOCKED", HTTP_ERROR_PAGE: "HTTP_ERROR", SCHEMA_CHANGED: "SCHEMA_CHANGED", EMPTY_RESULT: "PARTIAL", TRUNCATED: "PARTIAL", PAGE_LOST: "PARTIAL", BROWSER_UNAVAILABLE: "PARTIAL" };
+  const map = { CHALLENGE: "CHALLENGE", TIMEOUT: "TIMEOUT", RESOURCE_BLOCKED: "RESOURCE_BLOCKED", HTTP_ERROR_PAGE: "HTTP_ERROR", SCHEMA_CHANGED: "SCHEMA_CHANGED", EMPTY_RESULT: "PARTIAL", TRUNCATED: "PARTIAL", PAGE_LOST: "PARTIAL", NAVIGATION_FAILED: "PARTIAL", BROWSER_UNAVAILABLE: "PARTIAL" };
   return healthResult(source, map[error.code] ?? "PARTIAL", error.code ?? "INTERNAL_ADAPTER_ERROR", error.message);
 }
 export function normalizeCoordinate(value, order = "LON_LAT") { if (!Array.isArray(value) || value.length < 2) return [NaN, NaN]; const a = coordinateNumber(value[0]), b = coordinateNumber(value[1]); return order === "LAT_LON" ? [b, a] : [a, b]; }
@@ -56,8 +56,20 @@ export function normalizeStatus(value) {
   return "UNKNOWN";
 }
 function normalizeTime(o) { if (o.observedAt || o.timestamp) { const value = new Date(o.observedAt ?? o.timestamp); if (Number.isFinite(value.getTime())) return { kind: "EXACT", observedAt: value.toISOString() }; } if (Number.isFinite(o.minMinutes) && Number.isFinite(o.maxMinutes)) return { kind: "BOUNDED_AGE", minMinutes: o.minMinutes, maxMinutes: o.maxMinutes }; return { kind: "UNKNOWN" }; }
-function normalizeQueueKind(q) { if (Number.isFinite(q.vehicleCount)) return "VEHICLES"; if (normalizeOrdinal(q.ordinal ?? q.value)) return "ORDINAL"; if (q.present === true) return "PRESENCE"; return "TEXT"; }
-function normalizeOrdinal(value) { const text = String(value ?? "").toLowerCase(); if (/very.?long|очень.*(длин|бол)/u.test(text)) return "VERY_LONG"; if (/long|больш|длин/u.test(text)) return "LONG"; if (/medium|сред/u.test(text)) return "MEDIUM"; if (/short|мал|корот/u.test(text)) return "SHORT"; if (/none|нет|без/u.test(text)) return "NONE"; return undefined; }
+function normalizeQueueKind(q) { if (Number.isFinite(q.vehicleCount)) return "VEHICLES"; if (queueOrdinal(q)) return "ORDINAL"; if (q.present === true) return "PRESENCE"; return "TEXT"; }
+// A source's own localized wording is more reliable than its enum token, so it is tried first and the token is the fallback.
+export function queueOrdinal(q) { return normalizeOrdinal(q?.value) ?? normalizeOrdinal(q?.ordinal); }
+export function normalizeOrdinal(value) {
+  const text = String(value ?? "").normalize("NFKC").toLowerCase().replaceAll("ё", "е").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || /^unknown$/u.test(text)) return undefined;
+  if (/very.?(?:long|high)|очень.*(?:длин|бол)/u.test(text)) return "VERY_LONG";
+  if (/(?:^|\s)(?:no|none)(?:\s|$)|no.?queue|нет\s+очеред|без\s+очеред/u.test(text)) return "NONE";
+  if (/(?:^|[^\p{L}])(?:long|high)(?:[^\p{L}]|$)|(?<!не)больш|длин/u.test(text)) return "LONG";
+  if (/(?:^|[^\p{L}])(?:medium|moderate)(?:[^\p{L}]|$)|сред/u.test(text)) return "MEDIUM";
+  if (/(?:^|[^\p{L}])(?:short|low|small)(?:[^\p{L}]|$)|небольш|мал|корот/u.test(text)) return "SHORT";
+  if (/(?:^|\s)(?:нет|без)(?:\s|$)/u.test(text)) return "NONE";
+  return undefined;
+}
 function finite(value) { const n = Number(value); return Number.isFinite(n) ? n : undefined; }
 function iso(value) { if (!value) return undefined; const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toISOString() : undefined; }
 function coverageMetrics(stations, observations, raw) {

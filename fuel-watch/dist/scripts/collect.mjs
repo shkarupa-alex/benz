@@ -8,7 +8,7 @@ import {
 } from "./chunks/chunk-WCGSC67K.mjs";
 import {
   BrowserRunner
-} from "./chunks/chunk-MZX7FDTW.mjs";
+} from "./chunks/chunk-ZNFTAGFH.mjs";
 import {
   ensureUserConfig,
   historyPath,
@@ -2368,10 +2368,10 @@ function compactAssessment(value) {
 
 // scripts/collect.mjs
 var adapters = {
-  yandex: () => import("./chunks/yandex-2ME26BL2.mjs"),
-  gdebenz: () => import("./chunks/gdebenz-FHE2LIRQ.mjs"),
-  "2gis": () => import("./chunks/twogis-LKKY6BOH.mjs"),
-  benzonavt: () => import("./chunks/benzonavt-YTFC2O7A.mjs")
+  yandex: () => import("./chunks/yandex-VRZXVDQY.mjs"),
+  gdebenz: () => import("./chunks/gdebenz-BXUPTQC7.mjs"),
+  "2gis": () => import("./chunks/twogis-YTIGV6R2.mjs"),
+  benzonavt: () => import("./chunks/benzonavt-5CQJPN7E.mjs")
 };
 async function collectSnapshot({ configPath, outputPath, previousPath, historyPath: historyPath2, browserFactory = (config) => new BrowserRunner(config), now = /* @__PURE__ */ new Date(), cleanupNow = Date.now } = {}) {
   const config = await loadConfig(configPath);
@@ -2506,7 +2506,7 @@ function isNetworkControlsHealth(health) {
 }
 var moduleDir = dirname2(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
-  if (true) return "6ea899694346cf37355f395a30641699175b055a13c50cc0a0b373ef934027e8";
+  if (true) return "22b84604c0f8188e6499aa869d377f56078372c9726871cb199b904813a53025";
   const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"];
   return sha256((await Promise.all(names.map((name) => readFile2(resolve2(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
 }

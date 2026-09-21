@@ -4,7 +4,7 @@ import {
   errorResult,
   healthResult,
   okResult
-} from "./chunk-HKDPASWA.mjs";
+} from "./chunk-JQF3L5JB.mjs";
 import "./chunk-IVODUSOD.mjs";
 import "./chunk-XKTP5TT3.mjs";
 
@@ -78,7 +78,9 @@ function twogisExtractor(polygon, detailTimeoutMs = 3500, detailBudgetMs = 1e4) 
       }
     }
     for (const [grade, eventTimes] of timesByGrade) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'RECENT_SIGNAL', eventTimes, gradeSpecific: true, sourceTerminology: 'UGC_REPORT' });
-    const transactionTimes = (detail?.recent_transactions || []).map(value => new Date(value.created_at)).filter(value => Number.isFinite(value.getTime())).map(value => value.toISOString());
+    // station.last_transaction_at rides along on every list row, so stations outside the detail budget still get an activity timestamp.
+    const listTransactionAt = new Date(station.last_transaction_at);
+    const transactionTimes = [...new Set([...(detail?.recent_transactions || []).map(value => new Date(value.created_at)).filter(value => Number.isFinite(value.getTime())).map(value => value.toISOString()), ...(Number.isFinite(listTransactionAt.getTime()) ? [listTransactionAt.toISOString()] : [])])].sort();
     if (transactionTimes.length) activity.push({ stationId: id, kind: 'RECENT_SIGNAL', eventTimes: transactionTimes, gradeSpecific: false, sourceTerminology: 'TRANSACTION' });
   }
   const liveAvailable = liveRows.length > 0;

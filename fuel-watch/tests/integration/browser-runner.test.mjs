@@ -259,3 +259,163 @@ test("twenty fake cleanup cycles leave zero owned sessions", async () => {
     assert.equal(cleanup.sessionsRemaining,0);
   }
 });
+
+const okJson = value => ({ exitCode: 0, stdout: JSON.stringify({ data: value }), stderr: "" });
+
+test("a blank tab right after open is retried in a fresh namespace instead of dropping the source", async () => {
+  const config = await loadConfig();
+  let urlReads = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("open")) return okJson({ url: "https://gdebenz.ru/" });
+    if (args.includes("url")) return okJson({ url: ++urlReads === 1 ? "about:blank" : "https://gdebenz.ru/" });
+    if (args.includes("title")) return okJson({ title: "ГдеБЕНЗ" });
+    return okJson({ text: "станции" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  const first = runner.namespace;
+  const opened = await runner.open("https://gdebenz.ru/");
+  assert.equal(opened.finalUrl, "https://gdebenz.ru/");
+  assert.equal(urlReads, 2);
+  assert.notEqual(runner.namespace, first);
+  assert.deepEqual(runner.namespaceHistory, [first, runner.namespace]);
+});
+
+test("a Chrome error page after open is retried the same way as a blank tab", async () => {
+  const config = await loadConfig();
+  let urlReads = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("open")) return okJson({ url: "https://2gis.ru/volgograd" });
+    if (args.includes("url")) return okJson({ url: ++urlReads === 1 ? "chrome-error://chromewebdata/" : "https://2gis.ru/volgograd" });
+    if (args.includes("title")) return okJson({ title: "2GIS" });
+    return okJson({ text: "АЗС" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  const opened = await runner.open("https://2gis.ru/volgograd");
+  assert.equal(opened.finalUrl, "https://2gis.ru/volgograd");
+  assert.equal(urlReads, 2);
+});
+
+test("a page that stays blank still fails closed as page loss", async () => {
+  const config = await loadConfig();
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("open")) return okJson({ url: "https://gdebenz.ru/" });
+    if (args.includes("url")) return okJson({ url: "about:blank" });
+    if (args.includes("title")) return okJson({ title: "" });
+    if (args.includes("close")) return okJson({ closed: true });
+    return okJson({ text: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://gdebenz.ru/"), error => error.code === "PAGE_LOST");
+});
+
+test("real drift to another origin is never retried away", async () => {
+  const config = await loadConfig();
+  let opens = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("open")) { opens++; return okJson({ url: "https://gdebenz.ru/" }); }
+    if (args.includes("url")) return okJson({ url: "https://gdebenz.ru.evil.example/" });
+    if (args.includes("title")) return okJson({ title: "" });
+    return okJson({ text: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://gdebenz.ru/"), error => error.code === "PAGE_LOST");
+  assert.equal(opens, 1);
+});
+
+test("a headless User-Agent is reused without the Headless token and passed to later commands", async () => {
+  const config = await loadConfig();
+  const calls = [];
+  const exec = async (command, args) => {
+    calls.push(args);
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("eval")) return okJson({ result: "Mozilla/5.0 (X11; Linux x86_64) HeadlessChrome/153.0.0.0 Safari/537.36" });
+    return okJson({ closed: true });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.probe();
+  assert.equal(await runner.useRealisticUserAgent(), true);
+  assert.equal(runner.userAgent, "Mozilla/5.0 (X11; Linux x86_64) Chrome/153.0.0.0 Safari/537.36");
+  assert.ok(runner.runtimeWarnings.some(value => /Headless/.test(value)));
+  await runner.probe();
+  const last = calls.at(-1);
+  assert.equal(last[last.indexOf("--user-agent") + 1], runner.userAgent);
+  assert.equal(await runner.useRealisticUserAgent(), false);
+});
+
+test("a browser that is already not headless is left untouched", async () => {
+  const config = await loadConfig();
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("eval")) return okJson({ result: "Mozilla/5.0 (Macintosh) Chrome/153.0.0.0 Safari/537.36" });
+    return okJson({ closed: true });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.probe();
+  assert.equal(await runner.useRealisticUserAgent(), false);
+  assert.equal(runner.userAgent, undefined);
+  assert.equal(runner.runtimeWarnings.length, 0);
+});
+
+test("a first-navigation certificate failure is retried in a fresh namespace", async () => {
+  const config = await loadConfig();
+  let opens = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) {
+      if (++opens === 1) return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_CERT_AUTHORITY_INVALID" }), stderr: "" };
+      return okJson({ url: "https://yandex.ru/maps" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://yandex.ru/maps" });
+    if (args.includes("title")) return okJson({ title: "Яндекс Карты" });
+    return okJson({ text: "АЗС" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  const first = runner.namespace;
+  const opened = await runner.open("https://yandex.ru/maps");
+  assert.equal(opened.finalUrl, "https://yandex.ru/maps");
+  assert.equal(opens, 2);
+  assert.notEqual(runner.namespace, first);
+});
+
+test("a navigation failure that keeps repeating is named rather than reported as an internal error", async () => {
+  const config = await loadConfig();
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_CERT_AUTHORITY_INVALID" }), stderr: "" };
+    return okJson({ url: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://yandex.ru/maps"), error => error.code === "NAVIGATION_FAILED" && /ERR_CERT_AUTHORITY_INVALID/.test(error.message));
+});
+
+test("a permanent navigation error is not retried as if it were transient", async () => {
+  const config = await loadConfig();
+  let opens = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens++; return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_SSL_PROTOCOL_ERROR" }), stderr: "" }; }
+    return okJson({ url: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://yandex.ru/maps"), error => error.code === "NAVIGATION_FAILED" && /ERR_SSL_PROTOCOL_ERROR/.test(error.message));
+  assert.equal(opens, 1);
+});
+
+test("a navigation the allowlist blocked stays a blocked-resource failure", async () => {
+  const config = await loadConfig();
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), stderr: "" };
+    return okJson({ url: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://tracker.example/"), error => error.code === "RESOURCE_BLOCKED");
+});

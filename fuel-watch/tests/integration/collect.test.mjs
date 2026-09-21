@@ -138,3 +138,38 @@ test("about-blank page loss never disables network controls", async () => {
   assert.equal(result.snapshot.sourceHealth.find(value=>value.source==="gdebenz").code,"PAGE_LOST");
   assert.equal(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")),false);
 });
+
+test("one collapsing source never stops the others and stays named in source health", async () => {
+  const station = source => ({ id: `${source}-1`, coordinate: [44.4825478, 48.7042007], title: "Лукойл", address: "Череповецкая ул., 5А" });
+  const payload = source => ({
+    stations: [station(source)],
+    observations: [{ stationId: `${source}-1`, fuel: "АИ-95", status: "IN_STOCK", observedAt: "2026-08-30T09:50:00Z" }],
+    queues: [], activity: [], schemaChanged: false, naturalTermination: true
+  });
+  const browserFactory = (config, sourceId) => ({
+    namespace: `fixture-${sourceId}`,
+    probe: async () => ({}),
+    open: async url => {
+      if (sourceId === "yandex") throw Object.assign(new Error("daemon connection lost"), { code: "BROWSER_UNAVAILABLE" });
+      if (sourceId === "2gis") return { finalUrl: "https://2gis.ru/captcha", pageTextPrefix: "captcha" };
+      return { finalUrl: url, pageTextPrefix: "станции" };
+    },
+    waitReady: async () => {},
+    useRealisticUserAgent: async () => false,
+    evalJson: async expression => expression.includes("window.scrollBy") ? true : payload(sourceId),
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  });
+  const result = await collectSnapshot({ browserFactory, now: new Date("2026-08-30T10:00:00Z") });
+  const health = Object.fromEntries(result.snapshot.sourceHealth.map(h => [h.source, h]));
+  assert.equal(health.yandex.status, "PARTIAL");
+  assert.equal(health.yandex.code, "BROWSER_UNAVAILABLE");
+  assert.equal(health["2gis"].status, "CHALLENGE");
+  assert.equal(health.gdebenz.status, "OK");
+  assert.equal(health.benzonavt.status, "OK");
+  assert.ok(result.snapshot.assessments.length > 0);
+  assert.equal(result.exitCode, 0);
+  const contributing = result.snapshot.assessments.flatMap(a => a.observations.map(o => o.source));
+  assert.deepEqual([...new Set(contributing)].sort(), ["benzonavt", "gdebenz"]);
+  assert.equal(result.snapshot.sourceCoverage.yandex, undefined);
+  assert.equal(result.snapshot.sourceCoverage["2gis"], undefined);
+});

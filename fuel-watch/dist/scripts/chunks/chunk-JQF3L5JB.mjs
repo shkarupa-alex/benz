@@ -21,7 +21,7 @@ function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", 
   const queues = (raw.queues ?? []).flatMap((q) => {
     const sourceStationId = String(q.stationId ?? q.sourceStationId ?? "");
     if (!stationIds.has(sourceStationId)) return [];
-    return [{ source, sourceStationId, time: normalizeTime(q), kind: normalizeQueueKind(q), vehicleCount: finite(q.vehicleCount), ordinal: normalizeOrdinal(q.ordinal ?? q.value), rawValue: String(q.rawValue ?? q.value ?? "") }];
+    return [{ source, sourceStationId, time: normalizeTime(q), kind: normalizeQueueKind(q), vehicleCount: finite(q.vehicleCount), ordinal: queueOrdinal(q), rawValue: String(q.rawValue ?? q.value ?? "") }];
   });
   const activity = (raw.activity ?? []).flatMap((a) => {
     const sourceStationId = String(a.stationId ?? a.sourceStationId ?? "");
@@ -46,7 +46,7 @@ function detailTiming(config) {
   return { requestTimeoutMs: Math.max(250, Math.min(3500, Math.floor(adapterTimeoutMs / 4))), budgetMs: Math.max(1e3, Math.min(1e4, Math.floor(adapterTimeoutMs / 2))) };
 }
 function errorResult(source, error) {
-  const map = { CHALLENGE: "CHALLENGE", TIMEOUT: "TIMEOUT", RESOURCE_BLOCKED: "RESOURCE_BLOCKED", HTTP_ERROR_PAGE: "HTTP_ERROR", SCHEMA_CHANGED: "SCHEMA_CHANGED", EMPTY_RESULT: "PARTIAL", TRUNCATED: "PARTIAL", PAGE_LOST: "PARTIAL", BROWSER_UNAVAILABLE: "PARTIAL" };
+  const map = { CHALLENGE: "CHALLENGE", TIMEOUT: "TIMEOUT", RESOURCE_BLOCKED: "RESOURCE_BLOCKED", HTTP_ERROR_PAGE: "HTTP_ERROR", SCHEMA_CHANGED: "SCHEMA_CHANGED", EMPTY_RESULT: "PARTIAL", TRUNCATED: "PARTIAL", PAGE_LOST: "PARTIAL", NAVIGATION_FAILED: "PARTIAL", BROWSER_UNAVAILABLE: "PARTIAL" };
   return healthResult(source, map[error.code] ?? "PARTIAL", error.code ?? "INTERNAL_ADAPTER_ERROR", error.message);
 }
 function normalizeCoordinate(value, order = "LON_LAT") {
@@ -82,17 +82,22 @@ function normalizeTime(o) {
 }
 function normalizeQueueKind(q) {
   if (Number.isFinite(q.vehicleCount)) return "VEHICLES";
-  if (normalizeOrdinal(q.ordinal ?? q.value)) return "ORDINAL";
+  if (queueOrdinal(q)) return "ORDINAL";
   if (q.present === true) return "PRESENCE";
   return "TEXT";
 }
+function queueOrdinal(q) {
+  return normalizeOrdinal(q?.value) ?? normalizeOrdinal(q?.ordinal);
+}
 function normalizeOrdinal(value) {
-  const text = String(value ?? "").toLowerCase();
-  if (/very.?long|очень.*(длин|бол)/u.test(text)) return "VERY_LONG";
-  if (/long|больш|длин/u.test(text)) return "LONG";
-  if (/medium|сред/u.test(text)) return "MEDIUM";
-  if (/short|мал|корот/u.test(text)) return "SHORT";
-  if (/none|нет|без/u.test(text)) return "NONE";
+  const text = String(value ?? "").normalize("NFKC").toLowerCase().replaceAll("\u0451", "\u0435").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!text || /^unknown$/u.test(text)) return void 0;
+  if (/very.?(?:long|high)|очень.*(?:длин|бол)/u.test(text)) return "VERY_LONG";
+  if (/(?:^|\s)(?:no|none)(?:\s|$)|no.?queue|нет\s+очеред|без\s+очеред/u.test(text)) return "NONE";
+  if (/(?:^|[^\p{L}])(?:long|high)(?:[^\p{L}]|$)|(?<!не)больш|длин/u.test(text)) return "LONG";
+  if (/(?:^|[^\p{L}])(?:medium|moderate)(?:[^\p{L}]|$)|сред/u.test(text)) return "MEDIUM";
+  if (/(?:^|[^\p{L}])(?:short|low|small)(?:[^\p{L}]|$)|небольш|мал|корот/u.test(text)) return "SHORT";
+  if (/(?:^|\s)(?:нет|без)(?:\s|$)/u.test(text)) return "NONE";
   return void 0;
 }
 function finite(value) {

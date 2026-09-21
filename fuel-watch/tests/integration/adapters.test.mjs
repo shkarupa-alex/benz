@@ -314,3 +314,103 @@ test("optional detail budget includes time spent loading each source's current p
   assert.equal(twogisFetches,1);
   assert.equal(twogisRaw.activityHistoryCoverage,0);
 });
+
+test("Yandex retries the automation rate-limit page once with a de-headlessed User-Agent", async () => {
+  const config = await loadConfig();
+  const raw = await readJson(new URL("../fixtures/yandex-current.json", import.meta.url));
+  const opens = [];
+  let userAgent;
+  const browser = {
+    open: async url => { opens.push(url); return userAgent ? { finalUrl: "https://yandex.ru/maps", pageTextPrefix: "АЗС" } : { finalUrl: "https://yandex.ru/maps", pageTextPrefix: "limited" }; },
+    useRealisticUserAgent: async () => { userAgent = "Mozilla/5.0 Chrome/153.0.0.0"; return true; },
+    waitReady: async () => {},
+    evalJson: async expression => expression.includes("window.scrollBy") ? true : raw
+  };
+  const result = await yandex.collect(request(config), { browser, config });
+  assert.equal(opens.length, 2);
+  assert.equal(result.health.status, "OK");
+  assert.equal(result.observations[0].status, "IN_STOCK");
+});
+
+test("Yandex reports the rate-limit page when no User-Agent retry is possible", async () => {
+  const config = await loadConfig();
+  let evaluated = false;
+  const browser = {
+    open: async () => ({ finalUrl: "https://yandex.ru/maps", pageTextPrefix: "limited" }),
+    useRealisticUserAgent: async () => false,
+    waitReady: async () => {},
+    evalJson: async () => { evaluated = true; }
+  };
+  const result = await yandex.collect(request(config), { browser, config });
+  assert.equal(result.health.status, "HTTP_ERROR");
+  assert.equal(result.health.code, "HTTP_429_LIMITED");
+  assert.equal(evaluated, false);
+});
+
+test("Yandex queue vocabulary survives normalization and UNKNOWN placeholders are dropped", async () => {
+  const config = await loadConfig();
+  const raw = {
+    stations: [{ id: "q1", coordinate: [44.5, 48.7], title: "АЗС" }, { id: "q2", coordinate: [44.5, 48.7], title: "АЗС" }, { id: "q3", coordinate: [44.5, 48.7], title: "АЗС" }],
+    observations: [{ stationId: "q1", fuel: "АИ-95", status: "IN_STOCK", observedAt: "2026-09-21T10:00:00Z" }],
+    queues: [
+      { stationId: "q1", value: "Нет очереди", ordinal: "LOW", observedAt: "2026-09-21T10:00:00Z" },
+      { stationId: "q2", value: "Большая очередь", ordinal: "HIGH", observedAt: "2026-09-21T10:00:00Z" },
+      { stationId: "q3", value: "Средняя очередь", ordinal: "MEDIUM", observedAt: "2026-09-21T10:00:00Z" }
+    ],
+    activity: []
+  };
+  const browser = { open: async () => ({ finalUrl: "https://yandex.ru/maps", pageTextPrefix: "АЗС" }), waitReady: async () => {}, evalJson: async expression => expression.includes("window.scrollBy") ? true : raw };
+  const result = await yandex.collect(request(config), { browser, config });
+  assert.deepEqual(result.queues.map(q => q.ordinal), ["NONE", "LONG", "MEDIUM"]);
+  assert.ok(result.queues.every(q => q.kind === "ORDINAL"));
+});
+
+test("2GIS list-level last_transaction_at gives stations outside the detail budget an activity timestamp", async () => {
+  const liveUrl = "https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=station-1";
+  const rows = [{ station: { id: "station-1", lng: 44.5, lat: 48.7, name: "АЗС", address: "Адрес", last_transaction_at: "2026-09-21T11:46:48Z" }, fuel_statuses: [{ fuel_type: "AI_95", available: false, last_report_at: "2026-09-10T09:22:43Z" }] }];
+  const document = { body: { innerText: "АЗС" }, scripts: [] };
+  const performance = { getEntriesByType: () => [{ name: liveUrl }] };
+  const fetch = async url => String(url).includes("/by-ids") ? { ok: true, json: async () => rows } : { ok: false };
+  const raw = await Function("window", "document", "location", "performance", "fetch", "URL", `return ${twogis.TWOGIS_EXTRACTOR}`)({}, document, { href: "https://2gis.ru/volgograd/search/АЗС" }, performance, fetch, URL);
+  const transactions = raw.activity.filter(value => value.sourceTerminology === "TRANSACTION");
+  assert.equal(transactions.length, 1);
+  assert.deepEqual(transactions[0].eventTimes, ["2026-09-21T11:46:48.000Z"]);
+  assert.equal(transactions[0].gradeSpecific, false);
+});
+
+test("2GIS does not duplicate a transaction reported both in the list row and the detail", async () => {
+  const liveUrl = "https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=station-1";
+  const rows = [{ station: { id: "station-1", lng: 44.5, lat: 48.7, last_transaction_at: "2026-09-21T11:46:48Z" }, fuel_statuses: [] }];
+  const detail = { station: rows[0].station, recent_transactions: [{ created_at: "2026-09-21T11:46:48Z", fuel_types: null }, { created_at: "2026-09-21T10:00:00Z", fuel_types: null }] };
+  const document = { body: { innerText: "АЗС" }, scripts: [] };
+  const performance = { getEntriesByType: () => [{ name: liveUrl }] };
+  const fetch = async url => ({ ok: true, json: async () => String(url).includes("/by-ids") ? rows : detail });
+  const raw = await Function("window", "document", "location", "performance", "fetch", "URL", `return ${twogis.TWOGIS_EXTRACTOR}`)({}, document, { href: "https://2gis.ru/volgograd/search/АЗС" }, performance, fetch, URL);
+  const transactions = raw.activity.find(value => value.sourceTerminology === "TRANSACTION");
+  assert.deepEqual(transactions.eventTimes, ["2026-09-21T10:00:00.000Z", "2026-09-21T11:46:48.000Z"]);
+});
+
+test("Benzonavt fuels_out is an explicit AI-95 negative even without any positive grade list", async () => {
+  const rows = [{ id: 1, lon: 44.5, lat: 48.7, name: "АЗС", address: "Адрес", fuels: ["92", "95", "dt"], st: { status: "yes", fuels_now: [], fuels_out: ["92", "95"], updated_at: "2026-09-21T08:53:10Z", conflict: null } }];
+  const document = { body: { innerText: "АЗС" } };
+  const fetch = async url => String(url).includes("/api/v1/stations?") ? { ok: true, json: async () => rows } : { ok: false };
+  const extractor = benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=1,2,3,4");
+  const raw = await Function("document", "location", "fetch", "AbortSignal", `return ${extractor}`)(document, { href: "https://benzonavt.ru/" }, fetch, { timeout: () => undefined });
+  assert.equal(raw.observations.length, 1);
+  assert.equal(raw.observations[0].status, "OUT_OF_STOCK");
+  assert.equal(raw.observations[0].familyAllUnavailable, true);
+  assert.equal(raw.observations[0].observedAt, "2026-09-21T08:53:10Z");
+  const snapshot95 = raw.activity.find(value => value.kind === "PETROL_STATUS_SNAPSHOT" && value.gradeLabel === "95");
+  assert.equal(snapshot95.status, "OUT_OF_STOCK");
+});
+
+test("Benzonavt fuels_out never overrides a grade that fuels_now reports as available", async () => {
+  const rows = [{ id: 2, lon: 44.5, lat: 48.7, name: "АЗС", address: "Адрес", fuels: ["92", "95"], st: { status: "yes", fuels_now: ["95", "dt"], fuels_out: ["92"], updated_at: "2026-09-21T08:53:10Z", conflict: null } }];
+  const document = { body: { innerText: "АЗС" } };
+  const fetch = async url => String(url).includes("/api/v1/stations?") ? { ok: true, json: async () => rows } : { ok: false };
+  const extractor = benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=1,2,3,4");
+  const raw = await Function("document", "location", "fetch", "AbortSignal", `return ${extractor}`)(document, { href: "https://benzonavt.ru/" }, fetch, { timeout: () => undefined });
+  assert.equal(raw.observations[0].status, "IN_STOCK");
+  assert.equal(raw.activity.find(value => value.kind === "PETROL_STATUS_SNAPSHOT" && value.gradeLabel === "95").status, "IN_STOCK");
+  assert.equal(raw.activity.find(value => value.kind === "PETROL_STATUS_SNAPSHOT" && value.gradeLabel === "92").status, "OUT_OF_STOCK");
+});

@@ -54,3 +54,34 @@ function runImport(modulePath) {
 }
 
 async function exists(path) { try { await stat(path); return true; } catch (error) { if (error.code === "ENOENT") return false; throw error; } }
+
+// Code splitting once moved report.mjs's whole module into a shared chunk, leaving the published entry as a
+// re-export whose CLI never ran: the documented report command printed nothing and still exited 0.
+test("every published entry still behaves as a CLI rather than a silent re-export", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "fuel-watch-cli-"));
+  const installed = join(directory, "installed-skill");
+  const userHome = join(directory, "user-state");
+  try {
+    await installArtifact(installed);
+    const entry = name => join(installed, "dist", "scripts", name);
+
+    const unknownArgument = await runNode(entry("collect.mjs"), ["--definitely-not-a-flag"], { FUEL_WATCH_HOME: userHome });
+    assert.notEqual(unknownArgument.code, 0, "collect.mjs accepted an unknown argument instead of failing");
+
+    const missingStateDir = await runNode(entry("monitor.mjs"), ["status"], { FUEL_WATCH_HOME: userHome });
+    assert.match(`${missingStateDir.stdout}${missingStateDir.stderr}`, /state-dir/, "monitor.mjs produced no CLI output");
+
+    const snapshot = join(directory, "snapshot.json");
+    await writeFile(snapshot, JSON.stringify({
+      fetchedAt: "2026-09-21T12:00:00Z", areaLabel: "Тестовая зона",
+      freshnessPolicy: { expireMinutes: 360, futureSkewSeconds: 120 },
+      runtime: { browserMode: "HEADED" },
+      sourceHealth: [{ source: "gdebenz", status: "OK" }], sourceCoverage: { gdebenz: { stationCount: 1 } },
+      warnings: [], changes: [], assessments: [], rankedStationKeys: [], forecast: { retentionDays: 7, items: [] }
+    }));
+    const report = await runNode(entry("report.mjs"), ["--snapshot", snapshot], { FUEL_WATCH_HOME: userHome });
+    assert.equal(report.code, 0, report.stderr);
+    assert.match(report.stdout, /## Наличие АИ-95/, "report.mjs exited cleanly but printed nothing");
+    assert.match(report.stdout, /Все 1 источник/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

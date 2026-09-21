@@ -75,3 +75,58 @@ test("report ignores stale and cross-octane activity on the AI-95 line", () => {
   assert.doesNotMatch(markdown,/активность возобновилась/);
   assert.match(markdown,/Время появления: неизвестно/);
 });
+
+test("an unavailable source is named in plain language and the rest still carry the verdict", async () => {
+  const snapshot = {
+    fetchedAt: "2026-09-21T12:00:00Z",
+    areaLabel: "Тестовая зона",
+    freshnessPolicy: { expireMinutes: 360, futureSkewSeconds: 120 },
+    runtime: { browserMode: "HEADED" },
+    sourceHealth: [
+      { source: "yandex", status: "HTTP_ERROR", code: "HTTP_429_LIMITED" },
+      { source: "gdebenz", status: "OK" },
+      { source: "2gis", status: "PARTIAL", code: "PAGE_LOST" },
+      { source: "benzonavt", status: "OK" }
+    ],
+    sourceCoverage: { gdebenz: { stationCount: 4 }, benzonavt: { stationCount: 5 } },
+    warnings: [],
+    changes: [],
+    assessments: [{
+      stationKey: "s1", title: "Лукойл", address: "Ангарская ул., 131Б", coordinate: [44.44, 48.71],
+      verdict: "AVAILABLE", confidence: "MEDIUM", activity: [], queue: { displayText: "нет данных" },
+      observations: [{ source: "gdebenz", status: "IN_STOCK", product: { specificity: "FAMILY_ONLY" }, expired: false, ageMinutes: 12 }]
+    }],
+    rankedStationKeys: ["s1"],
+    forecast: { retentionDays: 7, items: [] }
+  };
+  const { markdown } = renderReport(snapshot);
+  assert.match(markdown, /Недоступные источники: yandex — ограничил частоту запросов; 2gis — страница не открылась\./);
+  assert.match(markdown, /Оценка ниже построена только по оставшимся: gdebenz, benzonavt\./);
+  assert.match(markdown, /АИ-95: ЕСТЬ/);
+  assert.match(markdown, /Источники текущей оценки: gdebenz\./);
+});
+
+test("losing every source is stated without implying that there is no fuel", async () => {
+  const snapshot = {
+    fetchedAt: "2026-09-21T12:00:00Z",
+    areaLabel: "Тестовая зона",
+    freshnessPolicy: { expireMinutes: 360, futureSkewSeconds: 120 },
+    runtime: { browserMode: "HEADED" },
+    sourceHealth: [
+      { source: "yandex", status: "CHALLENGE", code: "CHALLENGE" },
+      { source: "gdebenz", status: "HTTP_ERROR", code: "HTTP_ERROR_PAGE" },
+      { source: "2gis", status: "TIMEOUT", code: "TIMEOUT" },
+      { source: "benzonavt", status: "PARTIAL", code: "INTERNAL_ADAPTER_ERROR" }
+    ],
+    sourceCoverage: {},
+    warnings: [],
+    changes: [],
+    assessments: [],
+    rankedStationKeys: [],
+    forecast: { retentionDays: 7, items: [] }
+  };
+  const { markdown } = renderReport(snapshot);
+  assert.match(markdown, /Недоступны все источники:/);
+  assert.match(markdown, /это не означает, что бензина нет/);
+  assert.doesNotMatch(markdown, /АИ-95: НЕТ/);
+});
