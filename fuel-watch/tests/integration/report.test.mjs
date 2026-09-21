@@ -130,3 +130,46 @@ test("losing every source is stated without implying that there is no fuel", asy
   assert.match(markdown, /это не означает, что бензина нет/);
   assert.doesNotMatch(markdown, /АИ-95: НЕТ/);
 });
+
+// The canonical Markdown is what a human reads before driving; CDP and cleanup plumbing belongs in diagnostics only.
+test("recovered browser plumbing stays out of the report while unrecovered limits are stated plainly", () => {
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[],sourceHealth:[{source:"gdebenz",status:"OK"}],sourceCoverage:{gdebenz:{stationCount:5}},changes:[],warnings:[
+    {code:"BROWSER_NETWORK_CONTROLS_DEGRADED",message:"gdebenz: agent-browser network controls failed during adapter execution; retried once"},
+    {code:"CLEANUP_FAILED",message:"1 browser session(s) remain"},
+    {code:"PARTIAL_COVERAGE",message:"At least one source did not provide complete evidence."},
+    {code:"HISTORY_UNAVAILABLE",message:"7-day history could not be updated (HISTORY_LOCK_TIMEOUT): timed out"}
+  ]};
+  const {markdown,diagnostics}=renderReport(snapshot);
+  assert.doesNotMatch(markdown,/BROWSER_NETWORK_CONTROLS_DEGRADED|CDP|agent-browser|CLEANUP_FAILED|PARTIAL_COVERAGE/);
+  assert.match(markdown,/⚠ История за 7 дней не обновилась/);
+  assert.doesNotMatch(markdown,/HISTORY_LOCK_TIMEOUT/);
+  assert.equal(diagnostics.agentOnly,true);
+  assert.deepEqual(diagnostics.warnings.map(w=>w.code),["BROWSER_NETWORK_CONTROLS_DEGRADED","CLEANUP_FAILED","PARTIAL_COVERAGE","HISTORY_UNAVAILABLE"]);
+});
+
+test("an unrecognised warning keeps its wording rather than disappearing from the report", () => {
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[],sourceHealth:[],changes:[],warnings:[{code:"SOMETHING_NEW",message:"an unmapped limitation"}]};
+  assert.match(renderReport(snapshot).markdown,/⚠ SOMETHING_NEW: an unmapped limitation/);
+});
+
+test("report shows the tightest known litre limit for AI-95 and ignores other grades", () => {
+  const item={stationKey:"s",title:"АЗС",verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"2gis",status:"IN_STOCK",ageMinutes:5,expired:false,product:{specificity:"EXACT_VARIANT"}}],activity:[],productAssessments:{},limits:[{gradeLabel:"AI_95",liters:40,source:"2gis"},{gradeLabel:"95",liters:20,source:"benzonavt"},{gradeLabel:"dt",liters:10,source:"benzonavt"}]};
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[],warnings:[],changes:[]};
+  const {markdown}=renderReport(snapshot);
+  assert.match(markdown,/очередь: нет данных · лимит: 20 л/);
+});
+
+// A station whose own catalogue has no AI-95 has nothing to run out of; counting it as a negative read as a shortage.
+test("a station that does not sell AI-95 is counted apart from stations that ran out", () => {
+  const notSold={stationKey:"a",title:"Дизельная",verdict:"NO_FRESH_DATA",confidence:"NONE",observations:[],activity:[],productAssessments:{},assortment:["92"],sellsRequestedFamily:false};
+  const ranOut={stationKey:"b",title:"АЗС",verdict:"NOT_AVAILABLE",confidence:"MEDIUM",observations:[],activity:[],productAssessments:{},assortment:["92","95"],sellsRequestedFamily:true};
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[notSold,ranOut],sourceHealth:[],warnings:[],changes:[]};
+  const {markdown}=renderReport(snapshot);
+  assert.match(markdown,/отрицательные — 1, без свежих данных — 0, не продают АИ-95 — 1\./);
+});
+
+test("the not-sold bucket disappears when every station sells AI-95", () => {
+  const item={stationKey:"b",title:"АЗС",verdict:"NOT_AVAILABLE",confidence:"MEDIUM",observations:[],activity:[],productAssessments:{},sellsRequestedFamily:true};
+  const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[item],sourceHealth:[],warnings:[],changes:[]};
+  assert.doesNotMatch(renderReport(snapshot).markdown,/не продают АИ-95/);
+});

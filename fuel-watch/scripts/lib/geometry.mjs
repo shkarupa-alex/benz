@@ -1,7 +1,10 @@
-import { area as turfArea, bboxPolygon, booleanPointInPolygon, buffer, convex, featureCollection, kinks, point, polygon } from "@turf/turf";
+import { area as turfArea, bboxPolygon, booleanPointInPolygon, buffer, convex, featureCollection, kinks, lineString, point, polygon } from "@turf/turf";
 import { sha256 } from "./util.mjs";
 
+const AREA_KINDS = new Set(["rectangle", "polygon", "station-anchors", "route-corridor"]);
+
 export function resolveArea(areaConfig) {
+  if (!AREA_KINDS.has(areaConfig?.kind)) throw new Error(`Unsupported area kind: ${areaConfig?.kind ?? "missing"}`);
   let shape;
   let anchors = [];
   if (areaConfig.kind === "rectangle") {
@@ -10,6 +13,12 @@ export function resolveArea(areaConfig) {
     const ring = closeRing(areaConfig.coordinates);
     shape = polygon([ring]);
     if (kinks(shape).features.length) throw new Error("Area polygon self-intersects");
+  } else if (areaConfig.kind === "route-corridor") {
+    // A corridor is a one-off shape for a single run: the width is explicit so the area it covers is never implied.
+    const waypoints = dedupeConsecutive(areaConfig.waypoints);
+    if (waypoints.length < 2) throw new Error("Route corridor needs at least two distinct waypoints");
+    shape = buffer(lineString(waypoints), areaConfig.corridorWidthMeters / 2000, { units: "kilometers", steps: 16 });
+    if (!shape) throw new Error("Route corridor could not be built");
   } else {
     anchors = areaConfig.anchors;
     const unique = dedupePoints(anchors.map(a => a.point));
@@ -20,8 +29,11 @@ export function resolveArea(areaConfig) {
   }
   if (!shape || turfArea(shape) <= 0) throw new Error("Area polygon is empty");
   if (turfArea(shape) > 2_000_000_000) throw new Error("Area polygon is implausibly large");
+  // A one-off area carries its own ceiling so an accidental country-sized corridor fails closed before any polling.
+  const squareKm = turfArea(shape) / 1_000_000;
+  if (Number.isFinite(areaConfig.maxAreaSquareKm) && squareKm > areaConfig.maxAreaSquareKm) throw new Error(`Area covers ${squareKm.toFixed(1)} km², above the configured limit of ${areaConfig.maxAreaSquareKm} km²`);
   const coordinates = shape.geometry.coordinates[0];
-  return { label: areaConfig.label, polygon: coordinates, areaHash: sha256(coordinates), feature: shape, anchors };
+  return { label: areaConfig.label, polygon: coordinates, areaHash: sha256(coordinates), feature: shape, anchors, squareKm, maxStationCount: Number.isFinite(areaConfig.maxStationCount) ? areaConfig.maxStationCount : undefined };
 }
 
 export function isInsideArea(coordinate, resolvedArea, { anchorLabels = [], stationLabel } = {}) {

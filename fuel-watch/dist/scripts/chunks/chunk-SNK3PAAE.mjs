@@ -8,7 +8,7 @@ import {
 
 // scripts/lib/sources/common.mjs
 function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", coordinateOrder = "LON_LAT" } = {}) {
-  const enumerated = (raw.stations ?? []).map((s) => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: brandLabel(s.brand) || void 0, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), provenanceUrl: s.url ?? raw.url ?? "" }));
+  const enumerated = (raw.stations ?? []).map((s) => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: brandLabel(s.brand) || void 0, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), assortment: petrolAssortment(s.assortment), limits: normalizeLimits(s.limits), provenanceUrl: s.url ?? raw.url ?? "" }));
   const stations = enumerated.filter((s) => validCoordinate(s.coordinate));
   const stationIds = new Set(enumerated.map((s) => s.sourceStationId));
   const observations = (raw.observations ?? []).flatMap((o) => {
@@ -16,7 +16,7 @@ function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", 
     const classified = o.product ?? classifyFuelLabel(o.fuel ?? o.label ?? o.grade, request.requestedProducts);
     const product = capability === "CURRENT_FAMILY" && classified ? { family: "AI_95", variant: "UNKNOWN", variantKey: "FAMILY", displayLabel: classified.displayLabel, specificity: "FAMILY_ONLY", productKey: "AI95_FAMILY" } : capability === "CATALOG_ONLY" && classified ? { ...classified, specificity: "CATALOG_ONLY" } : classified;
     if (!sourceStationId || !stationIds.has(sourceStationId) || !product) return [];
-    return [{ source, sourceStationId, product, status: normalizeStatus(o.normalizedStatus ?? o.status), time: normalizeTime(o), signalsPerHour: finite(o.signalsPerHour), familyAllUnavailable: o.familyAllUnavailable === true, rawStatus: String(o.status ?? "UNKNOWN"), conflict: o.conflict ? { raw: o.conflict } : void 0, fetchedAt: request.fetchedAt, provenanceUrl: o.url ?? enumerated.find((s) => s.sourceStationId === sourceStationId)?.provenanceUrl ?? "" }];
+    return [{ source, sourceStationId, product, status: normalizeStatus(o.normalizedStatus ?? o.status), time: normalizeTime(o), signalsPerHour: finite(o.signalsPerHour), familyAllUnavailable: o.familyAllUnavailable === true, rawStatus: String(o.status ?? "UNKNOWN"), conflict: o.conflict ? { raw: o.conflict } : void 0, trust: normalizeTrust(o.trust), fetchedAt: request.fetchedAt, provenanceUrl: o.url ?? enumerated.find((s) => s.sourceStationId === sourceStationId)?.provenanceUrl ?? "" }];
   });
   const queues = (raw.queues ?? []).flatMap((q) => {
     const sourceStationId = String(q.stationId ?? q.sourceStationId ?? "");
@@ -27,7 +27,7 @@ function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", 
     const sourceStationId = String(a.stationId ?? a.sourceStationId ?? "");
     if (!stationIds.has(sourceStationId)) return [];
     const classified = a.product ?? (a.fuel ? classifyFuelLabel(a.fuel, request.requestedProducts) : void 0) ?? void 0;
-    return [{ source, sourceStationId, product: classified, gradeLabel: String(a.gradeLabel ?? a.fuel ?? classified?.displayLabel ?? "").trim() || void 0, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? void 0 : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? classified), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
+    return [{ source, sourceStationId, product: classified, gradeLabel: String(a.gradeLabel ?? a.fuel ?? classified?.displayLabel ?? "").trim() || void 0, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? void 0 : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? classified), sourceTerminology: a.sourceTerminology ?? "SIGNAL", trust: normalizeTrust(a.trust) }];
   });
   const unlocatedStationIds = enumerated.filter((s) => !validCoordinate(s.coordinate)).map((s) => s.sourceStationId);
   const historyUnavailable = finite(raw.activityHistoryCoverage) === 0;
@@ -99,6 +99,25 @@ function normalizeOrdinal(value) {
   if (/(?:^|[^\p{L}])(?:short|low|small)(?:[^\p{L}]|$)|небольш|мал|корот/u.test(text)) return "SHORT";
   if (/(?:^|\s)(?:нет|без)(?:\s|$)/u.test(text)) return "NONE";
   return void 0;
+}
+var PETROL_OCTANE = /(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu;
+function petrolAssortment(value) {
+  const values = (Array.isArray(value) ? value : value == null ? [] : [value]).map((item) => String(item ?? "").trim()).filter(Boolean);
+  if (!values.length) return void 0;
+  return [...new Set(values.flatMap((item) => [...item.matchAll(PETROL_OCTANE)].map((match) => match[1])))].sort((a, b) => Number(a) - Number(b));
+}
+function normalizeLimits(value) {
+  const rows = (Array.isArray(value) ? value : []).map((row) => ({ gradeLabel: row?.gradeLabel == null ? void 0 : String(row.gradeLabel).trim() || void 0, liters: Number(row?.liters), observedAt: iso(row?.observedAt) })).filter((row) => Number.isFinite(row.liters) && row.liters > 0);
+  return rows.length ? rows : void 0;
+}
+function normalizeTrust(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "boolean" || typeof raw === "number" && Number.isFinite(raw)) out[key] = raw;
+    else if (typeof raw === "string" && raw.trim()) out[key] = raw.trim().slice(0, 40);
+  }
+  return Object.keys(out).length ? out : void 0;
 }
 function finite(value) {
   const n = Number(value);

@@ -35,7 +35,9 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500, detailBudgetMs 
       return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
     };
     const petrolGrades = value => [...new Set((String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu) || []).map(match => match.match(/92|95|98|100/u)?.[0]).filter(Boolean))];
-    const commentPetrolGrades = value => { const fuelSegment = String(value || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(fuelSegment) ? [] : petrolGrades(fuelSegment); };
+    // A leading segment like 'Очередь 100+ машин' is prose, not a fuel list: reading it as one invented an AI-100 grade.
+    const fuelSegmentOf = value => { const segment = String(value || '').split('·')[0].trim(); return /очеред|лимит|цена/iu.test(segment) ? '' : segment; };
+    const commentPetrolGrades = value => petrolGrades(fuelSegmentOf(value));
     const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
     const detailDeadline = extractorStartedAt + ${Number(detailBudgetMs)};
     const detailRows = rows.filter(row => String(row.osm_id || row.id || '') && Number.isFinite(Number(row.lon)) && Number.isFinite(Number(row.lat)));
@@ -44,13 +46,22 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500, detailBudgetMs 
     for (const row of rows) {
       const id = String(row.osm_id || row.id || '');
       if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
-      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.addr, url: location.href });
       const detail = String(row.detail || '');
-      const listed = String(row.fuels_now || '') + ',' + detail.split('·')[0];
+      // meta.f is the station's own grade catalogue and the detail text carries a station-wide litre limit.
+      const limitLiters = Number(detail.match(/лимит\s*([0-9]+(?:[.,][0-9]+)?)\s*л/iu)?.[1]?.replace(',', '.'));
+      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.addr, url: location.href, assortment: Array.isArray(row.meta?.f) ? row.meta.f : undefined, limits: Number.isFinite(limitLiters) ? [{ liters: limitLiters, observedAt: isoTime(row.last_at) }] : undefined });
+      // The visible card text and the hidden fuels_now field enumerate grades independently and can disagree
+      // (observed on Глубокоовражная, 25: card '92 · Очередь 100+ машин' against fuels_now '92,95,ДТ'). Unioning them
+      // silently invented an AI-95 positive, so a grade only one side lists becomes a recorded conflict, not a signal.
+      const visibleFuels = fuelSegmentOf(detail), hiddenFuels = String(row.fuels_now || '');
+      const listed = hiddenFuels + ',' + visibleFuels;
+      const visibleGrades = petrolGrades(visibleFuels), hiddenGrades = petrolGrades(hiddenFuels);
+      const disputed = grade => visibleGrades.length > 0 && hiddenGrades.length > 0 && visibleGrades.includes(grade) !== hiddenGrades.includes(grade);
+      const ai95Disputed = disputed('95');
       const hasAi95 = /(?:^|[\s,;/])(?:аи[-\s]?|ai[-\s]?)?95\+?(?=$|[\s,;/])/iu.test(listed);
       const familyUnavailable = String(row.status || '').toLowerCase() === 'no' || /нет\s+топлива|заправка\s+не\s+работает/iu.test(detail);
-      observations.push({ stationId: id, fuel: 'АИ-95', status: detail || String(row.status || ''), normalizedStatus: familyUnavailable ? 'OUT_OF_STOCK' : hasAi95 ? 'IN_STOCK' : 'UNKNOWN', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable });
-      for (const grade of petrolGrades(listed)) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'PETROL_STATUS_SNAPSHOT', status: familyUnavailable ? 'OUT_OF_STOCK' : 'IN_STOCK', observedAt: isoTime(row.last_at), gradeSpecific: true, sourceTerminology: 'STATUS' });
+      observations.push({ stationId: id, fuel: 'АИ-95', status: detail || String(row.status || ''), normalizedStatus: familyUnavailable ? 'OUT_OF_STOCK' : ai95Disputed ? 'UNCERTAIN' : hasAi95 ? 'IN_STOCK' : 'UNKNOWN', observedAt: isoTime(row.last_at), familyAllUnavailable: familyUnavailable, conflict: ai95Disputed ? { kind: 'VISIBLE_VS_HIDDEN', field: 'fuels_now', visibleText: detail, hiddenText: hiddenFuels, visibleGrades, hiddenGrades } : undefined, trust: { confidenceBase: Number(row.confidence_base), confirmations: Number(row.confirmations), svc: row.svc } });
+      for (const grade of petrolGrades(listed)) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'PETROL_STATUS_SNAPSHOT', status: familyUnavailable ? 'OUT_OF_STOCK' : disputed(grade) ? 'UNCERTAIN' : 'IN_STOCK', observedAt: isoTime(row.last_at), gradeSpecific: true, sourceTerminology: 'STATUS' });
       const comments = [...(commentsById.get(id) || [])].sort((a, b) => new Date(isoTime(a.created_at) || 0) - new Date(isoTime(b.created_at) || 0));
       const knownGrades = [...new Set([...(petrolGrades(listed)), ...comments.flatMap(comment => commentPetrolGrades(comment.detail))])];
       const stateByGrade = new Map(knownGrades.map(grade => [grade, 'UNKNOWN']));
@@ -66,7 +77,7 @@ export function gdebenzApiExtractor(url, detailTimeoutMs = 3500, detailBudgetMs 
         if (status === 'no') for (const grade of (grades.length ? grades : familyNegative ? knownGrades : [])) stateByGrade.set(grade, 'OUT_OF_STOCK');
         if (['yes','queue'].includes(status)) for (const grade of grades) {
           const eventTimes = timesByGrade.get(grade) ?? []; eventTimes.push(at); timesByGrade.set(grade, eventTimes);
-          if (stateByGrade.get(grade) === 'OUT_OF_STOCK') activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'SOURCE_REPORTED_TRANSITION', observedAt: at, gradeSpecific: true, sourceTerminology: 'USER_REPORT' });
+          if (stateByGrade.get(grade) === 'OUT_OF_STOCK') activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'SOURCE_REPORTED_TRANSITION', observedAt: at, gradeSpecific: true, sourceTerminology: 'USER_REPORT', trust: { authorReliable: comment.author_reliable, authorTier: Number(comment.author_tier), acctOk: comment.acct_ok, onSite: comment.on_site } });
           stateByGrade.set(grade, 'IN_STOCK');
         }
       }

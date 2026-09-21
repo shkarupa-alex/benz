@@ -115,6 +115,16 @@
               "type": "number",
               "minimum": -180,
               "maximum": 180
+            },
+            "maxAreaSquareKm": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 20000
+            },
+            "maxStationCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
             }
           }
         },
@@ -140,6 +150,16 @@
               "items": {
                 "$ref": "#/$defs/point"
               }
+            },
+            "maxAreaSquareKm": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 20000
+            },
+            "maxStationCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
             }
           }
         },
@@ -196,6 +216,47 @@
             },
             "unresolvedPolicy": {
               "const": "fail-closed"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "label",
+            "waypoints",
+            "corridorWidthMeters"
+          ],
+          "properties": {
+            "kind": {
+              "const": "route-corridor"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1
+            },
+            "waypoints": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/point"
+              }
+            },
+            "corridorWidthMeters": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 50000
+            },
+            "maxAreaSquareKm": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 20000
+            },
+            "maxStationCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
             }
           }
         }
@@ -346,6 +407,41 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "challengeHandover": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "waitSeconds",
+            "pollSeconds",
+            "maxPerRun"
+          ],
+          "description": "Optional user-in-the-loop CAPTCHA handling. The skill never solves or bypasses a challenge: when enabled it only holds the visible browser session open for waitSeconds so a person can solve it in the window, re-reads the page, and retries the source once. Absent or disabled means a challenge is reported and the source is skipped.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "waitSeconds": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 600
+            },
+            "pollSeconds": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 60
+            },
+            "maxPerRun": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
+          }
+        },
+        "reapOrphanProcesses": {
+          "type": "boolean",
+          "description": "Whether the skill may terminate agent-browser daemons that survived its own close. Ownership is namespace-scoped: only a pid recorded under a namespace this run created, still naming a live agent-browser process, is ever signalled. Absent means enabled; false reports the leftovers in diagnostics without signalling them."
         }
       }
     },

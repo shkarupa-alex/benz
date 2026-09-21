@@ -3,10 +3,10 @@ import {
   isCurrentPositiveObservation,
   isFreshActivity,
   rankAssessments
-} from "./chunk-WCGSC67K.mjs";
+} from "./chunk-ZLS72LVM.mjs";
 import {
   sha256
-} from "./chunk-GQHB3NSD.mjs";
+} from "./chunk-NKNPTJQQ.mjs";
 import {
   petrolOctaneKey
 } from "./chunk-XKTP5TT3.mjs";
@@ -62,7 +62,7 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
   const lines = [`## \u041D\u0430\u043B\u0438\u0447\u0438\u0435 \u0410\u0418-95 \u2014 ${formatTime(snapshot.fetchedAt)}`, `\u0417\u043E\u043D\u0430: ${snapshot.areaLabel}. \u041D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u043D\u044B\u0435 \u0432\u0430\u0440\u0438\u0430\u043D\u0442\u044B \u0438 \u0431\u0440\u0435\u043D\u0434\u043E\u0432\u044B\u0435 \u043D\u0430\u0437\u0432\u0430\u043D\u0438\u044F \u043E\u0431\u044A\u0435\u0434\u0438\u043D\u0435\u043D\u044B \u0432 \u0410\u0418-95.`, "", `\u0411\u0440\u0430\u0443\u0437\u0435\u0440: ${snapshot.runtime?.browserMode ?? "\u0440\u0435\u0436\u0438\u043C \u043D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u0435\u043D"}. \u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
   lines.push(sourceAvailabilityText(snapshot));
   if (recovered) lines.push(`\u041F\u043E\u0432\u0442\u043E\u0440 \u043F\u043E\u0441\u043B\u0435 \u0432\u043E\u0441\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u044F \xB7 reportId: ${reportId.slice(0, 12)}.`);
-  for (const warning of snapshot.warnings ?? []) lines.push(`\u26A0 ${warning.code}: ${warning.message}`);
+  for (const warning of userWarnings(snapshot.warnings)) lines.push(`\u26A0 ${warning}`);
   if (!compact && snapshot.changes?.length) {
     lines.push("", "\u0418\u0437\u043C\u0435\u043D\u0435\u043D\u0438\u044F:");
     for (const change of snapshot.changes) lines.push(`- ${changeText(change)}`);
@@ -71,7 +71,7 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
   if (!ranked.length) lines.push("\u0421\u0432\u0435\u0436\u0438\u0445 \u043F\u043E\u043B\u043E\u0436\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0445 \u0434\u0430\u043D\u043D\u044B\u0445 \u043D\u0435\u0442; \u044D\u0442\u043E \u043D\u0435 \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442, \u0447\u0442\u043E \u0431\u0435\u043D\u0437\u0438\u043D\u0430 \u043D\u0435\u0442 \u0432\u043E \u0432\u0441\u0435\u0439 \u0437\u043E\u043D\u0435.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
-    lines.push(`   \u0410\u0418-95: ${VERDICT[item.verdict]} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0448\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438: ${CONFIDENCE[item.confidence]} \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044E\u0449\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B: ${freshnessText(item.observations)} \xB7 \u043E\u0447\u0435\u0440\u0435\u0434\u044C: ${item.queue?.displayText ?? "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"}`);
+    lines.push(`   \u0410\u0418-95: ${VERDICT[item.verdict]} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C \u043D\u0430\u0448\u0435\u0439 \u043E\u0446\u0435\u043D\u043A\u0438: ${CONFIDENCE[item.confidence]} \xB7 \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0430\u044E\u0449\u0438\u0439 \u0441\u0438\u0433\u043D\u0430\u043B: ${freshnessText(item.observations)} \xB7 \u043E\u0447\u0435\u0440\u0435\u0434\u044C: ${item.queue?.displayText ?? "\u043D\u0435\u0442 \u0434\u0430\u043D\u043D\u044B\u0445"}${limitText(item)}`);
     const activity = activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy);
     if (activity) lines.push(`   ${activity}`);
     lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
@@ -85,12 +85,29 @@ function renderReport(snapshot, { monitorId, generation = 0, recovered = false, 
     lines.push(`   \u043E\u043A\u043D\u043E ${formatTime(forecast.windowStartAt)} \u2014 ${formatTime(forecast.windowEndAt)} \xB7 \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ${CONFIDENCE[forecast.confidence]} \xB7 \u0441\u0438\u0433\u043D\u0430\u043B: ${forecastSignalBasis(forecast.signalBasis)} \xB7 \u043E\u0441\u043D\u043E\u0432\u0430: ${forecastBasis(forecast.basis)}, ${forecast.sampleSize} \u044D\u043F.`);
   }
   if (forecasts.length > 0 && forecasts.length < 3) lines.push("\u0414\u043E \u0442\u0440\u0451\u0445 \u043F\u0440\u043E\u0433\u043D\u043E\u0437\u043E\u0432 \u043F\u043E\u043A\u0430 \u043D\u0435 \u0445\u0432\u0430\u0442\u0430\u0435\u0442 7-\u0434\u043D\u0435\u0432\u043D\u043E\u0439 \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0438.");
-  const conflictCount = snapshot.assessments.filter((a) => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
-  const negativeCount = snapshot.assessments.filter((a) => a.verdict === "NOT_AVAILABLE").length;
-  const emptyCount = snapshot.assessments.filter((a) => a.verdict === "NO_FRESH_DATA").length;
-  lines.push("", `\u041E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0435: \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442\u043D\u044B\u0435/\u043A\u043E\u0441\u0432\u0435\u043D\u043D\u044B\u0435 \u2014 ${conflictCount}, \u043E\u0442\u0440\u0438\u0446\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u2014 ${negativeCount}, \u0431\u0435\u0437 \u0441\u0432\u0435\u0436\u0438\u0445 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 ${emptyCount}.`);
+  const graded = snapshot.assessments.filter((a) => a.sellsRequestedFamily !== false);
+  const notSoldCount = snapshot.assessments.length - graded.length;
+  const conflictCount = graded.filter((a) => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
+  const negativeCount = graded.filter((a) => a.verdict === "NOT_AVAILABLE").length;
+  const emptyCount = graded.filter((a) => a.verdict === "NO_FRESH_DATA").length;
+  lines.push("", `\u041E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0435: \u043A\u043E\u043D\u0444\u043B\u0438\u043A\u0442\u043D\u044B\u0435/\u043A\u043E\u0441\u0432\u0435\u043D\u043D\u044B\u0435 \u2014 ${conflictCount}, \u043E\u0442\u0440\u0438\u0446\u0430\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u2014 ${negativeCount}, \u0431\u0435\u0437 \u0441\u0432\u0435\u0436\u0438\u0445 \u0434\u0430\u043D\u043D\u044B\u0445 \u2014 ${emptyCount}${notSoldCount ? `, \u043D\u0435 \u043F\u0440\u043E\u0434\u0430\u044E\u0442 \u0410\u0418-95 \u2014 ${notSoldCount}` : ""}.`);
   lines.push("", "\u0414\u0430\u043D\u043D\u044B\u0435 \u043F\u043E\u043B\u0443\u0447\u0435\u043D\u044B \u0438\u0437 \u043A\u0440\u0430\u0443\u0434\u0441\u043E\u0440\u0441\u0438\u043D\u0433\u043E\u0432\u044B\u0445 \u0438 \u0441\u0442\u0440\u0430\u043D\u0438\u0447\u043D\u044B\u0445 \u043F\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u043B\u0435\u043D\u0438\u0439, \u043C\u043E\u0433\u0443\u0442 \u0437\u0430\u043F\u0430\u0437\u0434\u044B\u0432\u0430\u0442\u044C \u0438\u043B\u0438 \u0431\u044B\u0442\u044C \u043D\u0435\u043F\u043E\u043B\u043D\u044B\u043C\u0438. \u041F\u0435\u0440\u0435\u0434 \u043F\u043E\u0435\u0437\u0434\u043A\u043E\u0439 \u043F\u0435\u0440\u0435\u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0441\u0438\u0442\u0443\u0430\u0446\u0438\u044E.");
-  return { reportId, markdown: lines.join("\n") };
+  return { reportId, markdown: lines.join("\n"), diagnostics: { agentOnly: true, warnings: snapshot.warnings ?? [], sourceHealth: snapshot.sourceHealth ?? [], runtime: snapshot.runtime ?? {} } };
+}
+var TECHNICAL_WARNING_CODES = /* @__PURE__ */ new Set(["BROWSER_NETWORK_CONTROLS_DEGRADED", "CLEANUP_FAILED", "PARTIAL_COVERAGE"]);
+var USER_WARNING = {
+  BROWSER_RUNTIME_FAILED: "\u0411\u0440\u0430\u0443\u0437\u0435\u0440 \u043D\u0435 \u0437\u0430\u043F\u0443\u0441\u0442\u0438\u043B\u0441\u044F, \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0432 \u044D\u0442\u043E\u043C \u043F\u0440\u043E\u0433\u043E\u043D\u0435 \u043D\u0435 \u043E\u043F\u0440\u0430\u0448\u0438\u0432\u0430\u043B\u0438\u0441\u044C.",
+  HISTORY_UNAVAILABLE: "\u0418\u0441\u0442\u043E\u0440\u0438\u044F \u0437\u0430 7 \u0434\u043D\u0435\u0439 \u043D\u0435 \u043E\u0431\u043D\u043E\u0432\u0438\u043B\u0430\u0441\u044C, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u043F\u0440\u043E\u0433\u043D\u043E\u0437 \u043F\u043E\u044F\u0432\u043B\u0435\u043D\u0438\u044F \u043C\u043E\u0436\u0435\u0442 \u043E\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u043E\u0432\u0430\u0442\u044C \u0438\u043B\u0438 \u0431\u044B\u0442\u044C \u0445\u0443\u0436\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E.",
+  COMPLETENESS_INVARIANT: "\u041E\u0434\u0438\u043D \u0438\u0437 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432 \u043E\u0442\u0434\u0430\u043B \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u043C\u0435\u043D\u044C\u0448\u0435 \u0434\u0430\u043D\u043D\u044B\u0445, \u0447\u0435\u043C \u043E\u0431\u044B\u0447\u043D\u043E: \u043F\u043E\u043A\u0440\u044B\u0442\u0438\u0435 \u0437\u043E\u043D\u044B \u0432 \u044D\u0442\u043E\u043C \u043F\u0440\u043E\u0433\u043E\u043D\u0435 \u043D\u0435\u043F\u043E\u043B\u043D\u043E\u0435.",
+  STATION_COUNT_REGRESSION: "\u041E\u0434\u0438\u043D \u0438\u0437 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u043E\u0432 \u043F\u043E\u043A\u0430\u0437\u0430\u043B \u0437\u0430\u043C\u0435\u0442\u043D\u043E \u043C\u0435\u043D\u044C\u0448\u0435 \u0410\u0417\u0421, \u0447\u0435\u043C \u043E\u0431\u044B\u0447\u043D\u043E: \u0447\u0430\u0441\u0442\u044C \u0441\u0442\u0430\u043D\u0446\u0438\u0439 \u043C\u043E\u0433\u043B\u0430 \u043D\u0435 \u043F\u043E\u043F\u0430\u0441\u0442\u044C \u0432 \u043E\u0446\u0435\u043D\u043A\u0443."
+};
+function userWarnings(warnings = []) {
+  return [...new Set(warnings.filter((w) => !TECHNICAL_WARNING_CODES.has(w.code)).map((w) => USER_WARNING[w.code] ?? `${w.code}: ${w.message}`))];
+}
+function limitText(item) {
+  const relevant = (item.limits ?? []).filter((limit) => !limit.gradeLabel || petrolOctaneKey({ gradeLabel: limit.gradeLabel }) === "95");
+  if (!relevant.length) return "";
+  return ` \xB7 \u043B\u0438\u043C\u0438\u0442: ${Math.min(...relevant.map((limit) => limit.liters))} \u043B`;
 }
 function healthText(h) {
   return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`;

@@ -97,7 +97,9 @@ export function buildForecast(history, snapshot, config) {
   const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
   const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases, cutoffMs, nowMs);
   const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
-  const candidates = snapshot.assessments.filter(assessment => assessment.verdict === NEGATIVE).map(assessment => {
+  // A station that does not sell the requested grade at all has no shortage to end, so the delivery-model
+  // inference "a tanker arrived, therefore AI-95 is probably back" must not be applied to it.
+  const candidates = snapshot.assessments.filter(assessment => assessment.verdict === NEGATIVE && assessment.sellsRequestedFamily !== false).map(assessment => {
     const samples = stationSamples(scopedTicks, assessment, identity);
     const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
     if (!negativeStartedAt) return null;

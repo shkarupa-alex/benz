@@ -403,3 +403,20 @@ test("compromised history lock fails closed without throwing from the heartbeat 
   await assert.rejects(recordHistory(path,snapshot,config,{lock}),error=>error.code==="HISTORY_LOCK_COMPROMISED");
   await assert.rejects(readFile(path,"utf8"),error=>error.code==="ENOENT");
 });
+
+// The delivery-model inference ("a tanker arrived, so AI-95 is probably back") only holds where AI-95 is sold at all.
+test("a station whose own catalogue has no AI-95 is never given a delivery forecast", async () => {
+  const config=await loadConfig();
+  const history={schemaVersion:1,ticks:[
+    ...negativeTicks("2026-08-28T08:00:00Z","2026-08-28T09:45:00Z"),tick("2026-08-28T10:00:00Z","AVAILABLE"),
+    ...negativeTicks("2026-08-29T08:00:00Z","2026-08-29T10:15:00Z"),tick("2026-08-29T10:30:00Z","AVAILABLE"),
+    ...negativeTicks("2026-08-30T10:00:00Z","2026-08-30T11:45:00Z")
+  ]};
+  const assessments=["s1","s2","s3"].map(key=>station(key,"NOT_AVAILABLE"));
+  const withCatalogue=assessments.map((value,index)=>({...value,assortment:index===0?["92"]:["92","95"],sellsRequestedFamily:index!==0}));
+  const snapshot={fetchedAt:"2026-08-30T12:00:00Z",areaHash:"area",queryHash:"query",assessments:withCatalogue};
+  const forecast=buildForecast(history,snapshot,config);
+  assert.deepEqual(forecast.items.map(item=>item.stationKey).sort(),["s2","s3"]);
+  const unknownCatalogue={...snapshot,assessments:assessments.map(value=>({...value}))};
+  assert.equal(buildForecast(history,unknownCatalogue,config).items.length,3);
+});

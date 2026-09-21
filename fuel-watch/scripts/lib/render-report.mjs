@@ -11,7 +11,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   const lines = [`## Наличие АИ-95 — ${formatTime(snapshot.fetchedAt)}`, `Зона: ${snapshot.areaLabel}. Настроенные варианты и брендовые названия объединены в АИ-95.`, "", `Браузер: ${snapshot.runtime?.browserMode ?? "режим неизвестен"}. Источники: ${snapshot.sourceHealth.map(healthText).join("; ")}.`];
   lines.push(sourceAvailabilityText(snapshot));
   if (recovered) lines.push(`Повтор после восстановления · reportId: ${reportId.slice(0, 12)}.`);
-  for (const warning of snapshot.warnings ?? []) lines.push(`⚠ ${warning.code}: ${warning.message}`);
+  for (const warning of userWarnings(snapshot.warnings)) lines.push(`⚠ ${warning}`);
   if (!compact && snapshot.changes?.length) {
     lines.push("", "Изменения:");
     for (const change of snapshot.changes) lines.push(`- ${changeText(change)}`);
@@ -20,7 +20,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
   if (!ranked.length) lines.push("Свежих положительных данных нет; это не означает, что бензина нет во всей зоне.");
   for (const [index, item] of ranked.slice(0, compact ? 3 : 5).entries()) {
     lines.push(`${index + 1}. ${stationHeading(item)}`);
-    lines.push(`   АИ-95: ${VERDICT[item.verdict]} · уверенность нашей оценки: ${CONFIDENCE[item.confidence]} · последний подтверждающий сигнал: ${freshnessText(item.observations)} · очередь: ${item.queue?.displayText ?? "нет данных"}`);
+    lines.push(`   АИ-95: ${VERDICT[item.verdict]} · уверенность нашей оценки: ${CONFIDENCE[item.confidence]} · последний подтверждающий сигнал: ${freshnessText(item.observations)} · очередь: ${item.queue?.displayText ?? "нет данных"}${limitText(item)}`);
     const activity = activityText(item.activity, snapshot.fetchedAt, snapshot.freshnessPolicy);
     if (activity) lines.push(`   ${activity}`);
     lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
@@ -34,12 +34,35 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
     lines.push(`   окно ${formatTime(forecast.windowStartAt)} — ${formatTime(forecast.windowEndAt)} · уверенность ${CONFIDENCE[forecast.confidence]} · сигнал: ${forecastSignalBasis(forecast.signalBasis)} · основа: ${forecastBasis(forecast.basis)}, ${forecast.sampleSize} эп.`);
   }
   if (forecasts.length > 0 && forecasts.length < 3) lines.push("До трёх прогнозов пока не хватает 7-дневной статистики.");
-  const conflictCount = snapshot.assessments.filter(a => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
-  const negativeCount = snapshot.assessments.filter(a => a.verdict === "NOT_AVAILABLE").length;
-  const emptyCount = snapshot.assessments.filter(a => a.verdict === "NO_FRESH_DATA").length;
-  lines.push("", `Остальные: конфликтные/косвенные — ${conflictCount}, отрицательные — ${negativeCount}, без свежих данных — ${emptyCount}.`);
+  // A station whose own grade catalogue has no AI-95 is not out of AI-95; counting it as a negative read as a shortage.
+  const graded = snapshot.assessments.filter(a => a.sellsRequestedFamily !== false);
+  const notSoldCount = snapshot.assessments.length - graded.length;
+  const conflictCount = graded.filter(a => ["CONFLICTING", "INDIRECT"].includes(a.verdict)).length;
+  const negativeCount = graded.filter(a => a.verdict === "NOT_AVAILABLE").length;
+  const emptyCount = graded.filter(a => a.verdict === "NO_FRESH_DATA").length;
+  lines.push("", `Остальные: конфликтные/косвенные — ${conflictCount}, отрицательные — ${negativeCount}, без свежих данных — ${emptyCount}${notSoldCount ? `, не продают АИ-95 — ${notSoldCount}` : ""}.`);
   lines.push("", "Данные получены из краудсорсинговых и страничных представлений, могут запаздывать или быть неполными. Перед поездкой перепроверьте ситуацию.");
-  return { reportId, markdown: lines.join("\n") };
+  return { reportId, markdown: lines.join("\n"), diagnostics: { agentOnly: true, warnings: snapshot.warnings ?? [], sourceHealth: snapshot.sourceHealth ?? [], runtime: snapshot.runtime ?? {} } };
+}
+
+// The canonical Markdown carries only limitations that change a trip decision. Internal browser plumbing and failures
+// we already recovered from belong to the structured diagnostics field instead, which is for the agent, not the user.
+const TECHNICAL_WARNING_CODES = new Set(["BROWSER_NETWORK_CONTROLS_DEGRADED", "CLEANUP_FAILED", "PARTIAL_COVERAGE"]);
+const USER_WARNING = {
+  BROWSER_RUNTIME_FAILED: "Браузер не запустился, источники в этом прогоне не опрашивались.",
+  HISTORY_UNAVAILABLE: "История за 7 дней не обновилась, поэтому прогноз появления может отсутствовать или быть хуже обычного.",
+  COMPLETENESS_INVARIANT: "Один из источников отдал заметно меньше данных, чем обычно: покрытие зоны в этом прогоне неполное.",
+  STATION_COUNT_REGRESSION: "Один из источников показал заметно меньше АЗС, чем обычно: часть станций могла не попасть в оценку."
+};
+// An unrecognised code keeps its raw wording rather than disappearing: hiding an unknown limitation is the worse failure.
+function userWarnings(warnings = []) {
+  return [...new Set(warnings.filter(w => !TECHNICAL_WARNING_CODES.has(w.code)).map(w => USER_WARNING[w.code] ?? `${w.code}: ${w.message}`))];
+}
+// Several sources may cap litres differently; the smallest known cap is the one that decides whether the trip is worth it.
+function limitText(item) {
+  const relevant = (item.limits ?? []).filter(limit => !limit.gradeLabel || petrolOctaneKey({ gradeLabel: limit.gradeLabel }) === "95");
+  if (!relevant.length) return "";
+  return ` · лимит: ${Math.min(...relevant.map(limit => limit.liters))} л`;
 }
 
 function healthText(h) { return `${h.source}: ${h.status}${h.code && h.code !== h.status ? ` (${h.code})` : ""}`; }

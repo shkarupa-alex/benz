@@ -38,9 +38,13 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs =
     for (const row of rows) {
       const id = String(row.id ?? '');
       if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
-      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.address, url: location.href });
       const state = row.st && typeof row.st === 'object' ? row.st : {};
       const detailRow = detailsById.get(id);
+      // fuels is the station's own grade catalogue; limits carries the per-grade litre cap with the source's own start time.
+      const limitRows = (Array.isArray(detailRow?.limits) ? detailRow.limits : []).map(limit => ({ gradeLabel: limit?.grade, liters: Number(limit?.liters), observedAt: limit?.since }));
+      stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.address, url: location.href, assortment: Array.isArray(detailRow?.fuels) ? detailRow.fuels : Array.isArray(row.fuels) ? row.fuels : undefined, limits: limitRows });
+      // The source's own certainty about its record; it is diagnostic provenance, never our confidence.
+      const trust = { confidence: Number(state.confidence), confirmations: Number(state.confirmations), reports: Number(state.reports), basis: state.basis, reports24h: Number(detailRow?.reports_24h) };
       const updatedAt = state.updated_at;
       const unavailable = String(state.status || '').toLowerCase() === 'no';
       const currentFuels = Array.isArray(state.fuels_now) ? state.fuels_now.map(String) : [];
@@ -55,11 +59,11 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs =
       const activeConflict = hasConflict && !(Number.isFinite(currentMs) && Number.isFinite(conflictMs) && conflictMs < currentMs);
       if (activeConflict) {
         const products = ai95.length ? ai95 : ['АИ-95'];
-        for (const fuel of products) observations.push({ stationId: id, product: ai95.length ? undefined : familyProduct, fuel, status: 'UNCERTAIN', observedAt: conflictTime, conflict: { current: { status: state.status, fuels_now: currentFuels, updated_at: updatedAt }, opposing: conflict } });
-      } else if (unavailable) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true });
-      else if (ai95.length) for (const fuel of ai95) observations.push({ stationId: id, fuel, status: 'IN_STOCK', observedAt: updatedAt });
-      else if (currentFuels.length || outGrades.includes('95')) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true });
-      else observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'UNKNOWN', observedAt: updatedAt });
+        for (const fuel of products) observations.push({ stationId: id, product: ai95.length ? undefined : familyProduct, fuel, status: 'UNCERTAIN', observedAt: conflictTime, conflict: { current: { status: state.status, fuels_now: currentFuels, updated_at: updatedAt }, opposing: conflict }, trust });
+      } else if (unavailable) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true, trust });
+      else if (ai95.length) for (const fuel of ai95) observations.push({ stationId: id, fuel, status: 'IN_STOCK', observedAt: updatedAt, trust });
+      else if (currentFuels.length || outGrades.includes('95')) observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'OUT_OF_STOCK', observedAt: updatedAt, familyAllUnavailable: true, trust });
+      else observations.push({ stationId: id, product: familyProduct, fuel: 'АИ-95', status: 'UNKNOWN', observedAt: updatedAt, trust });
       const recent = Array.isArray(detailRow?.recent) ? [...detailRow.recent].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)) : [];
       const knownPetrol = [...new Set([...petrolGrades(detailRow?.fuels), ...petrolGrades(row.fuels), ...petrolGrades(currentFuels), ...outGrades, ...recent.flatMap(eventPetrolGrades)])];
       for (const grade of knownPetrol) activity.push({ stationId: id, fuel: grade, gradeLabel: grade, kind: 'PETROL_STATUS_SNAPSHOT', status: activeConflict ? 'UNCERTAIN' : unavailable || outGrades.includes(grade) || (currentFuels.length && !petrolGrades(currentFuels).includes(grade)) ? 'OUT_OF_STOCK' : petrolGrades(currentFuels).includes(grade) ? 'IN_STOCK' : 'UNKNOWN', observedAt: updatedAt, gradeSpecific: true, sourceTerminology: 'STATUS' });

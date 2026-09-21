@@ -25,3 +25,24 @@ test("rejects collinear anchor geometry", () => {
 test("rejects a self-intersecting polygon", () => {
   assert.throws(() => resolveArea({ kind:"polygon", label:"x", coordinates:[[0,0],[1,1],[0,1],[1,0]] }), /self-intersects/);
 });
+
+// A one-off zone exists for a single run: its width and its ceilings are explicit, never inferred.
+test("route corridor builds an explicit-width zone and fails closed above its own area ceiling", () => {
+  const corridor = resolveArea({ kind: "route-corridor", label: "Волгоград → Камышин", waypoints: [[44.49, 48.72], [45.40, 50.10]], corridorWidthMeters: 6000 });
+  assert.ok(corridor.squareKm > 900 && corridor.squareKm < 1200, `unexpected corridor area ${corridor.squareKm}`);
+  assert.equal(isInsideArea([44.49, 48.72], corridor), true);
+  assert.equal(isInsideArea([43.00, 48.72], corridor), false);
+  assert.throws(() => resolveArea({ kind: "route-corridor", label: "too wide", waypoints: [[44.49, 48.72], [45.40, 50.10]], corridorWidthMeters: 6000, maxAreaSquareKm: 100 }), /above the configured limit of 100/);
+  assert.throws(() => resolveArea({ kind: "route-corridor", label: "degenerate", waypoints: [[44.49, 48.72], [44.49, 48.72]], corridorWidthMeters: 6000 }), /at least two distinct waypoints/);
+});
+
+test("an unknown area kind is rejected instead of being treated as station anchors", () => {
+  assert.throws(() => resolveArea({ kind: "whatever", label: "x" }), /Unsupported area kind: whatever/);
+  assert.throws(() => resolveArea(undefined), /Unsupported area kind: missing/);
+});
+
+test("a one-off area carries its station ceiling through to the resolved zone", () => {
+  assert.equal(resolveArea({ kind: "rectangle", label: "z", south: 48.7, west: 44.4, north: 48.8, east: 44.5, maxStationCount: 40 }).maxStationCount, 40);
+  assert.equal(resolveArea({ kind: "rectangle", label: "z", south: 48.7, west: 44.4, north: 48.8, east: 44.5 }).maxStationCount, undefined);
+  assert.equal(resolveArea({ kind: "route-corridor", label: "z", waypoints: [[44.49, 48.72], [44.60, 48.80]], corridorWidthMeters: 2000, maxStationCount: 40 }).maxStationCount, 40);
+});

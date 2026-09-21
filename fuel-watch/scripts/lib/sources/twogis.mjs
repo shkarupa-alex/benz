@@ -41,12 +41,14 @@ export function twogisExtractor(polygon, detailTimeoutMs = 3500, detailBudgetMs 
     const station = row?.station;
     const id = String(station?.id || '');
     if (!id || !Number.isFinite(Number(station.lng)) || !Number.isFinite(Number(station.lat))) continue;
-    if (!seen.has(id)) { seen.add(id); stations.push({ id, coordinate: [Number(station.lng), Number(station.lat)], title: station.name, address: station.address, brand: brandName(station.brand), url: location.href }); }
+    // fuel_assortment is the station's own grade catalogue; limit_liters rides along per grade and station-wide.
+    const limitRows = [...(row.fuel_statuses || []).map(fuel => ({ gradeLabel: fuel.fuel_type, liters: Number(fuel.limit_liters) })), { liters: Number(row.limit_liters) }].filter(limit => Number.isFinite(limit.liters) && limit.liters > 0);
+    if (!seen.has(id)) { seen.add(id); stations.push({ id, coordinate: [Number(station.lng), Number(station.lat)], title: station.name, address: station.address, brand: brandName(station.brand), url: location.href, assortment: Array.isArray(station.fuel_assortment) ? station.fuel_assortment : undefined, limits: limitRows }); }
     let newest;
     for (const fuel of row.fuel_statuses || []) {
       const observedAt = fuel.last_report_at;
       if (observedAt && (!newest || new Date(observedAt) > new Date(newest))) newest = observedAt;
-      observations.push({ stationId: id, fuel: fuel.fuel_type, status: fuel.available === true ? 'IN_STOCK' : fuel.available === false ? 'OUT_OF_STOCK' : 'UNKNOWN', observedAt, signalsPerHour: undefined });
+      observations.push({ stationId: id, fuel: fuel.fuel_type, status: fuel.available === true ? 'IN_STOCK' : fuel.available === false ? 'OUT_OF_STOCK' : 'UNKNOWN', observedAt, signalsPerHour: undefined, trust: { reportsCount: Number(fuel.reports_count) } });
       if (isPetrol(fuel.fuel_type)) activity.push({ stationId: id, fuel: fuel.fuel_type, gradeLabel: gradeOf(fuel.fuel_type), kind: 'PETROL_STATUS_SNAPSHOT', status: fuel.available === true ? 'IN_STOCK' : fuel.available === false ? 'OUT_OF_STOCK' : 'UNKNOWN', observedAt, gradeSpecific: true, sourceTerminology: 'STATUS' });
     }
     const queueLevel = row.queue_level || (row.fuel_statuses || []).find(fuel => fuel.queue_level && fuel.queue_level !== 'NONE')?.queue_level;

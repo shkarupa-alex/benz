@@ -2,7 +2,7 @@ import { haversineMeters } from "./geometry.mjs";
 import { ADDRESS_UNIT_KINDS, brandLabel, compileBrandAliases, compileStreetDictionary, isAddressUnitValue, normalizeAddress, normalizeBrand, normalizeComparableBrand, normalizeText } from "./normalize.mjs";
 import { sha256 } from "./util.mjs";
 
-export function reconcileStations(stations, config, previousSnapshot) {
+export function reconcileStations(stations, config, previousSnapshot, diagnostics = []) {
   const identity = { ...config.identity, brandAliases: compileBrandAliases(config.identity.brandAliases), streetDictionary: compileStreetDictionary(config.identity.streetDictionary) };
   const overrides = overrideIndex(config.identity.manualOverrides);
   const groups = new Map();
@@ -15,16 +15,24 @@ export function reconcileStations(stations, config, previousSnapshot) {
     else groups.set(key, { stationKey: key, members: [station], matchConfidence: manual ? "MANUAL" : "SOURCE_ID" });
   }
   const values = [...groups.values()];
+  for (const station of stations) if (brandLabel(station.brand) && !normalizeComparableBrand(station.brand, identity.brandAliases)) recordDiagnostic(diagnostics, { kind: "OPAQUE_BRAND", source: station.source, sourceStationId: station.sourceStationId, brand: brandLabel(station.brand) });
   let merged;
   do {
     merged = false;
+    const neighbors = spatialNeighbors(values, identity);
     outer: for (let i = 0; i < values.length; i++) {
-      for (let j = i + 1; j < values.length; j++) {
+      if (!values[i]) continue;
+      for (const j of neighbors(i)) {
+        if (j <= i) continue;
         const a = values[i], b = values[j];
         if (!a || !b || sourcesOverlap(a, b) || conflictingManualKeys(a, b)) continue;
         const score = groupMatchScore(a, b, identity);
-        const unambiguous = score >= 0.82 && score - secondBestScore(values, i, j, identity) >= identity.ambiguityMargin && score - secondBestScore(values, j, i, identity) >= identity.ambiguityMargin;
-        if (!unambiguous) continue;
+        if (score < 0.82) continue;
+        const runnerUp = Math.max(secondBestScore(values, i, j, identity, neighbors), secondBestScore(values, j, i, identity, neighbors));
+        if (score - runnerUp < identity.ambiguityMargin) {
+          recordDiagnostic(diagnostics, { kind: "AMBIGUOUS_MATCH", members: [...a.members, ...b.members].map(member => `${member.source}:${member.sourceStationId}`).sort(), score: Number(score.toFixed(4)), runnerUpScore: Number(runnerUp.toFixed(4)) });
+          continue;
+        }
         values[i] = mergeGroups(a, b);
         values[j] = null;
         merged = true;
@@ -33,6 +41,56 @@ export function reconcileStations(stations, config, previousSnapshot) {
     }
   } while (merged);
   return preservePreviousKeys(values.filter(Boolean), previousSnapshot).map(group => canonicalize(group, config.ranking.sourcePriority));
+}
+
+// Identity uncertainty is an internal signal about matching, never a statement about fuel; the caller keeps it
+// out of the user-facing report. The cap keeps a pathological area from filling the snapshot with near-duplicates.
+const MAX_IDENTITY_DIAGNOSTICS = 100;
+function recordDiagnostic(diagnostics, entry) {
+  const key = stableDiagnosticKey(entry);
+  if (diagnostics.length >= MAX_IDENTITY_DIAGNOSTICS || diagnostics.some(value => stableDiagnosticKey(value) === key)) return;
+  diagnostics.push(entry);
+}
+function stableDiagnosticKey(entry) { return `${entry.kind}|${entry.members?.join(",") ?? `${entry.source}:${entry.sourceStationId}`}`; }
+
+// Any pair farther apart than maxCoordinateDriftMeters already scores -Infinity, and secondBestScore floors at 0,
+// so restricting both scans to spatial neighbours changes which pairs are examined, never which pair wins. Groups
+// without a usable coordinate keep the full scan, because distance alone never rejects them.
+function spatialNeighbors(values, identity) {
+  const coordinates = values.flatMap(group => group ? group.members.map(member => member.coordinate) : []);
+  const maxAbsLat = Math.max(0, ...coordinates.map(coordinate => Math.abs(Number(coordinate?.[1]))).filter(Number.isFinite));
+  const latCell = identity.maxCoordinateDriftMeters / 111320;
+  const lonCell = identity.maxCoordinateDriftMeters / (111320 * Math.max(0.01, Math.cos(maxAbsLat * Math.PI / 180)));
+  const cells = new Map();
+  const unindexed = new Set();
+  const keysOf = group => {
+    const out = new Set();
+    for (const member of group.members) {
+      const lon = Number(member.coordinate?.[0]), lat = Number(member.coordinate?.[1]);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+      out.add(`${Math.floor(lon / lonCell)}:${Math.floor(lat / latCell)}`);
+    }
+    return out.size ? out : null;
+  };
+  const keysByIndex = new Map();
+  for (const [index, group] of values.entries()) {
+    if (!group) continue;
+    const keys = keysOf(group);
+    if (!keys) { unindexed.add(index); continue; }
+    keysByIndex.set(index, keys);
+    for (const key of keys) { const bucket = cells.get(key) ?? new Set(); bucket.add(index); cells.set(key, bucket); }
+  }
+  const everyIndex = values.map((group, index) => group ? index : -1).filter(index => index >= 0);
+  return index => {
+    if (!keysByIndex.has(index)) return everyIndex;
+    const out = new Set(unindexed);
+    for (const key of keysByIndex.get(index)) {
+      const [x, y] = key.split(":").map(Number);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const candidate of cells.get(`${x + dx}:${y + dy}`) ?? []) out.add(candidate);
+    }
+    out.delete(index);
+    return [...out].sort((a, b) => a - b);
+  };
 }
 
 function preservePreviousKeys(groups, previousSnapshot) {
@@ -71,11 +129,11 @@ function groupMatchScore(a, b, identity) {
   const scores = a.members.flatMap(left => b.members.map(right => matchScore(left, right, identity)));
   return scores.length ? Math.min(...scores) : -Infinity;
 }
-function secondBestScore(values, targetIndex, excludedIndex, identity) {
+function secondBestScore(values, targetIndex, excludedIndex, identity, neighbors) {
   const target = values[targetIndex];
   const counterpart = values[excludedIndex];
   if (!target || !counterpart) return 0;
-  return Math.max(0, ...values.map((candidate, index) => index === targetIndex || index === excludedIndex || !candidate || !sourcesOverlap(candidate, counterpart) || sourcesOverlap(target, candidate) || conflictingManualKeys(target, candidate) ? -Infinity : groupMatchScore(target, candidate, identity)));
+  return Math.max(0, ...neighbors(targetIndex).map(index => { const candidate = values[index]; return index === targetIndex || index === excludedIndex || !candidate || !sourcesOverlap(candidate, counterpart) || sourcesOverlap(target, candidate) || conflictingManualKeys(target, candidate) ? -Infinity : groupMatchScore(target, candidate, identity); }));
 }
 function sourcesOverlap(a, b) {
   const sources = new Set(a.members.map(member => member.source));

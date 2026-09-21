@@ -2,7 +2,7 @@ import { classifyFuelLabel } from "../fuels.mjs";
 import { brandLabel } from "../normalize.mjs";
 
 export function okResult(source, raw, request, config, { capability = "CURRENT_GRADE", coordinateOrder = "LON_LAT" } = {}) {
-  const enumerated = (raw.stations ?? []).map(s => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: brandLabel(s.brand) || undefined, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), provenanceUrl: s.url ?? raw.url ?? "" }));
+  const enumerated = (raw.stations ?? []).map(s => ({ source, sourceStationId: String(s.id ?? s.sourceStationId ?? syntheticId(s)), title: s.title, brand: brandLabel(s.brand) || undefined, address: s.address, coordinate: normalizeCoordinate(s.coordinate ?? s.coordinates, coordinateOrder), assortment: petrolAssortment(s.assortment), limits: normalizeLimits(s.limits), provenanceUrl: s.url ?? raw.url ?? "" }));
   const stations = enumerated.filter(s => validCoordinate(s.coordinate));
   const stationIds = new Set(enumerated.map(s => s.sourceStationId));
   const observations = (raw.observations ?? []).flatMap(o => {
@@ -10,7 +10,7 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
     const classified = o.product ?? classifyFuelLabel(o.fuel ?? o.label ?? o.grade, request.requestedProducts);
     const product = capability === "CURRENT_FAMILY" && classified ? { family: "AI_95", variant: "UNKNOWN", variantKey: "FAMILY", displayLabel: classified.displayLabel, specificity: "FAMILY_ONLY", productKey: "AI95_FAMILY" } : capability === "CATALOG_ONLY" && classified ? { ...classified, specificity: "CATALOG_ONLY" } : classified;
     if (!sourceStationId || !stationIds.has(sourceStationId) || !product) return [];
-    return [{ source, sourceStationId, product, status: normalizeStatus(o.normalizedStatus ?? o.status), time: normalizeTime(o), signalsPerHour: finite(o.signalsPerHour), familyAllUnavailable: o.familyAllUnavailable === true, rawStatus: String(o.status ?? "UNKNOWN"), conflict: o.conflict ? { raw: o.conflict } : undefined, fetchedAt: request.fetchedAt, provenanceUrl: o.url ?? enumerated.find(s => s.sourceStationId === sourceStationId)?.provenanceUrl ?? "" }];
+    return [{ source, sourceStationId, product, status: normalizeStatus(o.normalizedStatus ?? o.status), time: normalizeTime(o), signalsPerHour: finite(o.signalsPerHour), familyAllUnavailable: o.familyAllUnavailable === true, rawStatus: String(o.status ?? "UNKNOWN"), conflict: o.conflict ? { raw: o.conflict } : undefined, trust: normalizeTrust(o.trust), fetchedAt: request.fetchedAt, provenanceUrl: o.url ?? enumerated.find(s => s.sourceStationId === sourceStationId)?.provenanceUrl ?? "" }];
   });
   const queues = (raw.queues ?? []).flatMap(q => {
     const sourceStationId = String(q.stationId ?? q.sourceStationId ?? "");
@@ -21,7 +21,7 @@ export function okResult(source, raw, request, config, { capability = "CURRENT_G
     const sourceStationId = String(a.stationId ?? a.sourceStationId ?? "");
     if (!stationIds.has(sourceStationId)) return [];
     const classified = a.product ?? (a.fuel ? classifyFuelLabel(a.fuel, request.requestedProducts) : undefined) ?? undefined;
-    return [{ source, sourceStationId, product: classified, gradeLabel: String(a.gradeLabel ?? a.fuel ?? classified?.displayLabel ?? "").trim() || undefined, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? undefined : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? classified), sourceTerminology: a.sourceTerminology ?? "SIGNAL" }];
+    return [{ source, sourceStationId, product: classified, gradeLabel: String(a.gradeLabel ?? a.fuel ?? classified?.displayLabel ?? "").trim() || undefined, kind: a.kind ?? "RECENT_SIGNAL", status: a.status == null ? undefined : normalizeStatus(a.status), eventTimes: Array.isArray(a.eventTimes) ? a.eventTimes : [], observedAt: iso(a.observedAt), latestEventAt: iso(a.latestEventAt), windowMinutes: finite(a.windowMinutes), count: finite(a.count), precedingGapMinutes: finite(a.precedingGapMinutes), gradeSpecific: Boolean(a.gradeSpecific ?? classified), sourceTerminology: a.sourceTerminology ?? "SIGNAL", trust: normalizeTrust(a.trust) }];
   });
   const unlocatedStationIds = enumerated.filter(s => !validCoordinate(s.coordinate)).map(s => s.sourceStationId);
   const historyUnavailable = finite(raw.activityHistoryCoverage) === 0;
@@ -69,6 +69,29 @@ export function normalizeOrdinal(value) {
   if (/(?:^|[^\p{L}])(?:short|low|small)(?:[^\p{L}]|$)|небольш|мал|корот/u.test(text)) return "SHORT";
   if (/(?:^|\s)(?:нет|без)(?:\s|$)/u.test(text)) return "NONE";
   return undefined;
+}
+const PETROL_OCTANE = /(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu;
+// A station's own grade catalogue is what separates "AI-95 ran out here" from "this station never sells AI-95".
+// An empty or absent list is read as "the source published no catalogue", never as "this station sells nothing".
+export function petrolAssortment(value) {
+  const values = (Array.isArray(value) ? value : value == null ? [] : [value]).map(item => String(item ?? "").trim()).filter(Boolean);
+  if (!values.length) return undefined;
+  return [...new Set(values.flatMap(item => [...item.matchAll(PETROL_OCTANE)].map(match => match[1])))].sort((a, b) => Number(a) - Number(b));
+}
+// Litre limits change whether the trip is worth making, so they are carried per grade with the source's own timestamp.
+export function normalizeLimits(value) {
+  const rows = (Array.isArray(value) ? value : []).map(row => ({ gradeLabel: row?.gradeLabel == null ? undefined : String(row.gradeLabel).trim() || undefined, liters: Number(row?.liters), observedAt: iso(row?.observedAt) })).filter(row => Number.isFinite(row.liters) && row.liters > 0);
+  return rows.length ? rows : undefined;
+}
+// Source-side trust metrics stay diagnostic: they describe how sure the source is, never how sure we are.
+export function normalizeTrust(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "boolean" || (typeof raw === "number" && Number.isFinite(raw))) out[key] = raw;
+    else if (typeof raw === "string" && raw.trim()) out[key] = raw.trim().slice(0, 40);
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 function finite(value) { const n = Number(value); return Number.isFinite(n) ? n : undefined; }
 function iso(value) { if (!value) return undefined; const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toISOString() : undefined; }

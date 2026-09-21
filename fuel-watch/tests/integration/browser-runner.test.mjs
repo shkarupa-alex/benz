@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { loadConfig } from "../../scripts/lib/config.mjs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BrowserRunner } from "../../scripts/lib/browser-runner.mjs";
 
 test("runner strips inherited agent-browser, gateway and proxy variables", async () => {
@@ -418,4 +421,89 @@ test("a navigation the allowlist blocked stays a blocked-resource failure", asyn
   };
   const runner = new BrowserRunner(config, { exec, command: process.execPath });
   await assert.rejects(() => runner.open("https://tracker.example/"), error => error.code === "RESOURCE_BLOCKED");
+});
+
+// Readiness polling used to spawn five CLI processes per iteration; title, text and readiness now share one eval.
+test("readiness polling spends two CLI calls per iteration and never asks for title or text separately", async () => {
+  const config = await loadConfig();
+  const commands = [];
+  let polls = 0;
+  const exec = async (command, args) => {
+    commands.push(args);
+    if (args.includes("url")) return okJson({ url: "https://2gis.ru/volgograd/search/АЗС" });
+    if (args.includes("eval")) return okJson({ pageTitle: "2GIS", pageText: "АЗС", selectorReady: polls++ > 0 });
+    return okJson({ sessions: [] });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  runner.expectedUrl = "https://2gis.ru/volgograd/search/АЗС";
+  await runner.waitReady({ anyOfSelectors: ["a[href*=firm]"], urlRejectPatterns: ["/captcha"], timeoutMs: 5000 });
+  assert.equal(polls, 2);
+  assert.equal(commands.filter(args => args.includes("get") && args.includes("url")).length, 2);
+  assert.equal(commands.filter(args => args.includes("eval")).length, 2);
+  assert.equal(commands.filter(args => args.includes("title") || args.includes("text")).length, 0);
+  assert.equal(commands.length, 4);
+});
+
+// The page is untrusted data: if readiness carried the URL too, a page could redefine location and hide its drift.
+test("page drift is judged by the browser's own URL, not by what the page reports", async () => {
+  const config = await loadConfig();
+  const exec = async (command, args) => {
+    if (args.includes("url")) return okJson({ url: "https://evil.example/landing" });
+    if (args.includes("eval")) return okJson({ pageTitle: "2GIS", pageText: "АЗС", selectorReady: true });
+    return okJson({ sessions: [] });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  runner.expectedUrl = "https://2gis.ru/volgograd/search/АЗС";
+  await assert.rejects(() => runner.waitReady({ anyOfSelectors: ["a[href*=firm]"], urlRejectPatterns: [], timeoutMs: 2000 }), error => error.code === "PAGE_LOST");
+});
+
+// Ownership must be namespace-scoped: a random agent-browser Chrome on this machine belongs to another session.
+test("orphan reaping only signals daemons recorded under a namespace this runner created", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-"));
+  const write = async (namespace, pid) => { await mkdir(join(root, "namespaces", namespace, "run"), { recursive: true }); await writeFile(join(root, "namespaces", namespace, "run", "source.pid"), `${pid}\n`); };
+  await write("fuel-watch-ours", 4242);
+  await write("fuel-watch-rotated", 4243);
+  await write("someone-elses-session", 4244);
+  const signalled = [];
+  const alive = new Set([4242, 4243, 4244, 4245]);
+  const processControl = {
+    args: async pid => alive.has(pid) ? (pid === 4245 ? "/usr/bin/something-else" : "/opt/agent-browser/bin/agent-browser-darwin-arm64") : undefined,
+    terminate: (pid, signal) => { signalled.push([pid, signal]); alive.delete(pid); }
+  };
+  const runner = new BrowserRunner(config, { exec: async () => okJson({ sessions: [] }), command: process.execPath, namespace: "fuel-watch-ours", stateRoot: root, processControl });
+  runner.namespaceHistory = ["fuel-watch-ours", "fuel-watch-rotated"];
+
+  const reported = await runner.reapLeftoverProcesses({ terminate: false });
+  assert.deepEqual(reported.map(value => value.pid).sort(), [4242, 4243]);
+  assert.ok(reported.every(value => value.outcome === "REPORTED"));
+  assert.equal(signalled.length, 0);
+
+  const reaped = await runner.reapLeftoverProcesses({ terminate: true, graceMs: 200, pollMs: 10 });
+  assert.deepEqual(reaped.map(value => [value.pid, value.outcome]), [[4242, "TERMINATED"], [4243, "TERMINATED"]]);
+  assert.deepEqual(signalled, [[4242, "SIGTERM"], [4243, "SIGTERM"]]);
+  assert.ok(alive.has(4244), "another session's daemon must never be signalled");
+  await rm(root, { recursive: true, force: true });
+});
+
+test("a recycled or foreign pid under our namespace is never signalled", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-pid-"));
+  await mkdir(join(root, "namespaces", "fuel-watch-ours", "run"), { recursive: true });
+  await writeFile(join(root, "namespaces", "fuel-watch-ours", "run", "source.pid"), "5555\n");
+  const signalled = [];
+  const runner = new BrowserRunner(config, { exec: async () => okJson({ sessions: [] }), command: process.execPath, namespace: "fuel-watch-ours", stateRoot: root, processControl: { args: async () => "/Applications/Safari.app/Contents/MacOS/Safari", terminate: (pid, signal) => signalled.push([pid, signal]) } });
+  assert.deepEqual(await runner.reapLeftoverProcesses({ terminate: true }), []);
+  assert.equal(signalled.length, 0);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("a stale pid file whose process is gone is not reported as an orphan", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-stale-"));
+  await mkdir(join(root, "namespaces", "fuel-watch-ours", "run"), { recursive: true });
+  await writeFile(join(root, "namespaces", "fuel-watch-ours", "run", "source.pid"), "6666\n");
+  const runner = new BrowserRunner(config, { exec: async () => okJson({ sessions: [] }), command: process.execPath, namespace: "fuel-watch-ours", stateRoot: root, processControl: { args: async () => undefined, terminate: () => { throw new Error("must not signal a dead pid"); } } });
+  assert.deepEqual(await runner.leftoverProcesses(), []);
+  await rm(root, { recursive: true, force: true });
 });

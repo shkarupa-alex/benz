@@ -5,6 +5,8 @@ import * as yandex from "../../scripts/lib/sources/yandex.mjs";
 import * as twogis from "../../scripts/lib/sources/twogis.mjs";
 import * as gdebenz from "../../scripts/lib/sources/gdebenz.mjs";
 import * as benzonavt from "../../scripts/lib/sources/benzonavt.mjs";
+import { petrolAssortment } from "../../scripts/lib/sources/common.mjs";
+import { assessRequestedUnion } from "../../scripts/lib/verdict.mjs";
 import { readJson } from "../../scripts/lib/util.mjs";
 
 const request = config => ({ area: { polygon: [[44,48],[45,48],[45,49],[44,48]] }, requestedProducts: config.requestedProducts, fetchedAt: new Date().toISOString() });
@@ -413,4 +415,84 @@ test("Benzonavt fuels_out never overrides a grade that fuels_now reports as avai
   assert.equal(raw.observations[0].status, "IN_STOCK");
   assert.equal(raw.activity.find(value => value.kind === "PETROL_STATUS_SNAPSHOT" && value.gradeLabel === "95").status, "IN_STOCK");
   assert.equal(raw.activity.find(value => value.kind === "PETROL_STATUS_SNAPSHOT" && value.gradeLabel === "92").status, "OUT_OF_STOCK");
+});
+
+// Live shape from gdebenz /api/nearby on 21 September 2026: three of 104 rows had a visible card naming fewer grades
+// than the hidden fuels_now field. Unioning the two turned "92, ДТ" on Глубокоовражная, 25 into a false AI-95 positive.
+test("gdebenz reports a visible-vs-hidden grade disagreement as a conflict instead of an AI-95 positive", async () => {
+  const rows=[{osm_id:"1650114949",brand:"Лукойл",name:"Лукойл",addr:"ул Глубокоовражная, 25",lat:48.7206,lon:44.4887,status:"queue",detail:"92, ДТ · Очередь ≈5–20 машин",fuels_now:"92,95,ДТ",confirmations:2,confidence_base:0.8323,svc:"osm",last_at:"2026-09-21 12:00:09",meta:{f:["92","95","98","дт"]}}];
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+  const observation=raw.observations.find(o=>o.stationId==="1650114949");
+  assert.equal(observation.normalizedStatus,"UNCERTAIN");
+  assert.equal(observation.conflict.kind,"VISIBLE_VS_HIDDEN");
+  assert.deepEqual(observation.conflict.visibleGrades,["92"]);
+  assert.deepEqual(observation.conflict.hiddenGrades,["92","95"]);
+  assert.equal(observation.conflict.visibleText,"92, ДТ · Очередь ≈5–20 машин");
+  assert.equal(observation.conflict.hiddenText,"92,95,ДТ");
+  assert.equal(raw.activity.find(a=>a.kind==="PETROL_STATUS_SNAPSHOT"&&a.gradeLabel==="95").status,"UNCERTAIN");
+  assert.equal(raw.activity.find(a=>a.kind==="PETROL_STATUS_SNAPSHOT"&&a.gradeLabel==="92").status,"IN_STOCK");
+});
+
+test("a conflicted gdebenz row cannot become an available AI-95 destination", async () => {
+  const config=await loadConfig();
+  const rows=[{osm_id:"1650114949",brand:"Лукойл",name:"Лукойл",addr:"ул Глубокоовражная, 25",lat:48.7206,lon:44.4887,status:"queue",detail:"92, ДТ · Очередь ≈5–20 машин",fuels_now:"92,95,ДТ",last_at:new Date().toISOString().replace("T"," ").slice(0,19),meta:{f:["92","95"]}}];
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+  const browser={open:async()=>({finalUrl:"https://gdebenz.ru/",pageTitle:"Где бензин",pageTextPrefix:"карта"}),waitReady:async()=>{},evalJson:async()=>raw};
+  const result=await gdebenz.collect(request(config),{browser,config});
+  assert.equal(result.observations[0].status,"UNCERTAIN");
+  assert.deepEqual(result.observations[0].conflict.raw.visibleGrades,["92"]);
+  assert.equal(assessRequestedUnion({observations:result.observations,activity:result.activity,config,sourceGroups:{gdebenz:"gdebenz"}}).verdict,"INDIRECT");
+});
+
+// "Очередь 100+ машин" is prose, not a fuel list; reading its leading segment as one invented an AI-100 grade.
+test("a gdebenz card leading with queue prose does not invent an AI-100 grade", async () => {
+  const rows=[{osm_id:"777",brand:"Роснефть",name:"Роснефть",addr:"ул Тестовая, 1",lat:48.72,lon:44.49,status:"queue",detail:"Очередь 100+ машин",fuels_now:"92,ДТ",last_at:"2026-09-21 12:00:09"}];
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+  assert.deepEqual(raw.activity.filter(a=>a.kind==="PETROL_STATUS_SNAPSHOT").map(a=>a.gradeLabel),["92"]);
+  assert.equal(raw.observations[0].normalizedStatus,"UNKNOWN");
+  assert.equal(raw.observations[0].conflict,undefined);
+});
+
+test("gdebenz carries its grade catalogue, station-wide litre limit and trust metrics", async () => {
+  const config=await loadConfig();
+  const rows=[{osm_id:"901",brand:"Лукойл",name:"Лукойл",addr:"ул им. Пархоменко, 57а",lat:48.72,lon:44.49,status:"yes",detail:"92, 95, ДТ · Лимит 40 л",fuels_now:"92,95,ДТ",confirmations:3,confidence_base:0.77,svc:"osm",last_at:"2026-09-21 12:00:09",meta:{f:["дт","92","95","100"]}}];
+  const raw=await Function("fetch","location",`return ${gdebenz.gdebenzApiExtractor("https://gdebenz.ru/api/nearby")}`)(async url=>({ok:true,json:async()=>String(url).includes("/comments/")?[]:rows}),{href:"https://gdebenz.ru/"});
+  const browser={open:async()=>({finalUrl:"https://gdebenz.ru/",pageTitle:"Где бензин",pageTextPrefix:"карта"}),waitReady:async()=>{},evalJson:async()=>raw};
+  const result=await gdebenz.collect(request(config),{browser,config});
+  assert.deepEqual(result.stations[0].assortment,["92","95","100"]);
+  assert.deepEqual(result.stations[0].limits,[{gradeLabel:undefined,liters:40,observedAt:"2026-09-21T12:00:09.000Z"}]);
+  assert.deepEqual(result.observations[0].trust,{confidenceBase:0.77,confirmations:3,svc:"osm"});
+});
+
+test("benzonavt carries its grade catalogue, per-grade litre limits and source certainty", async () => {
+  const config=await loadConfig();
+  const rows=[{id:379,brand:"Лукойл",name:"Лукойл",address:"Волгоград, ул. 64-й Армии, 143",fuels:["92","95","98","100","dt","lpg"],lat:48.627,lon:44.426,st:{status:"yes",confidence:0.97,confirmations:2,reports:5,fuels_now:["92","95","100","dt"],fuels_out:["98"],conflict:null,updated_at:"2026-09-21T12:35:48+00:00",basis:"data"}}];
+  const detail={id:379,fuels:["92","95","98","100","dt","lpg"],reports_24h:7,limits:[{grade:"95",liters:60,since:"2026-09-21T12:52:46.922621+00:00"},{grade:"dt",liters:40,since:"2026-09-17T19:05:30.066020+00:00"}],recent:[]};
+  const raw=await Function("document","location","fetch",`return ${benzonavt.benzonavtExtractor("https://benzonavt.ru/api/v1/stations?bbox=x")}`)({body:{innerText:"Бензонавт"}},{href:"https://benzonavt.ru/"},async url=>({ok:true,json:async()=>String(url).includes("/stations/379")?detail:rows}));
+  const browser={open:async()=>({finalUrl:"https://benzonavt.ru/",pageTextPrefix:"Бензонавт"}),waitReady:async()=>{},evalJson:async()=>raw};
+  const result=await benzonavt.collect(request(config),{browser,config});
+  assert.deepEqual(result.stations[0].assortment,["92","95","98","100"]);
+  assert.deepEqual(result.stations[0].limits,[{gradeLabel:"95",liters:60,observedAt:"2026-09-21T12:52:46.922Z"},{gradeLabel:"dt",liters:40,observedAt:"2026-09-17T19:05:30.066Z"}]);
+  assert.deepEqual(result.observations[0].trust,{confidence:0.97,confirmations:2,reports:5,basis:"data",reports24h:7});
+});
+
+test("2GIS carries its grade catalogue, per-grade litre limits and report counts", async () => {
+  const config=await loadConfig();
+  const liveUrl="https://benzin.api.2gis.ru/api/v1/stations/by-ids?ids=1";
+  const rows=[{station:{id:"1",name:"АЗС",address:"ул. Тестовая, 1",lng:44.48,lat:48.70,fuel_assortment:["AI_100","AI_95","AI_92","DT"],last_transaction_at:"2026-09-21T12:32:45Z"},fuel_statuses:[{fuel_type:"AI_95",available:true,queue_level:"NONE",limit_liters:40,reports_count:46,last_report_at:"2026-09-21T12:00:00Z"}],limit_liters:40}];
+  const raw=await Function("window","document","location","performance","fetch","URL",`return ${twogis.TWOGIS_EXTRACTOR}`)({}, {body:{innerText:"АЗС"},scripts:[]},{href:"https://2gis.ru/volgograd/search/АЗС"},{getEntriesByType:()=>[{name:liveUrl}]},async()=>({ok:true,json:async()=>rows}),URL);
+  const browser={open:async()=>({finalUrl:"https://2gis.ru/volgograd/search/АЗС",pageTextPrefix:"АЗС"}),waitReady:async()=>{},evalJson:async()=>raw};
+  const result=await twogis.collect(request(config),{browser,config});
+  assert.deepEqual(result.stations[0].assortment,["92","95","100"]);
+  assert.deepEqual(result.stations[0].limits,[{gradeLabel:"AI_95",liters:40,observedAt:undefined},{gradeLabel:undefined,liters:40,observedAt:undefined}]);
+  assert.deepEqual(result.observations[0].trust,{reportsCount:46});
+});
+
+// An empty or absent catalogue means the source published none, never that the station sells nothing.
+test("an absent or empty grade catalogue is left unknown rather than read as an empty assortment", () => {
+  assert.equal(petrolAssortment(undefined),undefined);
+  assert.equal(petrolAssortment([]),undefined);
+  assert.equal(petrolAssortment(["", "  "]),undefined);
+  assert.deepEqual(petrolAssortment(["dt","lpg"]),[]);
+  assert.deepEqual(petrolAssortment(["АИ-95","аи 92"]),["92","95"]);
 });

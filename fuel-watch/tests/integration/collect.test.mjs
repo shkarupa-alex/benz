@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { collectSnapshot } from "../../scripts/collect.mjs";
+import { BrowserRunner } from "../../scripts/lib/browser-runner.mjs";
+import { loadConfig } from "../../scripts/lib/config.mjs";
 
 test("all-source degradation is not rendered as no fuel and cleanup failure returns 75", async () => {
   const runner = {
@@ -172,4 +177,75 @@ test("one collapsing source never stops the others and stays named in source hea
   assert.deepEqual([...new Set(contributing)].sort(), ["benzonavt", "gdebenz"]);
   assert.equal(result.snapshot.sourceCoverage.yandex, undefined);
   assert.equal(result.snapshot.sourceCoverage["2gis"], undefined);
+});
+
+// A one-off zone is for a single run: it resolves its own area and refuses to exceed the ceiling it declares.
+test("a one-off area overrides the configured zone without touching it and enforces its station ceiling", async () => {
+  const runner = {
+    namespace: "fixture-oneoff",
+    probe: async () => ({}),
+    open: async url => ({ finalUrl: url, pageTextPrefix: "АЗС" }),
+    waitReady: async () => {},
+    evalJson: async () => ({ stations: [{ id: "a", coordinate: [44.49, 48.72], title: "АЗС A", address: "ул. Первая, 1" }, { id: "b", coordinate: [44.60, 48.80], title: "АЗС B", address: "ул. Вторая, 2" }], observations: [], queues: [], activity: [] }),
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  };
+  const corridor = { kind: "route-corridor", label: "Разовый коридор", waypoints: [[44.49, 48.72], [44.60, 48.80]], corridorWidthMeters: 2000 };
+  const result = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: corridor });
+  assert.equal(result.snapshot.areaLabel, "Разовый коридор");
+  assert.equal(result.snapshot.assessments.length, 2);
+  const configured = await collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z") });
+  assert.equal(configured.snapshot.areaLabel, "Волгоград — настроенная зона");
+  assert.notEqual(configured.snapshot.areaHash, result.snapshot.areaHash);
+  await assert.rejects(() => collectSnapshot({ browserFactory: () => runner, now: new Date("2026-09-21T10:00:00Z"), areaOverride: { ...corridor, maxStationCount: 1 } }), error => error.code === "AREA_STATION_LIMIT");
+});
+
+// The skill must never solve or bypass a challenge; the only sanctioned behaviour is holding a visible window open.
+test("challenge handover is off by default and never touches the page when it is on", async () => {
+  const config = await loadConfig();
+  let challengeSolved = false, retries = 0;
+  const makeRunner = () => ({
+    namespace: "fixture-challenge", sessionName: "source",
+    probe: async () => ({}),
+    open: async url => { retries++; return { finalUrl: challengeSolved ? url : "https://2gis.ru/captcha", pageTextPrefix: challengeSolved ? "АЗС" : "captcha" }; },
+    waitReady: async () => {},
+    evalJson: async () => ({ stations: [], observations: [], queues: [], activity: [], schemaChanged: true }),
+    awaitManualChallengeResolution: async () => { challengeSolved = true; return true; },
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  });
+
+  const off = await collectSnapshot({ configPath: undefined, browserFactory: () => makeRunner(), now: new Date("2026-09-21T10:00:00Z") });
+  assert.deepEqual(off.snapshot.runtime.challengeHandovers, []);
+
+  const dir = await mkdtemp(join(tmpdir(), "fuel-handover-"));
+  const configPath = join(dir, "config.json");
+  config.browser.configPath = "agent-browser.json";
+  config.browser.challengeHandover = { enabled: true, waitSeconds: 10, pollSeconds: 2, maxPerRun: 1 };
+  await writeFile(configPath, JSON.stringify(config));
+  await cp(new URL("../../config/agent-browser.json", import.meta.url), join(dir, "agent-browser.json"));
+  challengeSolved = false;
+  const on = await collectSnapshot({ configPath, browserFactory: () => makeRunner(), now: new Date("2026-09-21T10:00:00Z") });
+  const records = on.snapshot.runtime.challengeHandovers;
+  assert.equal(records.length, 1, "maxPerRun must cap handovers at one per run");
+  assert.equal(records[0].outcome, "SOLVED_BY_USER");
+  assert.equal(records[0].waitSeconds, 10);
+  await rm(dir, { recursive: true, force: true });
+});
+
+// Waiting is read-only by construction: the runner may look at the page, never type, click or submit on it.
+test("waiting for a human to clear a challenge only reads the page and gives up on its own budget", async () => {
+  const config = await loadConfig();
+  const commands = [];
+  let cleared = false;
+  const exec = async (command, args) => {
+    commands.push(args);
+    if (args.includes("url")) return { exitCode: 0, stdout: JSON.stringify({ data: { url: cleared ? "https://2gis.ru/volgograd" : "https://2gis.ru/captcha" } }), stderr: "" };
+    if (args.includes("eval")) { cleared = true; return { exitCode: 0, stdout: JSON.stringify({ data: { pageTitle: "2GIS", pageText: "АЗС", selectorReady: true } }), stderr: "" }; }
+    return { exitCode: 0, stdout: JSON.stringify({ data: { sessions: [] } }), stderr: "" };
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  assert.equal(await runner.awaitManualChallengeResolution({ waitMs: 3000, pollMs: 100 }), true);
+  assert.ok(commands.every(args => !args.some(value => ["click", "type", "fill", "press", "submit", "solve"].includes(value))), "the wait must never act on the page");
+
+  const stuck = new BrowserRunner(config, { exec: async (command, args) => args.includes("url") ? { exitCode: 0, stdout: JSON.stringify({ data: { url: "https://2gis.ru/captcha" } }), stderr: "" } : { exitCode: 0, stdout: JSON.stringify({ data: { pageTitle: "", pageText: "captcha", selectorReady: false } }), stderr: "" }, command: process.execPath });
+  assert.equal(await stuck.awaitManualChallengeResolution({ waitMs: 300, pollMs: 100 }), false);
 });

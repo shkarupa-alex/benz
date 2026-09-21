@@ -263,3 +263,48 @@ test("rejects a manual group containing two stations from one source", async () 
   config.identity.manualOverrides = [{ stationKey: "bad", members: [{ source: "2gis", sourceStationId: "a" }, { source: "2gis", sourceStationId: "b" }] }];
   assert.throws(() => reconcileStations([], config), /multiple 2gis stations/u);
 });
+
+// The spatial index only decides which pairs are examined; a pair beyond the drift limit already scored -Infinity.
+test("spatially indexed reconciliation reproduces the exhaustive result on a dense area", async () => {
+  const config = await loadConfig();
+  const brands = ["Лукойл", "Роснефть", "Газпромнефть", "Татнефть"];
+  const stations = [];
+  for (let index = 0; index < 60; index++) {
+    const lon = 44.45 + (index % 10) * 0.004, lat = 48.70 + Math.floor(index / 10) * 0.004;
+    for (const source of ["yandex", "gdebenz", "2gis", "benzonavt"]) stations.push({ source, sourceStationId: `${source}-${index}`, title: brands[index % 4], brand: brands[index % 4], address: `ул. Тестовая, ${index + 1}`, coordinate: [lon + (source === "yandex" ? 0 : 0.00002), lat] });
+  }
+  const indexed = reconcileStations(stations, config);
+  const exhaustive = exhaustiveReconcile(stations, config);
+  assert.deepEqual(indexed.map(group => group.members.map(member => `${member.source}:${member.sourceStationId}`).sort()).sort(), exhaustive);
+  assert.ok(indexed.every(group => new Set(group.members.map(member => member.source)).size === group.members.length));
+});
+
+test("identity diagnostics name opaque brands and ambiguous candidates without claiming an availability problem", async () => {
+  const config = await loadConfig();
+  const diagnostics = [];
+  reconcileStations([
+    { source: "2gis", sourceStationId: "opaque", title: "АЗС", brand: "brand-id:99", address: "ул. Тестовая, 1", coordinate: [44.45, 48.70] },
+    { source: "yandex", sourceStationId: "a", title: "Лукойл", brand: "Лукойл", address: "ул. Тестовая, 1", coordinate: [44.45, 48.70] }
+  ], config, undefined, diagnostics);
+  const opaque = diagnostics.find(entry => entry.kind === "OPAQUE_BRAND");
+  assert.equal(opaque.brand, "brand-id:99");
+  assert.equal(opaque.source, "2gis");
+  assert.ok(diagnostics.every(entry => !/налич|available/i.test(JSON.stringify(entry))));
+});
+
+function exhaustiveReconcile(stations, config) {
+  const groups = stations.map(station => [station]);
+  let merged;
+  do {
+    merged = false;
+    outer: for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+      if (!groups[i] || !groups[j]) continue;
+      const pair = [...groups[i], ...groups[j]];
+      if (new Set(pair.map(member => member.source)).size !== pair.length) continue;
+      const scored = reconcileStations(pair, config);
+      if (scored.length !== 1) continue;
+      groups[i] = pair; groups[j] = null; merged = true; break outer;
+    }
+  } while (merged);
+  return groups.filter(Boolean).map(group => group.map(member => `${member.source}:${member.sourceStationId}`).sort()).sort();
+}

@@ -5,10 +5,10 @@ import {
   isFreshActivity,
   normalizeQueues,
   rankAssessments
-} from "./chunks/chunk-WCGSC67K.mjs";
+} from "./chunks/chunk-ZLS72LVM.mjs";
 import {
   BrowserRunner
-} from "./chunks/chunk-ZNFTAGFH.mjs";
+} from "./chunks/chunk-JQS5FQKK.mjs";
 import {
   ensureUserConfig,
   historyPath,
@@ -28,7 +28,7 @@ import {
   sha256,
   stableJson,
   writeJsonAtomic
-} from "./chunks/chunk-GQHB3NSD.mjs";
+} from "./chunks/chunk-NKNPTJQQ.mjs";
 import {
   ADDRESS_UNIT_KINDS,
   brandLabel,
@@ -1789,7 +1789,7 @@ function buildForecast(history, snapshot, config) {
   const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
   const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases, cutoffMs, nowMs);
   const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
-  const candidates = snapshot.assessments.filter((assessment) => assessment.verdict === NEGATIVE).map((assessment) => {
+  const candidates = snapshot.assessments.filter((assessment) => assessment.verdict === NEGATIVE && assessment.sellsRequestedFamily !== false).map((assessment) => {
     const samples = stationSamples(scopedTicks, assessment, identity);
     const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
     if (!negativeStartedAt) return null;
@@ -2132,7 +2132,7 @@ function nextMoscowMinute(value, nowMs) {
 }
 
 // scripts/lib/identity.mjs
-function reconcileStations(stations, config, previousSnapshot) {
+function reconcileStations(stations, config, previousSnapshot, diagnostics = []) {
   const identity = { ...config.identity, brandAliases: compileBrandAliases(config.identity.brandAliases), streetDictionary: compileStreetDictionary(config.identity.streetDictionary) };
   const overrides = overrideIndex(config.identity.manualOverrides);
   const groups = /* @__PURE__ */ new Map();
@@ -2145,16 +2145,24 @@ function reconcileStations(stations, config, previousSnapshot) {
     else groups.set(key, { stationKey: key, members: [station], matchConfidence: manual ? "MANUAL" : "SOURCE_ID" });
   }
   const values = [...groups.values()];
+  for (const station of stations) if (brandLabel(station.brand) && !normalizeComparableBrand(station.brand, identity.brandAliases)) recordDiagnostic(diagnostics, { kind: "OPAQUE_BRAND", source: station.source, sourceStationId: station.sourceStationId, brand: brandLabel(station.brand) });
   let merged;
   do {
     merged = false;
+    const neighbors = spatialNeighbors(values, identity);
     outer: for (let i = 0; i < values.length; i++) {
-      for (let j = i + 1; j < values.length; j++) {
+      if (!values[i]) continue;
+      for (const j of neighbors(i)) {
+        if (j <= i) continue;
         const a = values[i], b = values[j];
         if (!a || !b || sourcesOverlap(a, b) || conflictingManualKeys(a, b)) continue;
         const score = groupMatchScore(a, b, identity);
-        const unambiguous = score >= 0.82 && score - secondBestScore(values, i, j, identity) >= identity.ambiguityMargin && score - secondBestScore(values, j, i, identity) >= identity.ambiguityMargin;
-        if (!unambiguous) continue;
+        if (score < 0.82) continue;
+        const runnerUp = Math.max(secondBestScore(values, i, j, identity, neighbors), secondBestScore(values, j, i, identity, neighbors));
+        if (score - runnerUp < identity.ambiguityMargin) {
+          recordDiagnostic(diagnostics, { kind: "AMBIGUOUS_MATCH", members: [...a.members, ...b.members].map((member) => `${member.source}:${member.sourceStationId}`).sort(), score: Number(score.toFixed(4)), runnerUpScore: Number(runnerUp.toFixed(4)) });
+          continue;
+        }
         values[i] = mergeGroups(a, b);
         values[j] = null;
         merged = true;
@@ -2163,6 +2171,58 @@ function reconcileStations(stations, config, previousSnapshot) {
     }
   } while (merged);
   return preservePreviousKeys(values.filter(Boolean), previousSnapshot).map((group) => canonicalize(group, config.ranking.sourcePriority));
+}
+var MAX_IDENTITY_DIAGNOSTICS = 100;
+function recordDiagnostic(diagnostics, entry) {
+  const key = stableDiagnosticKey(entry);
+  if (diagnostics.length >= MAX_IDENTITY_DIAGNOSTICS || diagnostics.some((value) => stableDiagnosticKey(value) === key)) return;
+  diagnostics.push(entry);
+}
+function stableDiagnosticKey(entry) {
+  return `${entry.kind}|${entry.members?.join(",") ?? `${entry.source}:${entry.sourceStationId}`}`;
+}
+function spatialNeighbors(values, identity) {
+  const coordinates = values.flatMap((group) => group ? group.members.map((member) => member.coordinate) : []);
+  const maxAbsLat = Math.max(0, ...coordinates.map((coordinate) => Math.abs(Number(coordinate?.[1]))).filter(Number.isFinite));
+  const latCell = identity.maxCoordinateDriftMeters / 111320;
+  const lonCell = identity.maxCoordinateDriftMeters / (111320 * Math.max(0.01, Math.cos(maxAbsLat * Math.PI / 180)));
+  const cells = /* @__PURE__ */ new Map();
+  const unindexed = /* @__PURE__ */ new Set();
+  const keysOf = (group) => {
+    const out = /* @__PURE__ */ new Set();
+    for (const member of group.members) {
+      const lon = Number(member.coordinate?.[0]), lat = Number(member.coordinate?.[1]);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+      out.add(`${Math.floor(lon / lonCell)}:${Math.floor(lat / latCell)}`);
+    }
+    return out.size ? out : null;
+  };
+  const keysByIndex = /* @__PURE__ */ new Map();
+  for (const [index, group] of values.entries()) {
+    if (!group) continue;
+    const keys = keysOf(group);
+    if (!keys) {
+      unindexed.add(index);
+      continue;
+    }
+    keysByIndex.set(index, keys);
+    for (const key of keys) {
+      const bucket = cells.get(key) ?? /* @__PURE__ */ new Set();
+      bucket.add(index);
+      cells.set(key, bucket);
+    }
+  }
+  const everyIndex = values.map((group, index) => group ? index : -1).filter((index) => index >= 0);
+  return (index) => {
+    if (!keysByIndex.has(index)) return everyIndex;
+    const out = new Set(unindexed);
+    for (const key of keysByIndex.get(index)) {
+      const [x, y] = key.split(":").map(Number);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const candidate of cells.get(`${x + dx}:${y + dy}`) ?? []) out.add(candidate);
+    }
+    out.delete(index);
+    return [...out].sort((a, b) => a - b);
+  };
 }
 function preservePreviousKeys(groups, previousSnapshot) {
   const memberToKey = /* @__PURE__ */ new Map();
@@ -2199,11 +2259,14 @@ function groupMatchScore(a, b, identity) {
   const scores = a.members.flatMap((left) => b.members.map((right) => matchScore(left, right, identity)));
   return scores.length ? Math.min(...scores) : -Infinity;
 }
-function secondBestScore(values, targetIndex, excludedIndex, identity) {
+function secondBestScore(values, targetIndex, excludedIndex, identity, neighbors) {
   const target = values[targetIndex];
   const counterpart = values[excludedIndex];
   if (!target || !counterpart) return 0;
-  return Math.max(0, ...values.map((candidate, index) => index === targetIndex || index === excludedIndex || !candidate || !sourcesOverlap(candidate, counterpart) || sourcesOverlap(target, candidate) || conflictingManualKeys(target, candidate) ? -Infinity : groupMatchScore(target, candidate, identity)));
+  return Math.max(0, ...neighbors(targetIndex).map((index) => {
+    const candidate = values[index];
+    return index === targetIndex || index === excludedIndex || !candidate || !sourcesOverlap(candidate, counterpart) || sourcesOverlap(target, candidate) || conflictingManualKeys(target, candidate) ? -Infinity : groupMatchScore(target, candidate, identity);
+  }));
 }
 function sourcesOverlap(a, b) {
   const sources = new Set(a.members.map((member) => member.source));
@@ -2368,33 +2431,43 @@ function compactAssessment(value) {
 
 // scripts/collect.mjs
 var adapters = {
-  yandex: () => import("./chunks/yandex-VRZXVDQY.mjs"),
-  gdebenz: () => import("./chunks/gdebenz-BXUPTQC7.mjs"),
-  "2gis": () => import("./chunks/twogis-YTIGV6R2.mjs"),
-  benzonavt: () => import("./chunks/benzonavt-5CQJPN7E.mjs")
+  yandex: () => import("./chunks/yandex-C3MTKDP7.mjs"),
+  gdebenz: () => import("./chunks/gdebenz-WR7LYKSI.mjs"),
+  "2gis": () => import("./chunks/twogis-IW2I2NAG.mjs"),
+  benzonavt: () => import("./chunks/benzonavt-LZ42GKJV.mjs")
 };
-async function collectSnapshot({ configPath, outputPath, previousPath, historyPath: historyPath2, browserFactory = (config) => new BrowserRunner(config), now = /* @__PURE__ */ new Date(), cleanupNow = Date.now } = {}) {
+async function collectSnapshot({ configPath, outputPath, previousPath, historyPath: historyPath2, areaOverride, browserFactory = (config) => new BrowserRunner(config), now = /* @__PURE__ */ new Date(), cleanupNow = Date.now } = {}) {
   const config = await loadConfig(configPath);
-  const area = resolveArea(config.area);
+  const area = resolveArea(areaOverride ?? config.area);
   const previous = previousPath ? await readJson(previousPath) : void 0;
   const fetchedAt = now.toISOString();
   const request = { area, requestedProducts: config.requestedProducts, fetchedAt, deadlineAt: new Date(now.getTime() + config.browser.adapterTimeoutMs * config.sources.filter((s) => s.enabled).length).toISOString() };
   const results = [];
   const warnings = [];
+  const orphanProcesses = [];
   let runtimeHealth = { status: "OK" };
   const cleanups = [];
   const cleanupBudgetMs = config.browser.cleanupReserveMs;
   let cleanupRemainingMs = cleanupBudgetMs;
+  const reapOrphans = config.browser.reapOrphanProcesses !== false;
   const closeRunner = async (runner) => {
     const startedAt = cleanupNow();
     const deadline = startedAt + cleanupRemainingMs;
     try {
       return await runner.close(deadline);
     } finally {
+      try {
+        const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans });
+        if (reaped?.length) orphanProcesses.push(...reaped);
+      } catch (error) {
+        orphanProcesses.push({ namespace: runner.namespace, outcome: `FAILED: ${error.message}` });
+      }
       cleanupRemainingMs = Math.max(0, cleanupRemainingMs - Math.max(0, cleanupNow() - startedAt));
     }
   };
   const browserNamespaces = [];
+  const challengeHandovers = [];
+  const handover = challengeHandoverPolicy(config, challengeHandovers);
   const orderedSources = [...config.sources].sort((a, b) => a.order - b.order);
   const firstEnabled = orderedSources.find((source) => source.enabled);
   let firstRunner;
@@ -2424,6 +2497,9 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
         try {
           const adapter = await adapters[source.id]();
           sourceResult = await adapter.collect(request, { browser: runner, previous, config });
+          if (sourceResult.health?.status === "CHALLENGE" && handover.mayOffer()) {
+            if (await handover.hold(source.id, runner)) sourceResult = await adapter.collect(request, { browser: runner, previous, config });
+          }
         } catch (error) {
           sourceResult = { source: source.id, health: { source: source.id, status: "PARTIAL", code: "INTERNAL_ADAPTER_ERROR", message: error.message }, stations: [], observations: [], queues: [], activity: [] };
         } finally {
@@ -2452,8 +2528,11 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
   if (cleanup.sessionsRemaining || cleanup.warnings.length) warnings.push({ code: "CLEANUP_FAILED", message: cleanup.warnings.join("; ") || `${cleanup.sessionsRemaining} browser session(s) remain` });
   if (results.some((r) => ["PARTIAL", "SCHEMA_CHANGED", "CHALLENGE", "TIMEOUT", "HTTP_ERROR", "RESOURCE_BLOCKED"].includes(r.health.status))) warnings.push({ code: "PARTIAL_COVERAGE", message: "At least one source did not provide complete evidence." });
   const stations = results.flatMap((r) => r.stations);
-  const merged = reconcileStations(stations, config, previous);
+  const identityDiagnostics = [];
+  const merged = reconcileStations(stations, config, previous, identityDiagnostics);
+  if (Number.isFinite(area.maxStationCount) && merged.length > area.maxStationCount) throw Object.assign(new Error(`Area resolved ${merged.length} stations, above its limit of ${area.maxStationCount}; narrow the area or raise maxStationCount`), { code: "AREA_STATION_LIMIT" });
   const sourceGroups = Object.fromEntries(config.sources.map((s) => [s.id, s.provenanceGroup]));
+  const requestedOctane = [...new Set(config.requestedProducts.products.map((product) => petrolOctaneKey(product)).filter(Boolean))];
   const assessments = [];
   for (const station of merged) {
     const memberKeys = new Set(station.members.map((m) => `${m.source}:${m.sourceStationId}`));
@@ -2463,7 +2542,7 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
     const assessment = assessRequestedUnion({ observations, activity, config, sourceGroups, now });
     const anchorLabels = config.area.kind === "station-anchors" ? config.area.anchors.map((a) => a.label) : [];
     if (!isInsideArea(station.coordinate, area, { anchorLabels, stationLabel: station.address })) continue;
-    assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now) });
+    assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now), ...stationCatalogue(station.members, requestedOctane) });
   }
   const referencePoint = config.ranking.referencePoint ?? centroid(area.polygon);
   const adapterContractHash = await computeAdapterContractHash();
@@ -2483,7 +2562,7 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
     sourceCoverage: Object.fromEntries(results.filter((r) => r.coverage).map((r) => [r.source, r.coverage])),
     coverageBaselines: nextCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt),
     warnings,
-    runtime: { browserNamespace: browserNamespaces[0], browserNamespaces, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup },
+    runtime: { browserNamespace: browserNamespaces[0], browserNamespaces, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup, identityDiagnostics, challengeHandovers, orphanProcesses },
     changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), adapterContractHash, assessments })
   };
   if (historyPath2) {
@@ -2497,6 +2576,27 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
   if (outputPath) await writeJsonAtomic(outputPath, snapshot);
   return { snapshot, exitCode: warnings.some((w) => w.code === "CLEANUP_FAILED") ? 75 : assessments.length || results.some((r) => r.health.status === "OK") ? 0 : 2 };
 }
+function challengeHandoverPolicy(config, records) {
+  const policy = config.browser.challengeHandover;
+  const enabled = policy?.enabled === true && config.browser.headed === true;
+  let used = 0;
+  return {
+    mayOffer: () => enabled && used < policy.maxPerRun,
+    hold: async (source, runner) => {
+      used += 1;
+      const record = { source, namespace: runner.namespace, sessionName: runner.sessionName, url: runner.expectedUrl, waitSeconds: policy.waitSeconds, requestedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      const resolved = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1e3, pollMs: policy.pollSeconds * 1e3 });
+      records.push({ ...record, resolved, outcome: resolved ? "SOLVED_BY_USER" : "TIMED_OUT" });
+      return resolved;
+    }
+  };
+}
+function stationCatalogue(members, requestedOctane) {
+  const published = members.filter((member) => Array.isArray(member.assortment));
+  const assortment = published.length ? [...new Set(published.flatMap((member) => member.assortment))].sort((a, b) => Number(a) - Number(b)) : void 0;
+  const limits = members.flatMap((member) => (member.limits ?? []).map((limit) => ({ ...limit, source: member.source })));
+  return { assortment, sellsRequestedFamily: assortment ? requestedOctane.some((octane) => assortment.includes(octane)) : void 0, limits: limits.length ? limits : void 0 };
+}
 function centroid(points) {
   const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points;
   return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length];
@@ -2506,7 +2606,7 @@ function isNetworkControlsHealth(health) {
 }
 var moduleDir = dirname2(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
-  if (true) return "22b84604c0f8188e6499aa869d377f56078372c9726871cb199b904813a53025";
+  if (true) return "d0714d766bc12160b00e9e9fd09c6e2fc600f24b97ca014e2778fd5f5897cb43";
   const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"];
   return sha256((await Promise.all(names.map((name) => readFile2(resolve2(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
 }
@@ -2553,8 +2653,10 @@ async function main() {
   };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  const result2 = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath, historyPath: args.history ?? await ensureDefaultHistoryPath() });
-  if (resolve2(args.output ?? "") !== resolve2(statePath)) await writeJsonAtomic(statePath, result2.snapshot);
+  const areaOverride = args.area ? areaSpec(await readJson(args.area)) : void 0;
+  if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
+  const result2 = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: areaOverride ? void 0 : previousPath, historyPath: areaOverride ? void 0 : args.history ?? await ensureDefaultHistoryPath(), areaOverride });
+  if (!areaOverride && resolve2(args.output ?? "") !== resolve2(statePath)) await writeJsonAtomic(statePath, result2.snapshot);
   process.removeListener("SIGINT", onSigint);
   process.removeListener("SIGTERM", onSigterm);
   process.stdout.write(`${stableJson({ snapshot: result2.snapshot, exitCode: result2.exitCode })}
@@ -2574,10 +2676,13 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (["--config", "--output", "--previous", "--history", "--state"].includes(arg)) out[arg.slice(2)] = resolve2(argv[++i]);
+    if (["--config", "--output", "--previous", "--history", "--state", "--area"].includes(arg)) out[arg.slice(2)] = resolve2(argv[++i]);
     else throw new Error(`Unknown argument: ${arg}`);
   }
   return out;
+}
+function areaSpec(value) {
+  return value && typeof value === "object" && value.area && typeof value.area === "object" ? value.area : value;
 }
 if (isMainModule(import.meta.url)) main().catch((error) => {
   process.stderr.write(`${error.stack ?? error}

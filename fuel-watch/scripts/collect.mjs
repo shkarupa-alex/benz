@@ -6,6 +6,7 @@ import { BrowserRunner } from "./lib/browser-runner.mjs";
 import { deriveActivityEvidence } from "./lib/activity.mjs";
 import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadConfig } from "./lib/config.mjs";
 import { diffSnapshots } from "./lib/diff.mjs";
+import { petrolOctaneKey } from "./lib/fuels.mjs";
 import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
 import { ensureDefaultHistoryPath, recordHistory } from "./lib/history.mjs";
 import { ensureUserConfig, latestSnapshotPath } from "./lib/paths.mjs";
@@ -22,25 +23,36 @@ const adapters = {
   benzonavt: () => import("./lib/sources/benzonavt.mjs")
 };
 
-export async function collectSnapshot({ configPath, outputPath, previousPath, historyPath, browserFactory = config => new BrowserRunner(config), now = new Date(), cleanupNow = Date.now } = {}) {
+export async function collectSnapshot({ configPath, outputPath, previousPath, historyPath, areaOverride, browserFactory = config => new BrowserRunner(config), now = new Date(), cleanupNow = Date.now } = {}) {
   const config = await loadConfig(configPath);
-  const area = resolveArea(config.area);
+  // A one-off area belongs to a single run: it never replaces the configured polygon on disk.
+  const area = resolveArea(areaOverride ?? config.area);
   const previous = previousPath ? await readJson(previousPath) : undefined;
   const fetchedAt = now.toISOString();
   const request = { area, requestedProducts: config.requestedProducts, fetchedAt, deadlineAt: new Date(now.getTime() + config.browser.adapterTimeoutMs * config.sources.filter(s => s.enabled).length).toISOString() };
   const results = [];
   const warnings = [];
+  const orphanProcesses = [];
   let runtimeHealth = { status: "OK" };
   const cleanups = [];
   const cleanupBudgetMs = config.browser.cleanupReserveMs;
   let cleanupRemainingMs = cleanupBudgetMs;
+  // A clean close removes agent-browser's per-namespace pid file, so anything still named there afterwards is an
+  // orphan of a namespace this run created. Absent config means reaping is on; set it to false to only report them.
+  const reapOrphans = config.browser.reapOrphanProcesses !== false;
   const closeRunner = async runner => {
     const startedAt = cleanupNow();
     const deadline = startedAt + cleanupRemainingMs;
     try { return await runner.close(deadline); }
-    finally { cleanupRemainingMs = Math.max(0, cleanupRemainingMs - Math.max(0, cleanupNow() - startedAt)); }
+    finally {
+      try { const reaped = await runner.reapLeftoverProcesses?.({ terminate: reapOrphans }); if (reaped?.length) orphanProcesses.push(...reaped); }
+      catch (error) { orphanProcesses.push({ namespace: runner.namespace, outcome: `FAILED: ${error.message}` }); }
+      cleanupRemainingMs = Math.max(0, cleanupRemainingMs - Math.max(0, cleanupNow() - startedAt));
+    }
   };
   const browserNamespaces = [];
+  const challengeHandovers = [];
+  const handover = challengeHandoverPolicy(config, challengeHandovers);
   const orderedSources = [...config.sources].sort((a, b) => a.order - b.order);
   const firstEnabled = orderedSources.find(source => source.enabled);
   let firstRunner;
@@ -67,6 +79,9 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
         try {
           const adapter = await adapters[source.id]();
           sourceResult = await adapter.collect(request, { browser: runner, previous, config });
+          if (sourceResult.health?.status === "CHALLENGE" && handover.mayOffer()) {
+            if (await handover.hold(source.id, runner)) sourceResult = await adapter.collect(request, { browser: runner, previous, config });
+          }
         } catch (error) {
           sourceResult = { source: source.id, health: { source: source.id, status: "PARTIAL", code: "INTERNAL_ADAPTER_ERROR", message: error.message }, stations: [], observations: [], queues: [], activity: [] };
         } finally {
@@ -96,8 +111,13 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
   if (results.some(r => ["PARTIAL", "SCHEMA_CHANGED", "CHALLENGE", "TIMEOUT", "HTTP_ERROR", "RESOURCE_BLOCKED"].includes(r.health.status))) warnings.push({ code: "PARTIAL_COVERAGE", message: "At least one source did not provide complete evidence." });
 
   const stations = results.flatMap(r => r.stations);
-  const merged = reconcileStations(stations, config, previous);
+  // Identity uncertainty is a matching signal for the agent, not an availability statement for the user.
+  const identityDiagnostics = [];
+  const merged = reconcileStations(stations, config, previous, identityDiagnostics);
+  // A one-off area states its own ceiling, and going over it fails the run rather than emitting a truncated zone.
+  if (Number.isFinite(area.maxStationCount) && merged.length > area.maxStationCount) throw Object.assign(new Error(`Area resolved ${merged.length} stations, above its limit of ${area.maxStationCount}; narrow the area or raise maxStationCount`), { code: "AREA_STATION_LIMIT" });
   const sourceGroups = Object.fromEntries(config.sources.map(s => [s.id, s.provenanceGroup]));
+  const requestedOctane = [...new Set(config.requestedProducts.products.map(product => petrolOctaneKey(product)).filter(Boolean))];
   const assessments = [];
   for (const station of merged) {
     const memberKeys = new Set(station.members.map(m => `${m.source}:${m.sourceStationId}`));
@@ -107,7 +127,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
     const assessment = assessRequestedUnion({ observations, activity, config, sourceGroups, now });
     const anchorLabels = config.area.kind === "station-anchors" ? config.area.anchors.map(a => a.label) : [];
     if (!isInsideArea(station.coordinate, area, { anchorLabels, stationLabel: station.address })) continue;
-    assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now) });
+    assessments.push({ ...station, ...assessment, queue: normalizeQueues(queueObservations, now), ...stationCatalogue(station.members, requestedOctane) });
   }
   const referencePoint = config.ranking.referencePoint ?? centroid(area.polygon);
   const adapterContractHash = await computeAdapterContractHash();
@@ -127,7 +147,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
     sourceCoverage: Object.fromEntries(results.filter(r => r.coverage).map(r => [r.source, r.coverage])),
     coverageBaselines: nextCoverageBaselines(results, previous, area.areaHash, adapterContractHash, fetchedAt),
     warnings,
-    runtime: { browserNamespace: browserNamespaces[0], browserNamespaces, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup },
+    runtime: { browserNamespace: browserNamespaces[0], browserNamespaces, browserMode: config.browser.headed ? "HEADED" : "HEADLESS", health: runtimeHealth, cleanup, identityDiagnostics, challengeHandovers, orphanProcesses },
     changes: diffSnapshots(previous, { areaHash: area.areaHash, queryHash: sha256(config.requestedProducts), adapterContractHash, assessments })
   };
   if (historyPath) {
@@ -138,6 +158,33 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
   return { snapshot, exitCode: warnings.some(w => w.code === "CLEANUP_FAILED") ? 75 : assessments.length || results.some(r => r.health.status === "OK") ? 0 : 2 };
 }
 
+// User-in-the-loop CAPTCHA handling, off unless the config asks for it. The skill never solves or bypasses a
+// challenge: it holds the already-visible session open for a bounded time so a person can solve it in the window,
+// then re-reads the page. Headless runs never offer it, because there would be no window to hand over.
+function challengeHandoverPolicy(config, records) {
+  const policy = config.browser.challengeHandover;
+  const enabled = policy?.enabled === true && config.browser.headed === true;
+  let used = 0;
+  return {
+    mayOffer: () => enabled && used < policy.maxPerRun,
+    hold: async (source, runner) => {
+      used += 1;
+      const record = { source, namespace: runner.namespace, sessionName: runner.sessionName, url: runner.expectedUrl, waitSeconds: policy.waitSeconds, requestedAt: new Date().toISOString() };
+      const resolved = await runner.awaitManualChallengeResolution({ waitMs: policy.waitSeconds * 1000, pollMs: policy.pollSeconds * 1000 });
+      records.push({ ...record, resolved, outcome: resolved ? "SOLVED_BY_USER" : "TIMED_OUT" });
+      return resolved;
+    }
+  };
+}
+
+// A station's own grade catalogue tells "AI-95 ran out here" apart from "this station never sells AI-95". The second
+// is not a shortage: it must not be reported as one and must not train the delivery-time forecast for that station.
+function stationCatalogue(members, requestedOctane) {
+  const published = members.filter(member => Array.isArray(member.assortment));
+  const assortment = published.length ? [...new Set(published.flatMap(member => member.assortment))].sort((a, b) => Number(a) - Number(b)) : undefined;
+  const limits = members.flatMap(member => (member.limits ?? []).map(limit => ({ ...limit, source: member.source })));
+  return { assortment, sellsRequestedFamily: assortment ? requestedOctane.some(octane => assortment.includes(octane)) : undefined, limits: limits.length ? limits : undefined };
+}
 function centroid(points) { const ring = points.length > 1 && points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1] ? points.slice(0, -1) : points; return [ring.reduce((s, p) => s + p[0], 0) / ring.length, ring.reduce((s, p) => s + p[1], 0) / ring.length]; }
 function isNetworkControlsHealth(health) { return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message)); }
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -180,13 +227,17 @@ async function main() {
   const onSigterm = () => { interrupted = "SIGTERM"; };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath, historyPath: args.history ?? await ensureDefaultHistoryPath() });
-  if (resolve(args.output ?? "") !== resolve(statePath)) await writeJsonAtomic(statePath, result.snapshot);
+  // A one-off area writes only where it is told: it must not touch the monitored snapshot or the shared history.
+  const areaOverride = args.area ? areaSpec(await readJson(args.area)) : undefined;
+  if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
+  const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: areaOverride ? undefined : previousPath, historyPath: areaOverride ? undefined : args.history ?? await ensureDefaultHistoryPath(), areaOverride });
+  if (!areaOverride && resolve(args.output ?? "") !== resolve(statePath)) await writeJsonAtomic(statePath, result.snapshot);
   process.removeListener("SIGINT", onSigint);
   process.removeListener("SIGTERM", onSigterm);
   process.stdout.write(`${stableJson({ snapshot: result.snapshot, exitCode: result.exitCode })}\n`);
   process.exitCode = interrupted === "SIGINT" ? 130 : interrupted === "SIGTERM" ? 143 : result.exitCode;
 }
 async function existingPath(path) { try { await stat(path); return path; } catch (error) { if (error.code === "ENOENT") return undefined; throw error; } }
-function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--config", "--output", "--previous", "--history", "--state"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else throw new Error(`Unknown argument: ${arg}`); } return out; }
+function parseArgs(argv) { const out = {}; for (let i = 0; i < argv.length; i++) { const arg = argv[i]; if (["--config", "--output", "--previous", "--history", "--state", "--area"].includes(arg)) out[arg.slice(2)] = resolve(argv[++i]); else throw new Error(`Unknown argument: ${arg}`); } return out; }
+function areaSpec(value) { return value && typeof value === "object" && value.area && typeof value.area === "object" ? value.area : value; }
 if (isMainModule(import.meta.url)) main().catch(error => { process.stderr.write(`${error.stack ?? error}\n`); process.exitCode = 2; });
