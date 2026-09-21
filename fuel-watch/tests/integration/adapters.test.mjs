@@ -460,7 +460,7 @@ test("gdebenz carries its grade catalogue, station-wide litre limit and trust me
   const browser={open:async()=>({finalUrl:"https://gdebenz.ru/",pageTitle:"Где бензин",pageTextPrefix:"карта"}),waitReady:async()=>{},evalJson:async()=>raw};
   const result=await gdebenz.collect(request(config),{browser,config});
   assert.deepEqual(result.stations[0].assortment,["92","95","100"]);
-  assert.deepEqual(result.stations[0].limits,[{gradeLabel:undefined,liters:40,observedAt:"2026-09-21T12:00:09.000Z"}]);
+  assert.deepEqual(result.stations[0].limits,[{gradeLabel:undefined,liters:40,observedAt:"2026-09-21T12:00:09.000Z",inForceSince:undefined}]);
   assert.deepEqual(result.observations[0].trust,{confidenceBase:0.77,confirmations:3,svc:"osm"});
 });
 
@@ -472,7 +472,9 @@ test("benzonavt carries its grade catalogue, per-grade litre limits and source c
   const browser={open:async()=>({finalUrl:"https://benzonavt.ru/",pageTextPrefix:"Бензонавт"}),waitReady:async()=>{},evalJson:async()=>raw};
   const result=await benzonavt.collect(request(config),{browser,config});
   assert.deepEqual(result.stations[0].assortment,["92","95","98","100"]);
-  assert.deepEqual(result.stations[0].limits,[{gradeLabel:"95",liters:60,observedAt:"2026-09-21T12:52:46.922Z"},{gradeLabel:"dt",liters:40,observedAt:"2026-09-17T19:05:30.066Z"}]);
+  // One live response carries both caps, four days apart: "since" is when a cap started applying, not when it was
+  // last seen, so it must never be read as an observation age and aged out.
+  assert.deepEqual(result.stations[0].limits,[{gradeLabel:"95",liters:60,observedAt:undefined,inForceSince:"2026-09-21T12:52:46.922Z"},{gradeLabel:"dt",liters:40,observedAt:undefined,inForceSince:"2026-09-17T19:05:30.066Z"}]);
   assert.deepEqual(result.observations[0].trust,{confidence:0.97,confirmations:2,reports:5,basis:"data",reports24h:7});
 });
 
@@ -484,7 +486,7 @@ test("2GIS carries its grade catalogue, per-grade litre limits and report counts
   const browser={open:async()=>({finalUrl:"https://2gis.ru/volgograd/search/АЗС",pageTextPrefix:"АЗС"}),waitReady:async()=>{},evalJson:async()=>raw};
   const result=await twogis.collect(request(config),{browser,config});
   assert.deepEqual(result.stations[0].assortment,["92","95","100"]);
-  assert.deepEqual(result.stations[0].limits,[{gradeLabel:"AI_95",liters:40,observedAt:undefined},{gradeLabel:undefined,liters:40,observedAt:undefined}]);
+  assert.deepEqual(result.stations[0].limits,[{gradeLabel:"AI_95",liters:40,observedAt:undefined,inForceSince:undefined},{gradeLabel:undefined,liters:40,observedAt:undefined,inForceSince:undefined}]);
   assert.deepEqual(result.observations[0].trust,{reportsCount:46});
 });
 
@@ -507,6 +509,13 @@ test("gdebenz finds the card's fuel list behind a leading prose segment", async 
   const proseFirst=await run("Очередь 100+ машин · 92, ДТ");
   assert.equal(proseFirst.observations[0].normalizedStatus,"UNCERTAIN","a card listing 92 behind prose still disagrees with fuels_now");
   assert.deepEqual(proseFirst.observations[0].conflict.visibleGrades,["92"]);
+  const mentionsANumber=await run("Очередь 100+ машин · Обновлено 95 минут назад");
+  assert.equal(mentionsANumber.observations[0].normalizedStatus,"IN_STOCK","prose is not an enumeration, so there is nothing to disagree with");
+  assert.equal(mentionsANumber.observations[0].conflict,undefined);
+  assert.equal(mentionsANumber.activity.some(value=>value.gradeLabel==="95"&&value.status==="UNCERTAIN"),false,"a number inside prose must never become a grade the card listed");
+  const splitList=await run("ДТ · 92, 95");
+  assert.equal(splitList.observations[0].normalizedStatus,"IN_STOCK","a card that splits its fuel list across segments agrees with fuels_now");
+  assert.equal(splitList.observations[0].conflict,undefined);
   const noFuelList=await run("Очередь 100+ машин · Только наличные");
   assert.equal(noFuelList.observations[0].normalizedStatus,"IN_STOCK","a card that enumerates nothing has nothing to disagree with");
   assert.equal(noFuelList.observations[0].conflict,undefined);

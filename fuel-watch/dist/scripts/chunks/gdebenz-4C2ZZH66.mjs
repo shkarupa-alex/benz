@@ -4,7 +4,7 @@ import {
   errorResult,
   healthResult,
   okResult
-} from "./chunk-SNK3PAAE.mjs";
+} from "./chunk-IHSCRPAH.mjs";
 import "./chunk-IVODUSOD.mjs";
 import "./chunk-XKTP5TT3.mjs";
 
@@ -51,11 +51,15 @@ function gdebenzApiExtractor(url, detailTimeoutMs = 3500, detailBudgetMs = 1e4) 
       return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
     };
     const petrolGrades = value => [...new Set((String(value || '').match(/(?:^|[^0-9])(92|95|98|100)(?=$|[^0-9])/gu) || []).map(match => match.match(/92|95|98|100/u)?.[0]).filter(Boolean))];
-    // A segment like 'Очередь 100+ машин' or 'Лимит 10 л' is prose, not a fuel list: reading it as one invented an
-    // AI-100 grade. The fuel list is not always first, so every segment is considered and prose ones are dropped;
-    // taking only segment 0 made a card that leads with prose look like it enumerated nothing, which turned a
-    // disagreement with fuels_now into a silent positive.
-    const fuelSegmentOf = value => String(value || '').split('·').map(part => part.trim()).filter(part => part && !/очеред|лимит|цена/iu.test(part)).find(part => /(?:^|[^\p{L}\p{N}])(?:аи|ai|92|95|98|100|дт|дизел\p{L}*|газ|пропан|метан)(?:[^\p{L}\p{N}]|$)/iu.test(part)) ?? '';
+    // The card is free text in '·'-separated segments and only some of them are a fuel list. A segment counts as one
+    // only when every token in it is a fuel token: a denylist of known prose ('Очередь', 'Лимит', 'Цена') would let
+    // anything unforeseen that merely mentions a number through, and 'Обновлено 95 минут назад' would then read as an
+    // AI-95 positive. The fuel list is also not always first, and a card may split it, so all qualifying segments are
+    // taken: reading only segment 0 made a card that leads with prose look like it enumerated nothing, which turned a
+    // real disagreement with fuels_now back into a silent positive.
+    const fuelToken = /^(?:(?:аи|ai)[-\s]?)?(?:92|95|98|100)\+?$|^(?:аи|ai|дт|дизел\p{L}*|газ|пропан|метан|снг|гбо)$/iu;
+    const isFuelList = segment => { const tokens = segment.split(/[,;/]|\s+/u).map(token => token.trim()).filter(Boolean); return tokens.length > 0 && tokens.every(token => fuelToken.test(token)); };
+    const fuelSegmentOf = value => String(value || '').split('·').map(part => part.trim()).filter(part => part && isFuelList(part)).join(', ');
     const commentPetrolGrades = value => petrolGrades(fuelSegmentOf(value));
     const mapLimit = async (values, limit, fn) => { const out = new Array(values.length); let cursor = 0; await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => { while (cursor < values.length) { const index = cursor++; try { out[index] = await fn(values[index]); } catch {} } })); return out; };
     const detailDeadline = extractorStartedAt + ${Number(detailBudgetMs)};

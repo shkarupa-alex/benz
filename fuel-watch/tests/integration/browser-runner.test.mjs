@@ -589,3 +589,32 @@ test("a page lost during the hold is distinguished from one unreadable before it
   runner.expectedUrl = "https://2gis.ru/captcha";
   assert.equal(await runner.awaitManualChallengeResolution({ waitMs: 60, pollMs: 10 }), "LOST_WHILE_HELD");
 });
+
+// A namespace abandoned by a retry can leave an orphan just like the last one, so its pid must be recorded before
+// the session is closed: network-control degradation and the blank-tab retry both abandon a namespace mid-run.
+test("a namespace abandoned by a retry still records its daemon pid", async () => {
+  const config = await loadConfig();
+  const root = await mkdtemp(join(tmpdir(), "fuel-orphan-rotate-"));
+  const first = "fuel-watch-first";
+  const pidPath = namespace => join(root, "namespaces", namespace, "run", "source.pid");
+  let opens = 0;
+  const exec = async (command, args) => {
+    if (args.includes("open")) {
+      opens += 1;
+      const namespace = args[args.indexOf("--namespace") + 1] ?? first;
+      await mkdir(dirname(pidPath(namespace)), { recursive: true });
+      await writeFile(pidPath(namespace), `${4240 + opens}\n`);
+      return opens === 1 ? { exitCode: 1, stdout: "", stderr: "failed to install browser network controls: CDP error (Page.enable)" } : okJson({ url: "https://2gis.ru/volgograd" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://2gis.ru/volgograd" });
+    if (args.includes("eval")) return okJson({ pageTitle: "2GIS", pageText: "АЗС", selectorReady: true });
+    return okJson({ sessions: [] });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath, namespace: first, stateRoot: root, processControl: { args: async () => "/opt/agent-browser/bin/agent-browser-darwin-arm64", terminate: () => {} } });
+  await runner.open("https://2gis.ru/volgograd");
+  assert.equal(runner.networkControlsStatus, "DEGRADED", "the fixture must actually take the rotation path");
+  assert.notEqual(runner.namespace, first, "the retry must run in a fresh namespace");
+  assert.equal(runner.observedDaemonPids.get(first), 4241, "the abandoned namespace's pid must be recorded too");
+  assert.equal(runner.observedDaemonPids.get(runner.namespace), 4242);
+  await rm(root, { recursive: true, force: true });
+});

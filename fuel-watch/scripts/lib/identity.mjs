@@ -27,8 +27,9 @@ export function reconcileStations(stations, config, previousSnapshot, diagnostic
         const a = values[i], b = values[j];
         if (!a || !b || sourcesOverlap(a, b) || conflictingManualKeys(a, b)) continue;
         const score = groupMatchScore(a, b, identity);
-        // Negated comparisons so a NaN score (an unusable coordinate makes the distance NaN) fails closed instead
-        // of slipping past both thresholds: NaN < 0.82 and NaN >= 0.82 are both false.
+        // Negated comparisons, so any score that is not a real number fails closed instead of slipping past both
+        // thresholds: NaN < 0.82 and NaN >= 0.82 are equally false. matchScore rejects an unusable distance before
+        // arithmetic can reach NaN today, so this is defence in depth rather than a live path.
         if (!(score >= 0.82)) continue;
         const runnerUp = Math.max(secondBestScore(values, i, j, identity, neighbors), secondBestScore(values, j, i, identity, neighbors));
         if (!(score - runnerUp >= identity.ambiguityMargin)) {

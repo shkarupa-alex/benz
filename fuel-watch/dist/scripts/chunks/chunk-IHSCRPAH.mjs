@@ -107,7 +107,7 @@ function petrolAssortment(value) {
   return [...new Set(values.flatMap((item) => [...item.matchAll(PETROL_OCTANE)].map((match) => match[1])))].sort((a, b) => Number(a) - Number(b));
 }
 function normalizeLimits(value) {
-  const rows = (Array.isArray(value) ? value : []).map((row) => ({ gradeLabel: row?.gradeLabel == null ? void 0 : String(row.gradeLabel).trim() || void 0, liters: Number(row?.liters), observedAt: iso(row?.observedAt) })).filter((row) => Number.isFinite(row.liters) && row.liters > 0);
+  const rows = (Array.isArray(value) ? value : []).map((row) => ({ gradeLabel: row?.gradeLabel == null ? void 0 : String(row.gradeLabel).trim() || void 0, liters: Number(row?.liters), observedAt: iso(row?.observedAt), inForceSince: iso(row?.inForceSince) })).filter((row) => Number.isFinite(row.liters) && row.liters > 0);
   return rows.length ? rows : void 0;
 }
 function normalizeTrust(value) {

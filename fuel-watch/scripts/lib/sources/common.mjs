@@ -80,7 +80,9 @@ export function petrolAssortment(value) {
 }
 // Litre limits change whether the trip is worth making, so they are carried per grade with the source's own timestamp.
 export function normalizeLimits(value) {
-  const rows = (Array.isArray(value) ? value : []).map(row => ({ gradeLabel: row?.gradeLabel == null ? undefined : String(row.gradeLabel).trim() || undefined, liters: Number(row?.liters), observedAt: iso(row?.observedAt) })).filter(row => Number.isFinite(row.liters) && row.liters > 0);
+  // observedAt is when a cap was seen and can go stale; inForceSince is when the source says it started applying and
+  // stays true until the source withdraws it. Collapsing the two would age out a cap that is still being enforced.
+  const rows = (Array.isArray(value) ? value : []).map(row => ({ gradeLabel: row?.gradeLabel == null ? undefined : String(row.gradeLabel).trim() || undefined, liters: Number(row?.liters), observedAt: iso(row?.observedAt), inForceSince: iso(row?.inForceSince) })).filter(row => Number.isFinite(row.liters) && row.liters > 0);
   return rows.length ? rows : undefined;
 }
 // Source-side trust metrics stay diagnostic: they describe how sure the source is, never how sure we are.

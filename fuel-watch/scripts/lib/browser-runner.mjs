@@ -295,6 +295,9 @@ export class BrowserRunner {
 
   async closeSessionBestEffort(warnings, namespace = this.namespace, deadline) {
     warnings ??= this.cleanupWarningsFor(namespace);
+    // This namespace is about to be closed and possibly abandoned. If its daemon survives, it becomes an orphan, and
+    // the identity check can only refuse a recycled pid for a namespace whose pid we recorded while it was ours.
+    await this.rememberDaemonPid(namespace);
     const timeoutMs = deadline == null ? this.config.browser.cleanupReserveMs : this.remainingCleanupMs(deadline);
     if (timeoutMs <= 0) { warnings.push("cleanup deadline exhausted before session close"); return; }
     const result = await this.commandJson(["close", "--json"], { timeoutMs, namespace });

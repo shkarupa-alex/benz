@@ -178,6 +178,23 @@ test("an expired litre limit is dropped and an ageing one is printed with its ag
   assert.doesNotMatch(allExpired,/лимит/,"nothing usable means no cap is claimed at all");
 });
 
+// "In force since" is not an observation age: Benzonavt returns caps that started applying days apart in one current
+// response, and all of them are being enforced. Ageing them out would print a looser cap than the station enforces.
+test("a cap the source says is in force is never aged out, however old its start date", () => {
+  const freshnessPolicy={freshMinutes:30,recentMinutes:120,staleMinutes:240,expireMinutes:360,futureSkewSeconds:120};
+  const render=limits=>{
+    const item={stationKey:"s",title:"АЗС",verdict:"AVAILABLE",confidence:"MEDIUM",observations:[{source:"2gis",status:"IN_STOCK",ageMinutes:5,expired:false,product:{specificity:"EXACT_VARIANT"}}],activity:[],productAssessments:{},limits};
+    return renderReport({fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:["s"],assessments:[item],sourceHealth:[],warnings:[],changes:[],freshnessPolicy}).markdown;
+  };
+  const longStanding=render([{gradeLabel:"95",liters:20,source:"benzonavt",inForceSince:"2026-09-17T19:05:30Z"}]);
+  assert.match(longStanding,/лимит: 20 л$/m,"a cap in force since four days ago is still the cap");
+  const against=render([
+    {gradeLabel:"95",liters:20,source:"benzonavt",inForceSince:"2026-09-20T19:05:30Z"},
+    {gradeLabel:"AI_95",liters:40,source:"2gis",observedAt:"2026-09-21T09:50:00Z"}
+  ]);
+  assert.match(against,/лимит: 20 л/,"the tighter in-force cap must not lose to a fresher, looser one");
+});
+
 // A station whose own catalogue has no AI-95 has nothing to run out of; counting it as a negative read as a shortage.
 test("a station that does not sell AI-95 is counted apart from stations that ran out", () => {
   const notSold={stationKey:"a",title:"Дизельная",verdict:"NO_FRESH_DATA",confidence:"NONE",observations:[],activity:[],productAssessments:{},assortment:["92"],sellsRequestedFamily:false};

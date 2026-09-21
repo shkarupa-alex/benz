@@ -286,6 +286,7 @@ var BrowserRunner = class {
   }
   async closeSessionBestEffort(warnings, namespace = this.namespace, deadline) {
     warnings ??= this.cleanupWarningsFor(namespace);
+    await this.rememberDaemonPid(namespace);
     const timeoutMs = deadline == null ? this.config.browser.cleanupReserveMs : this.remainingCleanupMs(deadline);
     if (timeoutMs <= 0) {
       warnings.push("cleanup deadline exhausted before session close");

@@ -61,9 +61,10 @@ function userWarnings(warnings = []) {
   return [...new Set(warnings.filter(w => !TECHNICAL_WARNING_CODES.has(w.code)).map(w => USER_WARNING[w.code] ?? `${w.code}: ${w.message}`))];
 }
 // Several sources may cap litres differently; the smallest known cap is the one that decides whether the trip is
-// worth it. A cap is a claim about right now, so expired observations are dropped first: without that, a days-old
-// number would win the minimum and be printed as the current cap. Whatever survives is printed with its age when
-// it is no longer fresh, because an undated or ageing cap is a weaker promise than a just-observed one.
+// worth it. Only an observation age expires: a cap last *seen* long ago may well be gone, and letting it win the
+// minimum would print it as the current cap. A cap the source says is *in force since* some date, or publishes with
+// no date at all, is a current statement however old that date is — dropping those would understate the constraint,
+// which is the worse error of the two. A stale-ish observation is printed with its age instead of silently.
 function limitText(item, fetchedAt, freshness = {}) {
   const relevant = (item.limits ?? []).filter(limit => !limit.gradeLabel || petrolOctaneKey({ gradeLabel: limit.gradeLabel }) === "95");
   const usable = relevant.filter(limit => Number.isFinite(limit.liters) && (limit.observedAt === undefined || isFreshActivity({ observedAt: limit.observedAt }, fetchedAt, freshness)));

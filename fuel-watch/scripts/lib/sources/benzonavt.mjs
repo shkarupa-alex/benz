@@ -40,8 +40,10 @@ export function benzonavtExtractor(url, detailTimeoutMs = 3500, detailBudgetMs =
       if (!id || !Number.isFinite(Number(row.lon)) || !Number.isFinite(Number(row.lat))) continue;
       const state = row.st && typeof row.st === 'object' ? row.st : {};
       const detailRow = detailsById.get(id);
-      // fuels is the station's own grade catalogue; limits carries the per-grade litre cap with the source's own start time.
-      const limitRows = (Array.isArray(detailRow?.limits) ? detailRow.limits : []).map(limit => ({ gradeLabel: limit?.grade, liters: Number(limit?.liters), observedAt: limit?.since }));
+      // fuels is the station's own grade catalogue; limits carries the per-grade litre cap. 'since' is when the cap
+      // came into force, not when it was last seen: one live response carries caps whose 'since' differ by days and
+      // all of them are in force. It must therefore never be read as an observation age.
+      const limitRows = (Array.isArray(detailRow?.limits) ? detailRow.limits : []).map(limit => ({ gradeLabel: limit?.grade, liters: Number(limit?.liters), inForceSince: limit?.since }));
       stations.push({ id, coordinate: [Number(row.lon), Number(row.lat)], title: row.name || row.brand, brand: row.brand, address: row.address, url: location.href, assortment: Array.isArray(detailRow?.fuels) ? detailRow.fuels : Array.isArray(row.fuels) ? row.fuels : undefined, limits: limitRows });
       // The source's own certainty about its record; it is diagnostic provenance, never our confidence.
       const trust = { confidence: Number(state.confidence), confirmations: Number(state.confirmations), reports: Number(state.reports), basis: state.basis, reports24h: Number(detailRow?.reports_24h) };
