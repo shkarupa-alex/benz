@@ -4,7 +4,7 @@
 
 ## Одно окно с тремя источниками
 
-Используй один namespace и одну session, `AGENT_BROWSER_IDLE_TIMEOUT_MS=3600000` и только точные URL источников из конфига. Не передавай `--allowed-domains` в этой видимой session: agent-browser 0.35.1 при применении CDP network controls к третьей вкладке воспроизводимо теряет execution context и сбрасывает предыдущие tabs. После каждой навигации прочитай final URL и fail-closed проверь host по `config.browser.allowedDomains`; при внешнем redirect сразу закрой owned session и сообщи `RESOURCE_BLOCKED`. Это исключение относится только к ручной диагностике.
+Используй один namespace и одну session, `AGENT_BROWSER_IDLE_TIMEOUT_MS=3600000` и только точные URL источников из конфига. Не передавай `--allowed-domains` в этой видимой session: agent-browser 0.35.1 при применении CDP network controls к третьей вкладке воспроизводимо теряет execution context и сбрасывает предыдущие tabs. После каждой навигации прочитай final URL и fail-closed проверь host по `config.browser.allowedDomains`; при внешнем redirect сразу закрой owned session и сообщи `RESOURCE_BLOCKED` (или `CHALLENGE`, если это страница входа/проверки с параметром возврата на разрешённый хост, например 2GIS → `id.sber.ru`; её не проходи). Это исключение относится только к ручной диагностике.
 
 Первую страницу Yandex открой через `open --headed`; в agent-browser 0.35.1 она останется с системным label вроде `t1`. Затем сразу создай только две вкладки через `tab new --label gdebenz` и `tab new --label two-gis`. Не создавай временную четвёртую вкладку и отдельные sessions. После каждого `tab new` проверь `tab list` и `reused`; `launched: true`, потеря предыдущих вкладок или `about:blank` означают `BROWSER_UNAVAILABLE`.
 

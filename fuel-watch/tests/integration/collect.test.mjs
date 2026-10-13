@@ -123,7 +123,7 @@ test("all source runners and retries share one collection cleanup reserve", asyn
   assert.equal(result.exitCode,75);
 });
 
-test("about-blank page loss never disables network controls", async () => {
+test("about-blank page loss without active network controls never disables them", async () => {
   let created=0;
   const browserFactory=(config,sourceId)=>{
     const attempt=created++;
@@ -142,6 +142,92 @@ test("about-blank page loss never disables network controls", async () => {
   assert.equal(created,4);
   assert.equal(result.snapshot.sourceHealth.find(value=>value.source==="gdebenz").code,"PAGE_LOST");
   assert.equal(result.snapshot.warnings.some(value=>value.code==="BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:")),false);
+});
+
+// agent-browser 0.38.2 blanks a page seconds after a successful open while --allowed-domains is in force, so the
+// loss surfaces inside the adapter rather than at open. Only then, with controls actually active, is it retried.
+const lateLossFactory = (lostUrl, created) => (config, sourceId) => {
+  const attempt = created.length;
+  const runner = {
+    namespace: `late-${attempt}`, networkControlsStatus: "PENDING", runtimeWarnings: [], probe: async () => ({}),
+    open: async url => { runner.networkControlsStatus = runner.networkControlsStatus === "DEGRADED" ? "DEGRADED" : "ACTIVE"; return sourceId === "gdebenz" ? { finalUrl: url, pageTextPrefix: "станции" } : { finalUrl: "https://2gis.ru/captcha", pageTextPrefix: "captcha" }; },
+    waitReady: async () => { if (sourceId === "gdebenz" && runner.networkControlsStatus === "ACTIVE") throw Object.assign(new Error(`Browser page changed unexpectedly: expected https://gdebenz.ru/, got ${lostUrl}`), { code: "PAGE_LOST" }); },
+    evalJson: async () => ({ stations: [], observations: [], queues: [], activity: [], schemaChanged: true, message: "fixture" }),
+    close: async () => ({ sessionsRemaining: 0, warnings: [] })
+  };
+  created.push({ sourceId, runner });
+  return runner;
+};
+
+test("a page blanked under active network controls retries the source once degraded", async () => {
+  const created = [];
+  const result = await collectSnapshot({ browserFactory: lateLossFactory("about:blank", created), now: new Date("2026-08-30T10:00:00Z") });
+  const gdebenz = created.filter(value => value.sourceId === "gdebenz");
+  assert.equal(gdebenz.length, 2);
+  assert.equal(gdebenz[1].runner.networkControlsStatus, "DEGRADED");
+  assert.notEqual(result.snapshot.sourceHealth.find(value => value.source === "gdebenz").code, "PAGE_LOST");
+  assert.ok(result.snapshot.warnings.some(value => value.code === "BROWSER_NETWORK_CONTROLS_DEGRADED" && value.message.startsWith("gdebenz:") && /PAGE_LOST/.test(value.message)));
+});
+
+test("an agent-browser command that hangs under active network controls retries the source once degraded", async () => {
+  const created = [];
+  const factory = (config, sourceId) => {
+    const runner = lateLossFactory("about:blank", created)(config, sourceId);
+    runner.waitReady = async () => {
+      if (sourceId !== "gdebenz" || runner.networkControlsStatus !== "ACTIVE") return;
+      runner.lastCommandFailure = Object.assign(new Error("snapshot timed out"), { code: "TIMEOUT" });
+      throw runner.lastCommandFailure;
+    };
+    return runner;
+  };
+  const result = await collectSnapshot({ browserFactory: factory, now: new Date("2026-08-30T10:00:00Z") });
+  assert.equal(created.filter(value => value.sourceId === "gdebenz").length, 2);
+  assert.notEqual(result.snapshot.sourceHealth.find(value => value.source === "gdebenz").code, "TIMEOUT");
+});
+
+test("what the source or the adapter produced under active network controls is never blamed on them", async () => {
+  for (const failure of [
+    Object.assign(new Error("Page did not become ready: https://gdebenz.ru/"), { code: "TIMEOUT" }),
+    new TypeError("Cannot read properties of undefined (reading 'map')")
+  ]) {
+    const created = [];
+    const factory = (config, sourceId) => {
+      const runner = lateLossFactory("about:blank", created)(config, sourceId);
+      runner.waitReady = async () => { if (sourceId === "gdebenz") throw failure; };
+      return runner;
+    };
+    const result = await collectSnapshot({ browserFactory: factory, now: new Date("2026-08-30T10:00:00Z") });
+    assert.equal(created.filter(value => value.sourceId === "gdebenz").length, 1, failure.message);
+    assert.equal(result.snapshot.warnings.some(value => value.code === "BROWSER_NETWORK_CONTROLS_DEGRADED"), false, failure.message);
+  }
+  // The same fixture's 2GIS answers with a CAPTCHA and gdebenz's payload reads as a schema change: both stay single.
+  const created = [];
+  const factory = (config, sourceId) => { const runner = lateLossFactory("about:blank", created)(config, sourceId); runner.waitReady = async () => {}; return runner; };
+  const result = await collectSnapshot({ browserFactory: factory, now: new Date("2026-08-30T10:00:00Z") });
+  assert.equal(result.snapshot.sourceHealth.find(value => value.source === "2gis").status, "CHALLENGE");
+  assert.equal(result.snapshot.sourceHealth.find(value => value.source === "gdebenz").status, "SCHEMA_CHANGED");
+  for (const source of ["2gis", "gdebenz"]) assert.equal(created.filter(value => value.sourceId === source).length, 1, source);
+});
+
+test("a User-Agent adjustment is not reported as degraded network isolation", async () => {
+  const created = [];
+  const factory = (config, sourceId) => {
+    const runner = lateLossFactory("about:blank", created)(config, sourceId);
+    runner.waitReady = async () => {};
+    if (sourceId === "gdebenz") runner.runtimeWarnings.push("User-Agent adjusted: browser reported a headless User-Agent; retried once");
+    return runner;
+  };
+  const result = await collectSnapshot({ browserFactory: factory, now: new Date("2026-08-30T10:00:00Z") });
+  assert.ok(result.snapshot.warnings.some(value => value.code === "BROWSER_USER_AGENT_ADJUSTED" && value.message.startsWith("gdebenz:")));
+  assert.equal(result.snapshot.warnings.some(value => value.code === "BROWSER_NETWORK_CONTROLS_DEGRADED"), false);
+});
+
+test("drift to another origin under active network controls is never retried away", async () => {
+  const created = [];
+  const result = await collectSnapshot({ browserFactory: lateLossFactory("https://gdebenz.ru.evil.example/", created), now: new Date("2026-08-30T10:00:00Z") });
+  assert.equal(created.filter(value => value.sourceId === "gdebenz").length, 1);
+  assert.equal(result.snapshot.sourceHealth.find(value => value.source === "gdebenz").code, "PAGE_LOST");
+  assert.equal(result.snapshot.warnings.some(value => value.code === "BROWSER_NETWORK_CONTROLS_DEGRADED"), false);
 });
 
 test("one collapsing source never stops the others and stays named in source health", async () => {

@@ -89,13 +89,13 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
           const sourceCleanup = await closeRunner(runner).catch(error => ({ sessionsRemaining: 1, warnings: [error.message] }));
           for (const namespace of runner.namespaceHistory ?? [runner.namespace]) if (!browserNamespaces.includes(namespace)) browserNamespaces.push(namespace);
           cleanups.push({ source: source.id, browserNamespaces: runner.namespaceHistory ?? [runner.namespace], networkControls: runner.networkControlsStatus, ...sourceCleanup });
-          for (const message of runner.runtimeWarnings ?? []) warnings.push({ code: "BROWSER_NETWORK_CONTROLS_DEGRADED", message: `${source.id}: ${message}` });
+          for (const message of runner.runtimeWarnings ?? []) warnings.push({ code: /^User-Agent adjusted:/.test(message) ? "BROWSER_USER_AGENT_ADJUSTED" : "BROWSER_NETWORK_CONTROLS_DEGRADED", message: `${source.id}: ${message}` });
         }
-        if (browserAttempt === 0 && isNetworkControlsHealth(sourceResult.health)) {
+        if (browserAttempt === 0 && isNetworkControlsHealth(sourceResult.health, runner)) {
           runner = browserFactory(config, source.id);
           runner.networkControlsStatus = "DEGRADED";
           runner.runtimeWarnings ??= [];
-          runner.runtimeWarnings.push("agent-browser network controls failed during adapter execution; retried once with exact-URL navigation and fail-closed final-host/page-drift checks");
+          runner.runtimeWarnings.push(`agent-browser network controls failed during adapter execution (${sourceResult.health.code}); retried once with exact-URL navigation and fail-closed final-host/page-drift checks`);
           if (!browserNamespaces.includes(runner.namespace)) browserNamespaces.push(runner.namespace);
           continue;
         }
@@ -196,7 +196,18 @@ export function stationCatalogue(members, requestedOctane) {
   const limits = members.flatMap(member => (member.limits ?? []).map(limit => ({ ...limit, source: member.source })));
   return { assortment, sellsRequestedFamily: assortment ? requestedOctane.some(octane => assortment.includes(octane)) : undefined, limits: limits.length ? limits : undefined };
 }
-function isNetworkControlsHealth(health) { return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message)); }
+// Besides the known CDP installation error, a page that went blank or a failed agent-browser command (navigation,
+// hang, lost browser) while controls were actually in force is attributed to them: agent-browser 0.38.2 silently
+// blanks real pages seconds after a successful open. What the source or the adapter itself produced (challenge,
+// HTTP error, schema change, a page that never became ready, a script error, drift to another origin) is never
+// retried, and the same failure without active controls is a real source failure.
+const CONTROLS_ATTRIBUTABLE_CODES = new Set(["NAVIGATION_FAILED", "TIMEOUT", "BROWSER_UNAVAILABLE"]);
+function isNetworkControlsHealth(health, runner) {
+  if (health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message))) return true;
+  if (runner.networkControlsStatus !== "ACTIVE") return false;
+  if (health?.code === "PAGE_LOST" && /, got (?:about:|chrome-error:|empty URL)/i.test(String(health.message))) return true;
+  return CONTROLS_ATTRIBUTABLE_CODES.has(health?.code) && runner.lastCommandFailure?.code === health.code;
+}
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
   if (typeof __FUEL_WATCH_ADAPTER_CONTRACT_HASH__ !== "undefined") return __FUEL_WATCH_ADAPTER_CONTRACT_HASH__;

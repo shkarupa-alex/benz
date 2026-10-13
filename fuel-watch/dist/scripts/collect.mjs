@@ -8,7 +8,7 @@ import {
 } from "./chunks/chunk-PYVMKYQI.mjs";
 import {
   BrowserRunner
-} from "./chunks/chunk-AEBOKPWX.mjs";
+} from "./chunks/chunk-KNAANFWM.mjs";
 import {
   ensureUserConfig,
   historyPath,
@@ -2509,13 +2509,13 @@ async function collectSnapshot({ configPath, outputPath, previousPath, historyPa
           const sourceCleanup = await closeRunner(runner).catch((error) => ({ sessionsRemaining: 1, warnings: [error.message] }));
           for (const namespace of runner.namespaceHistory ?? [runner.namespace]) if (!browserNamespaces.includes(namespace)) browserNamespaces.push(namespace);
           cleanups.push({ source: source.id, browserNamespaces: runner.namespaceHistory ?? [runner.namespace], networkControls: runner.networkControlsStatus, ...sourceCleanup });
-          for (const message of runner.runtimeWarnings ?? []) warnings.push({ code: "BROWSER_NETWORK_CONTROLS_DEGRADED", message: `${source.id}: ${message}` });
+          for (const message of runner.runtimeWarnings ?? []) warnings.push({ code: /^User-Agent adjusted:/.test(message) ? "BROWSER_USER_AGENT_ADJUSTED" : "BROWSER_NETWORK_CONTROLS_DEGRADED", message: `${source.id}: ${message}` });
         }
-        if (browserAttempt === 0 && isNetworkControlsHealth(sourceResult.health)) {
+        if (browserAttempt === 0 && isNetworkControlsHealth(sourceResult.health, runner)) {
           runner = browserFactory(config, source.id);
           runner.networkControlsStatus = "DEGRADED";
           runner.runtimeWarnings ??= [];
-          runner.runtimeWarnings.push("agent-browser network controls failed during adapter execution; retried once with exact-URL navigation and fail-closed final-host/page-drift checks");
+          runner.runtimeWarnings.push(`agent-browser network controls failed during adapter execution (${sourceResult.health.code}); retried once with exact-URL navigation and fail-closed final-host/page-drift checks`);
           if (!browserNamespaces.includes(runner.namespace)) browserNamespaces.push(runner.namespace);
           continue;
         }
@@ -2603,8 +2603,12 @@ function stationCatalogue(members, requestedOctane) {
   const limits = members.flatMap((member) => (member.limits ?? []).map((limit) => ({ ...limit, source: member.source })));
   return { assortment, sellsRequestedFamily: assortment ? requestedOctane.some((octane) => assortment.includes(octane)) : void 0, limits: limits.length ? limits : void 0 };
 }
-function isNetworkControlsHealth(health) {
-  return health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message));
+var CONTROLS_ATTRIBUTABLE_CODES = /* @__PURE__ */ new Set(["NAVIGATION_FAILED", "TIMEOUT", "BROWSER_UNAVAILABLE"]);
+function isNetworkControlsHealth(health, runner) {
+  if (health?.code === "BROWSER_UNAVAILABLE" && /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(health.message))) return true;
+  if (runner.networkControlsStatus !== "ACTIVE") return false;
+  if (health?.code === "PAGE_LOST" && /, got (?:about:|chrome-error:|empty URL)/i.test(String(health.message))) return true;
+  return CONTROLS_ATTRIBUTABLE_CODES.has(health?.code) && runner.lastCommandFailure?.code === health.code;
 }
 var moduleDir = dirname2(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {

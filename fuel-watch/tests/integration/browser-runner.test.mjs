@@ -397,7 +397,56 @@ test("a navigation failure that keeps repeating is named rather than reported as
   await assert.rejects(() => runner.open("https://yandex.ru/maps"), error => error.code === "NAVIGATION_FAILED" && /ERR_CERT_AUTHORITY_INVALID/.test(error.message));
 });
 
-test("a permanent navigation error is not retried as if it were transient", async () => {
+test("a permanent navigation error is retried only once, without network controls, never as transient", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens.push(args.includes("--allowed-domains")); return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_SSL_PROTOCOL_ERROR" }), stderr: "" }; }
+    return okJson({ url: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://yandex.ru/maps"), error => error.code === "NAVIGATION_FAILED" && /ERR_SSL_PROTOCOL_ERROR/.test(error.message));
+  assert.deepEqual(opens, [true, false]);
+  assert.equal(runner.networkControlsStatus, "DEGRADED");
+});
+
+test("a connection refused under network controls falls back to an uncontrolled open", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) {
+      opens.push(args.includes("--allowed-domains"));
+      if (args.includes("--allowed-domains")) return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_CONNECTION_REFUSED" }), stderr: "" };
+      return okJson({ url: "https://benzonavt.ru/" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://benzonavt.ru/" });
+    return okJson({ pageTitle: "Бензонавт", pageText: "АЗС", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.open("https://benzonavt.ru/");
+  assert.deepEqual(opens, [true, false], "the browser-level 'connection' retry must not keep the broken controls");
+  assert.equal(runner.networkControlsStatus, "DEGRADED");
+});
+
+test("a connection refused that persists without controls is not retried a third time", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens.push(args.includes("--allowed-domains")); return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_CONNECTION_REFUSED" }), stderr: "" }; }
+    return okJson({ url: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://benzonavt.ru/"), error => error.code === "NAVIGATION_FAILED" && /ERR_CONNECTION_REFUSED/.test(error.message));
+  assert.deepEqual(opens, [true, false]);
+});
+
+test("without network controls a permanent navigation error is not retried at all", async () => {
   const config = await loadConfig();
   let opens = 0;
   const exec = async (command, args) => {
@@ -407,20 +456,284 @@ test("a permanent navigation error is not retried as if it were transient", asyn
     return okJson({ url: "" });
   };
   const runner = new BrowserRunner(config, { exec, command: process.execPath });
-  await assert.rejects(() => runner.open("https://yandex.ru/maps"), error => error.code === "NAVIGATION_FAILED" && /ERR_SSL_PROTOCOL_ERROR/.test(error.message));
+  runner.networkControlsStatus = "DEGRADED";
+  await assert.rejects(() => runner.open("https://yandex.ru/maps"), error => error.code === "NAVIGATION_FAILED");
   assert.equal(opens, 1);
 });
 
-test("a navigation the allowlist blocked stays a blocked-resource failure", async () => {
+// agent-browser 0.38.2: open succeeds, then the page silently turns into about:blank
+// whenever --allowed-domains is in force, even with "*". No error text names the controls.
+test("a page blanked right after controls were installed is reopened once without them", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  let current = "about:blank";
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { const controls = args.includes("--allowed-domains"); opens.push(controls); current = controls ? "about:blank" : "https://gdebenz.ru/"; return okJson({ url: "https://gdebenz.ru/" }); }
+    if (args.includes("url")) return okJson({ url: current });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  const opened = await runner.open("https://gdebenz.ru/");
+  assert.equal(opened.finalUrl, "https://gdebenz.ru/");
+  assert.deepEqual(opens, [true, false]);
+  assert.equal(runner.networkControlsStatus, "DEGRADED");
+  assert.equal(runner.runtimeWarnings.length, 1);
+  assert.match(runner.runtimeWarnings[0], /about:blank/);
+});
+
+test("a blank page in a session without controls is only moved to a fresh namespace", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  let urlReads = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens.push(args.includes("--allowed-domains")); return okJson({ url: "https://gdebenz.ru/" }); }
+    if (args.includes("url")) return okJson({ url: ++urlReads === 1 ? "about:blank" : "https://gdebenz.ru/" });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  runner.networkControlsStatus = "DEGRADED";
+  const first = runner.namespace;
+  await runner.open("https://gdebenz.ru/");
+  assert.deepEqual(opens, [false, false]);
+  assert.notEqual(runner.namespace, first);
+  assert.equal(runner.runtimeWarnings.length, 0);
+});
+
+test("an agent-browser without --allowed-domains falls back instead of failing every source", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) {
+      opens.push(args.includes("--allowed-domains"));
+      if (args.includes("--allowed-domains")) return { exitCode: 1, stdout: JSON.stringify({ error: "Unknown command: --allowed-domains", success: false, type: "unknown_command" }), stderr: "" };
+      return okJson({ url: "https://benzonavt.ru/" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://benzonavt.ru/" });
+    return okJson({ pageTitle: "Бензонавт", pageText: "АЗС", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  const opened = await runner.open("https://benzonavt.ru/");
+  assert.equal(opened.finalUrl, "https://benzonavt.ru/");
+  assert.deepEqual(opens, [true, false]);
+  assert.equal(runner.networkControlsStatus, "DEGRADED");
+});
+
+// agent-browser does not name the blocked URL, so a block cannot be told apart from a redirect to an unlisted host.
+test("a block under network controls is never attributed to them", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens.push(args.includes("--allowed-domains")); return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), stderr: "" }; }
+    return okJson({ url: "" });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://2gis.ru/volgograd"), error => error.code === "RESOURCE_BLOCKED");
+  assert.deepEqual(opens, [true]);
+  assert.notEqual(runner.networkControlsStatus, "DEGRADED");
+});
+
+test("an open that hangs under network controls is retried once without them", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) {
+      opens.push(args.includes("--allowed-domains"));
+      if (args.includes("--allowed-domains")) return { exitCode: 124, signal: "TIMEOUT", stdout: "", stderr: "" };
+      return okJson({ url: "https://gdebenz.ru/" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://gdebenz.ru/" });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.open("https://gdebenz.ru/");
+  assert.deepEqual(opens, [true, false]);
+  assert.match(runner.runtimeWarnings[0], /open hung/);
+});
+
+test("a browser that keeps failing under network controls gets its last attempt without them", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) {
+      opens.push(args.includes("--allowed-domains"));
+      if (args.includes("--allowed-domains")) return { exitCode: 1, stdout: "", stderr: "daemon connection lost" };
+      return okJson({ url: "https://gdebenz.ru/" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://gdebenz.ru/" });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.open("https://gdebenz.ru/");
+  assert.deepEqual(opens, [true, true, false], "the first browser-level failure keeps the controls, a repeat drops them");
+});
+
+test("a degradation after the User-Agent retry still gets its own warning", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args, { input } = {}) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens.push(args.includes("--allowed-domains")); return okJson({ url: "https://yandex.ru/maps" }); }
+    if (args.includes("url")) return okJson({ url: opens.length === 2 && opens[1] ? "about:blank" : "https://yandex.ru/maps" });
+    if (input === "navigator.userAgent") return okJson({ result: "Mozilla/5.0 HeadlessChrome/140.0" });
+    return okJson({ pageTitle: "Яндекс", pageText: "limited", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.open("https://yandex.ru/maps");
+  assert.equal(await runner.useRealisticUserAgent(), true);
+  await runner.open("https://yandex.ru/maps");
+  assert.deepEqual(opens, [true, true, false]);
+  assert.equal(runner.runtimeWarnings.length, 2);
+  assert.ok(runner.runtimeWarnings.some(message => /network controls failed \(page became about:blank/.test(message)));
+});
+
+test("data read while the page navigated to another origin is discarded", async () => {
+  const config = await loadConfig();
+  let urlReads = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) return okJson({ url: "https://gdebenz.ru/" });
+    if (args.includes("url")) return okJson({ url: ++urlReads <= 2 ? "https://gdebenz.ru/" : "https://evil.example/" });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false, stations: ["forged"] });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  runner.networkControlsStatus = "DEGRADED";
+  await runner.open("https://gdebenz.ru/");
+  await assert.rejects(() => runner.evalJson("collect()"), error => error.code === "PAGE_LOST");
+});
+
+test("an off-allowlist landing with only a generic return parameter is not mistaken for a sign-in gate", async () => {
   const config = await loadConfig();
   const exec = async (command, args) => {
     if (args.includes("session")) return okJson({ sessions: [] });
     if (args.includes("close")) return okJson({ closed: true });
-    if (args.includes("open")) return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_BLOCKED_BY_CLIENT" }), stderr: "" };
-    return okJson({ url: "" });
+    if (args.includes("open")) return okJson({ url: `https://ads.example/click?next=${encodeURIComponent("https://2gis.ru/")}` });
+    throw new Error(`the foreign page must never be inspected: ${args.join(" ")}`);
   };
   const runner = new BrowserRunner(config, { exec, command: process.execPath });
-  await assert.rejects(() => runner.open("https://tracker.example/"), error => error.code === "RESOURCE_BLOCKED");
+  await assert.rejects(() => runner.open("https://2gis.ru/volgograd"), error => error.code === "RESOURCE_BLOCKED");
+});
+
+// 2GIS answers agent-browser's Chrome (only it: a regular browser on the same IP gets the page) with a Sber ID
+// sign-in that returns to 2gis.ru. That is a gate, and the skill never logs in, bypasses or retries it.
+test("an external sign-in gate at landing is a challenge that is neither retried nor read", async () => {
+  const config = await loadConfig();
+  const target = "https://2gis.ru/volgograd/search/%D0%90%D0%97%D0%A1";
+  const gate = `https://id.sber.ru/CSAFront/oidc/authorize.do?prompt=light&machineClick=aggressivelogin&client_type=PRIVATE&redirect_uri=${encodeURIComponent("https://2gis.ru/_/auth/sberid/code")}&state=x`;
+  let opens = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens++; return okJson({ url: gate }); }
+    throw new Error(`the foreign page must never be inspected: ${args.join(" ")}`);
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open(target), error => error.code === "CHALLENGE" && /id\.sber\.ru/.test(error.message));
+  assert.equal(opens, 1);
+  assert.equal(runner.expectedUrl, target, "a later probe must judge drift against the requested page, not the gate");
+});
+
+test("an external sign-in gate reached after open is still a challenge, never evaluated", async () => {
+  const config = await loadConfig();
+  const target = "https://2gis.ru/volgograd";
+  const gate = `https://id.sber.ru/CSAFront/oidc/authorize.do?redirect_uri=${encodeURIComponent("https://2gis.ru/_/auth/sberid/code")}`;
+  const evals = [];
+  let urlReads = 0;
+  const exec = async (command, args, { input } = {}) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) return okJson({ url: target });
+    if (args.includes("url")) return okJson({ url: ++urlReads === 1 ? target : gate });
+    evals.push(input);
+    return okJson({ pageTitle: "2ГИС", pageText: "АЗС", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  runner.networkControlsStatus = "DEGRADED";
+  await runner.open(target);
+  const evalsBefore = evals.length;
+  await assert.rejects(() => runner.waitReady({ anyOfSelectors: ["a"], urlRejectPatterns: [], timeoutMs: 1000 }), error => error.code === "CHALLENGE" && /id\.sber\.ru/.test(error.message));
+  assert.equal(evals.length, evalsBefore, "the gate page is never evaluated");
+});
+
+test("a transient navigation error that repeats under network controls drops them for the last attempt", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) {
+      opens.push(args.includes("--allowed-domains"));
+      if (args.includes("--allowed-domains")) return { exitCode: 1, stdout: JSON.stringify({ success: false, data: null, error: "Navigation failed: net::ERR_CONNECTION_RESET" }), stderr: "" };
+      return okJson({ url: "https://gdebenz.ru/" });
+    }
+    if (args.includes("url")) return okJson({ url: "https://gdebenz.ru/" });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await runner.open("https://gdebenz.ru/");
+  assert.deepEqual(opens, [true, true, false]);
+  assert.match(runner.runtimeWarnings[0], /ERR_CONNECTION_RESET/);
+});
+
+test("an open that itself reports a blank landing under network controls is reopened without them", async () => {
+  const config = await loadConfig();
+  const opens = [];
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { const controls = args.includes("--allowed-domains"); opens.push(controls); return okJson({ url: controls ? "about:blank" : "https://gdebenz.ru/" }); }
+    if (args.includes("url")) return okJson({ url: "https://gdebenz.ru/" });
+    return okJson({ pageTitle: "ГдеБЕНЗ", pageText: "станции", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  const opened = await runner.open("https://gdebenz.ru/");
+  assert.equal(opened.finalUrl, "https://gdebenz.ru/");
+  assert.deepEqual(opens, [true, false]);
+  assert.equal(runner.networkControlsStatus, "DEGRADED");
+});
+
+test("a manual handover cannot read an external gate page", async () => {
+  const config = await loadConfig();
+  const gate = `https://id.sber.ru/authorize?redirect_uri=${encodeURIComponent("https://2gis.ru/")}`;
+  const evals = [];
+  const exec = async (command, args, { input } = {}) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open") || args.includes("url")) return okJson({ url: gate });
+    evals.push(input);
+    return okJson({ pageTitle: "Сбер ID", pageText: "Войти", selectorReady: false });
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://2gis.ru/volgograd"), error => error.code === "CHALLENGE");
+  assert.equal(await runner.awaitManualChallengeResolution({ waitMs: 1000, pollMs: 10 }), "UNREADABLE");
+  assert.equal(evals.length, 0);
+});
+
+test("an external landing without a way back stays a blocked-resource failure", async () => {
+  const config = await loadConfig();
+  let opens = 0;
+  const exec = async (command, args) => {
+    if (args.includes("session")) return okJson({ sessions: [] });
+    if (args.includes("close")) return okJson({ closed: true });
+    if (args.includes("open")) { opens++; return okJson({ url: `https://tracker.example/?redirect_uri=${encodeURIComponent("https://evil.example/")}` }); }
+    throw new Error(`the foreign page must never be inspected: ${args.join(" ")}`);
+  };
+  const runner = new BrowserRunner(config, { exec, command: process.execPath });
+  await assert.rejects(() => runner.open("https://2gis.ru/volgograd"), error => error.code === "RESOURCE_BLOCKED");
+  assert.equal(opens, 1);
 });
 
 // Readiness polling used to spawn five CLI processes per iteration; title, text and readiness now share one eval.

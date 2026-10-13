@@ -103,21 +103,30 @@ var BrowserRunner = class {
   }
   async open(url, attempt = 0) {
     await this.ensureRunSession();
-    const networkControls = this.started || this.networkControlsStatus === "DEGRADED" ? [] : ["--allowed-domains", this.config.browser.allowedDomains.join(",")];
+    if (attempt === 0) this.lastCommandFailure = void 0;
+    const controlsRequested = !this.started && this.networkControlsStatus !== "DEGRADED";
+    const networkControls = controlsRequested ? ["--allowed-domains", this.config.browser.allowedDomains.join(",")] : [];
     const result = await this.commandJson([...networkControls, "open", url, "--json"], { timeoutMs: this.config.browser.adapterTimeoutMs });
     if (result.exitCode !== 0) {
-      if (attempt < 2 && isNetworkControlsFailure(result) && this.networkControlsStatus !== "DEGRADED") {
-        await this.degradeNetworkControls();
+      if (attempt < 2 && controlsRequested && isNetworkControlsFailure(result)) {
+        await this.degradeNetworkControls("CDP error while installing them");
         return this.open(url, attempt + 1);
       }
-      if (attempt < 2 && (isBrowserLevelFailure(result) || isTransientNavigationFailure(result))) {
-        await this.closeSessionBestEffort();
-        this.rotateNamespace();
-        this.started = false;
-        this.expectedUrl = void 0;
+      if (attempt < 2 && isTransientNavigationFailure(result)) {
+        if (controlsRequested && attempt > 0) await this.degradeNetworkControls(`navigation kept failing: ${navigationErrorCode(`${result.stderr} ${result.stdout}`)}`);
+        else await this.freshSession();
         return this.open(url, attempt + 1);
       }
-      throw classifyCommandFailure(result, "open");
+      const controlsFailure = controlsRequested ? networkControlsOpenFailure(result, attempt) : void 0;
+      if (attempt < 2 && controlsFailure) {
+        await this.degradeNetworkControls(controlsFailure);
+        return this.open(url, attempt + 1);
+      }
+      if (attempt < 2 && isBrowserLevelFailure(result) && !navigationErrorCode(`${result.stderr} ${result.stdout}`)) {
+        await this.freshSession();
+        return this.open(url, attempt + 1);
+      }
+      throw this.commandFailure(result, "open");
     }
     this.started = true;
     await this.rememberDaemonPid();
@@ -125,29 +134,47 @@ var BrowserRunner = class {
     const opened = commandPayload(result.json);
     const reportedUrl = String(opened?.url ?? opened?.finalUrl ?? "");
     this.expectedUrl = reportedUrl || url;
-    if (reportedUrl) assertAllowedLanding(reportedUrl, this.config.browser.allowedDomains);
+    if (attempt < 2 && reportedUrl && isUnusableLandingUrl(reportedUrl)) {
+      if (controlsRequested) await this.degradeNetworkControls(`open landed on ${reportedUrl}`);
+      else await this.freshSession();
+      return this.open(url, attempt + 1);
+    }
+    if (reportedUrl && !isAllowedUrl(reportedUrl, this.config.browser.allowedDomains)) {
+      this.expectedUrl = url;
+      if (isExternalGate(reportedUrl, this.config.browser.allowedDomains)) throw new BrowserError("CHALLENGE", `Source routed the browser through an external sign-in/verification page at ${new URL(reportedUrl).hostname}; not attempted`);
+      assertAllowedLanding(reportedUrl, this.config.browser.allowedDomains);
+    }
     let snapshot;
     try {
       snapshot = await this.snapshot();
     } catch (error) {
-      if (attempt < 2 && this.networkControlsStatus !== "DEGRADED" && isNetworkControlsFailureText(error.message)) {
-        await this.degradeNetworkControls();
+      if (attempt < 2 && controlsRequested && isNetworkControlsFailureText(error.message)) {
+        await this.degradeNetworkControls("network controls lost the page's execution context");
         return this.open(url, attempt + 1);
       }
       if (attempt < 2 && error.code === "PAGE_LOST" && isUnusableLandingUrl(error.details?.actual)) {
-        await this.closeSessionBestEffort();
-        this.rotateNamespace();
-        this.started = false;
-        this.expectedUrl = void 0;
+        if (controlsRequested) await this.degradeNetworkControls(`page became ${error.details.actual || "empty"} right after open`);
+        else await this.freshSession();
         return this.open(url, attempt + 1);
       }
       throw error;
     }
     return { finalUrl: snapshot.url, pageTitle: snapshot.title, pageTextPrefix: snapshot.textPrefix };
   }
-  async degradeNetworkControls() {
+  // Reached at most once per runner: afterwards controls are no longer requested. The warning is pushed even when an
+  // unrelated one (the User-Agent retry) came first, so the degradation can never hide behind it.
+  async degradeNetworkControls(reason = "network controls failed") {
     this.networkControlsStatus = "DEGRADED";
-    if (!this.runtimeWarnings.length) this.runtimeWarnings.push("agent-browser network controls failed; using exact-URL navigation with fail-closed final-host and page-drift checks");
+    this.runtimeWarnings.push(`agent-browser network controls failed (${reason}); using exact-URL navigation with fail-closed final-host and page-drift checks`);
+    await this.freshSession();
+  }
+  // Remembered so collect can tell a failed agent-browser command apart from what the source or the adapter did.
+  commandFailure(result, operation) {
+    this.lastCommandFailure = classifyCommandFailure(result, operation);
+    return this.lastCommandFailure;
+  }
+  async freshSession() {
+    this.lastCommandFailure = void 0;
     await this.closeSessionBestEffort();
     this.rotateNamespace();
     this.started = false;
@@ -170,11 +197,8 @@ var BrowserRunner = class {
     }
     this.userAgent = realistic;
     this.userAgentStatus = "DEHEADLESSED";
-    this.runtimeWarnings.push(`browser reported a headless User-Agent and the source answered with its automation rate-limit page; retried once with the same browser identity without the "Headless" token`);
-    await this.closeSessionBestEffort();
-    this.rotateNamespace();
-    this.started = false;
-    this.expectedUrl = void 0;
+    this.runtimeWarnings.push(`User-Agent adjusted: browser reported a headless User-Agent and the source answered with its automation rate-limit page; retried once with the same browser identity without the "Headless" token`);
+    await this.freshSession();
     return true;
   }
   rotateNamespace() {
@@ -219,13 +243,17 @@ var BrowserRunner = class {
     }
     return "TIMED_OUT";
   }
+  // Checked on both sides: a page can navigate to another origin while the expression runs, and a value read
+  // across that navigation is not trusted. This matters most without network controls.
   async evalJson(expression) {
     await this.assertCurrentPage();
-    return this.evalJsonUnchecked(expression);
+    const value = await this.evalJsonUnchecked(expression);
+    await this.assertCurrentPage();
+    return value;
   }
   async evalJsonUnchecked(expression) {
     const result = await this.commandJson(["eval", "--stdin", "--json"], { input: expression, timeoutMs: this.config.browser.adapterTimeoutMs });
-    if (result.exitCode !== 0) throw classifyCommandFailure(result, "eval");
+    if (result.exitCode !== 0) throw this.commandFailure(result, "eval");
     return unwrapJson(result.json);
   }
   // Readiness polling used to spend five CLI processes per iteration on url, title, text and a selector check.
@@ -233,9 +261,9 @@ var BrowserRunner = class {
   // from the page: an in-page location.href is page-controlled and would let a drifted page hide the drift.
   async probePage(anyOfSelectors) {
     const url = await this.commandJson(["get", "url", "--json"], { timeoutMs: 1e4 });
-    if (url.exitCode !== 0) throw classifyCommandFailure(url, "snapshot");
+    if (url.exitCode !== 0) throw this.commandFailure(url, "snapshot");
     const currentUrl = String(unwrapJson(url.json) ?? "");
-    if (this.expectedUrl) assertSameOrigin(this.expectedUrl, currentUrl);
+    if (this.expectedUrl) this.assertOnExpectedPage(currentUrl);
     const page = await this.evalJsonUnchecked(`(() => ({ pageTitle: document.title ?? "", pageText: String(document.body?.innerText ?? "").slice(0, 1000), selectorReady: ${JSON.stringify(anyOfSelectors ?? [])}.some(selector => document.querySelector(selector)) }))()`);
     return { url: currentUrl, title: String(page?.pageTitle ?? ""), textPrefix: clampText(page?.pageText, 1e3), ready: page?.selectorReady === true };
   }
@@ -246,8 +274,18 @@ var BrowserRunner = class {
   async assertCurrentPage() {
     if (!this.expectedUrl) return;
     const result = await this.commandJson(["get", "url", "--json"], { timeoutMs: 1e4 });
-    if (result.exitCode !== 0) throw classifyCommandFailure(result, "page check");
-    assertSameOrigin(this.expectedUrl, String(unwrapJson(result.json) ?? ""));
+    if (result.exitCode !== 0) throw this.commandFailure(result, "page check");
+    this.assertOnExpectedPage(String(unwrapJson(result.json) ?? ""));
+  }
+  // A source script can also hop to the external sign-in gate after open returned (2GIS's Sber ID redirect is
+  // client-side). That is still a challenge rather than drift, and it is raised before anything on it is evaluated.
+  assertOnExpectedPage(actual) {
+    try {
+      assertSameOrigin(this.expectedUrl, actual);
+    } catch (error) {
+      if (isExternalGate(actual, this.config.browser.allowedDomains)) throw new BrowserError("CHALLENGE", `Source routed the browser through an external sign-in/verification page at ${new URL(actual).hostname}; not attempted`, { actual });
+      throw error;
+    }
   }
   async close(cleanupDeadline = this.now() + this.config.browser.cleanupReserveMs) {
     const namespaces = [];
@@ -432,6 +470,33 @@ function isNetworkControlsFailure(result) {
 function isNetworkControlsFailureText(text) {
   return /failed to install browser network controls:[\s\S]*CDP error \((?:Runtime\.evaluate|Page\.enable)\)/i.test(String(text));
 }
+function networkControlsOpenFailure(result, attempt) {
+  const text = `${result.stderr} ${result.stdout}`;
+  if (/unknown (?:command|option|flag|argument)\b[^\n]*allowed-domains/i.test(text)) return "this agent-browser does not support --allowed-domains";
+  const failure = classifyCommandFailure(result, "open");
+  if (failure.code === "NAVIGATION_FAILED") return `navigation failed: ${navigationErrorCode(text)}`;
+  if (failure.code === "TIMEOUT") return "open hung";
+  if (attempt > 0 && isBrowserLevelFailure(result)) return "the browser kept failing";
+  return void 0;
+}
+function isAllowedUrl(value, allowedDomains) {
+  try {
+    assertAllowedLanding(value, allowedDomains);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var GATE_RETURN_PARAMS = ["redirect_uri", "return_url", "return_to", "retpath"];
+function isExternalGate(value, allowedDomains) {
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) return false;
+    return [...url.searchParams].some(([key, target]) => GATE_RETURN_PARAMS.includes(key.toLowerCase()) && isAllowedUrl(target, allowedDomains));
+  } catch {
+    return false;
+  }
+}
 function isBrowserLevelFailure(result) {
   return /daemon|connection|failed to connect|browser.*closed|target.*closed|session with given id not found|no session with given id|cannot find default execution context|execution context.*(?:destroyed|not found)|socket|econn/i.test(`${result.stderr} ${result.stdout}`);
 }
@@ -445,7 +510,7 @@ function navigationErrorCode(text) {
 }
 function classifyCommandFailure(result, operation) {
   const text = `${result.stderr} ${result.stdout}`;
-  if (result.exitCode === 124) return new BrowserError("TIMEOUT", `${operation} timed out`);
+  if (result.exitCode === 124 || /\boperation timed out\b/i.test(text)) return new BrowserError("TIMEOUT", `${operation} timed out`);
   if (/captcha|recaptcha|challenge/i.test(text)) return new BrowserError("CHALLENGE", clampText(text));
   if (/allowed.?domain|blocked/i.test(text)) return new BrowserError("RESOURCE_BLOCKED", clampText(text));
   const navigationError = /navigation failed/i.test(text) ? navigationErrorCode(text) : void 0;

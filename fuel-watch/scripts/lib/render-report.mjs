@@ -49,7 +49,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
 
 // The canonical Markdown carries only limitations that change a trip decision. Internal browser plumbing and failures
 // we already recovered from belong to the structured diagnostics field instead, which is for the agent, not the user.
-const TECHNICAL_WARNING_CODES = new Set(["BROWSER_NETWORK_CONTROLS_DEGRADED", "CLEANUP_FAILED", "PARTIAL_COVERAGE"]);
+const TECHNICAL_WARNING_CODES = new Set(["BROWSER_NETWORK_CONTROLS_DEGRADED", "BROWSER_USER_AGENT_ADJUSTED", "CLEANUP_FAILED", "PARTIAL_COVERAGE"]);
 const USER_WARNING = {
   BROWSER_RUNTIME_FAILED: "Браузер не запустился, источники в этом прогоне не опрашивались.",
   HISTORY_UNAVAILABLE: "История за 7 дней не обновилась, поэтому прогноз появления может отсутствовать или быть хуже обычного.",

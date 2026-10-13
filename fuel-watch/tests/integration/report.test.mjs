@@ -135,16 +135,17 @@ test("losing every source is stated without implying that there is no fuel", asy
 test("recovered browser plumbing stays out of the report while unrecovered limits are stated plainly", () => {
   const snapshot={fetchedAt:"2026-09-21T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[],sourceHealth:[{source:"gdebenz",status:"OK"}],sourceCoverage:{gdebenz:{stationCount:5}},changes:[],warnings:[
     {code:"BROWSER_NETWORK_CONTROLS_DEGRADED",message:"gdebenz: agent-browser network controls failed during adapter execution; retried once"},
+    {code:"BROWSER_USER_AGENT_ADJUSTED",message:"yandex: User-Agent adjusted: browser reported a headless User-Agent; retried once"},
     {code:"CLEANUP_FAILED",message:"1 browser session(s) remain"},
     {code:"PARTIAL_COVERAGE",message:"At least one source did not provide complete evidence."},
     {code:"HISTORY_UNAVAILABLE",message:"7-day history could not be updated (HISTORY_LOCK_TIMEOUT): timed out"}
   ]};
   const {markdown,diagnostics}=renderReport(snapshot);
-  assert.doesNotMatch(markdown,/BROWSER_NETWORK_CONTROLS_DEGRADED|CDP|agent-browser|CLEANUP_FAILED|PARTIAL_COVERAGE/);
+  assert.doesNotMatch(markdown,/BROWSER_NETWORK_CONTROLS_DEGRADED|BROWSER_USER_AGENT_ADJUSTED|User-Agent|CDP|agent-browser|CLEANUP_FAILED|PARTIAL_COVERAGE/);
   assert.match(markdown,/⚠ История за 7 дней не обновилась/);
   assert.doesNotMatch(markdown,/HISTORY_LOCK_TIMEOUT/);
   assert.equal(diagnostics.agentOnly,true);
-  assert.deepEqual(diagnostics.warnings.map(w=>w.code),["BROWSER_NETWORK_CONTROLS_DEGRADED","CLEANUP_FAILED","PARTIAL_COVERAGE","HISTORY_UNAVAILABLE"]);
+  assert.deepEqual(diagnostics.warnings.map(w=>w.code),["BROWSER_NETWORK_CONTROLS_DEGRADED","BROWSER_USER_AGENT_ADJUSTED","CLEANUP_FAILED","PARTIAL_COVERAGE","HISTORY_UNAVAILABLE"]);
 });
 
 test("an unrecognised warning keeps its wording rather than disappearing from the report", () => {
