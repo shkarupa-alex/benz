@@ -8,7 +8,7 @@ import { defaultBrowserConfigPath, defaultConfigPath, defaultSchemaPath, loadCon
 import { diffSnapshots } from "./lib/diff.mjs";
 import { petrolOctaneKey } from "./lib/fuels.mjs";
 import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
-import { ensureDefaultHistoryPath, recordHistory } from "./lib/history.mjs";
+import { ensureDefaultHistoryPath, forecastWindowDays, recordHistory } from "./lib/history.mjs";
 import { ensureUserConfig, latestSnapshotPath } from "./lib/paths.mjs";
 import { reconcileStations } from "./lib/identity.mjs";
 import { normalizeQueues } from "./lib/queue.mjs";
@@ -155,7 +155,7 @@ export async function collectSnapshot({ configPath, outputPath, previousPath, hi
   };
   if (historyPath) {
     try { snapshot.forecast = (await recordHistory(historyPath, snapshot, config)).forecast; }
-    catch (error) { warnings.push({ code: "HISTORY_UNAVAILABLE", message: `7-day history could not be updated (${error.code ?? "HISTORY_ERROR"}): ${error.message}` }); snapshot.forecast = { generatedAt: fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: 0, completedEpisodeCount: 0, items: [] }; }
+    catch (error) { warnings.push({ code: "HISTORY_UNAVAILABLE", message: `History could not be updated (${error.code ?? "HISTORY_ERROR"}): ${error.message}` }); snapshot.forecast = { generatedAt: fetchedAt, retentionDays: config.history.retentionDays, windowDays: forecastWindowDays(config), requestedCount: config.history.forecastCount, tickCount: 0, completedEpisodeCount: 0, items: [] }; }
   }
   if (outputPath) await writeJsonAtomic(outputPath, snapshot);
   return { snapshot, exitCode: warnings.some(w => w.code === "CLEANUP_FAILED") ? 75 : assessments.length || results.some(r => r.health.status === "OK") ? 0 : 2 };

@@ -1,7 +1,8 @@
 import { constants } from "node:fs";
-import { copyFile, mkdir, readFile, stat, unlink } from "node:fs/promises";
+import { appendFile, copyFile, link, mkdir, open, readdir, readFile, stat, unlink, writeFile, rename } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import properLockfile from "proper-lockfile";
 import { normalizeFuelLabel, petrolOctaneKey } from "./fuels.mjs";
 import { compileBrandAliases, normalizeBrand, normalizeComparableBrand } from "./normalize.mjs";
@@ -10,6 +11,27 @@ import { historyPath } from "./paths.mjs";
 
 const POSITIVE = new Set(["AVAILABLE", "LIKELY_AVAILABLE"]);
 const NEGATIVE = "NOT_AVAILABLE";
+// Retention is how long ticks are kept; the forecast that runs on every collection only reads a recent window, so a
+// long retention costs disk, not per-tick memory or time. Statistics over the whole retention stream day files.
+export const FORECAST_WINDOW_MAX_DAYS = 28;
+const EVENT_KINDS = new Set(["SOURCE_REPORTED_TRANSITION", "TRANSACTIONS_RESUMED"]);
+const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
+// Activity rows repeat the same long field names in every tick; on disk they use these short aliases.
+const ACTIVITY_KEYS = { source: "s", productKey: "p", gradeLabel: "g", kind: "k", status: "st", observedAt: "o", resumedAt: "r", latestEventAt: "l", windowMinutes: "w", count: "c", gradeSpecific: "gs", sourceTerminology: "t" };
+const ACTIVITY_FIELDS = Object.fromEntries(Object.entries(ACTIVITY_KEYS).map(([field, alias]) => [alias, field]));
+const packActivity = value => Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).map(([field, item]) => [ACTIVITY_KEYS[field] ?? field, item]));
+const unpackActivity = value => Object.fromEntries(Object.entries(value).map(([alias, item]) => [ACTIVITY_FIELDS[alias] ?? alias, item]));
+
+export function forecastWindowDays(config) { return Math.min(config.history.retentionDays, FORECAST_WINDOW_MAX_DAYS); }
+
+// Storage v2: the history path is a small manifest; ticks are appended one JSON line each to a file per UTC day
+// next to it, and station display metadata (title, address, brand, coordinate) lives once in a dictionary instead
+// of in every tick. Writing is one appended line however long the retention is; reading is bounded by the forecast
+// window, not by the retention.
+export function historyLayout(path) {
+  const base = path.endsWith(".json") ? path.slice(0, -5) : path;
+  return { manifest: path, ticksDir: `${base}.ticks`, stations: `${base}.stations.json`, v1Backup: `${base}.v1-backup.json` };
+}
 
 export function defaultHistoryPath(env = process.env) {
   return historyPath(env);
@@ -31,22 +53,253 @@ export async function recordHistory(path, snapshot, config, { lock = properLockf
     const now = new Date(snapshot.fetchedAt);
     if (!Number.isFinite(now.getTime())) throw new Error("snapshot fetchedAt is invalid");
     const retentionDays = config.history.retentionDays;
-    const previous = await loadHistory(path);
-    const referenceMs = Math.max(now.getTime(), new Date(previous.updatedAt ?? 0).getTime() || 0);
+    const windowDays = forecastWindowDays(config);
+    const layout = historyLayout(path);
+    const manifest = await loadManifest(layout, assertLockHealthy);
+    const referenceMs = Math.max(now.getTime(), new Date(manifest.updatedAt ?? 0).getTime() || 0);
     const cutoff = referenceMs - retentionDays * 86400000;
-    const ticks = previous.ticks
-      .filter(tick => new Date(tick.fetchedAt).getTime() >= cutoff)
-      .filter(tick => !(tick.fetchedAt === snapshot.fetchedAt && tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash));
-    ticks.push(compactTick(snapshot, cutoff));
-    ticks.sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt));
-    const history = { schemaVersion: 1, retentionDays, updatedAt: ticks.at(-1)?.fetchedAt ?? snapshot.fetchedAt, ticks };
-    const forecast = buildForecast(history, snapshot, config);
+    const windowCutoff = Math.max(cutoff, referenceMs - windowDays * 86400000);
+    const dictionary = await loadStationDictionary(layout);
+    const recent = (await readTickFiles(layout, { sinceMs: windowCutoff, dictionary })).ticks;
+    const tick = compactTick(snapshot, cutoff);
+    const duplicate = recent.some(value => value.fetchedAt === tick.fetchedAt && value.areaHash === tick.areaHash && value.queryHash === tick.queryHash);
+    for (const [key, value] of Object.entries(dictionary.stations)) if (new Date(value.lastSeenAt).getTime() < cutoff) delete dictionary.stations[key];
+    // The dictionary is written before the tick that refers to it, so a crash in between can leave an unused entry
+    // but never a stored station without its title, address and brand.
+    if (!duplicate) rememberStations(dictionary, tick);
     assertLockHealthy();
-    await writeJsonAtomic(path, history);
+    await writeJsonAtomic(layout.stations, dictionary);
+    if (!duplicate) {
+      await appendLine(join(layout.ticksDir, `${dayKey(tick.fetchedAt)}.jsonl`), storedTick(tick, seenEvents(recent), dictionary));
+      recent.push(tick);
+    }
+    await pruneDayFiles(layout, cutoff);
+    const updatedAt = new Date(Math.max(referenceMs, now.getTime())).toISOString();
     assertLockHealthy();
+    await writeJsonAtomic(layout.manifest, { schemaVersion: 2, layout: "daily-jsonl", retentionDays, updatedAt });
+    assertLockHealthy();
+    recent.sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt));
+    const history = { schemaVersion: 2, retentionDays, windowDays, updatedAt, ticks: recent.filter(value => new Date(value.fetchedAt).getTime() >= windowCutoff) };
+    const forecast = buildForecast(history, snapshot, config, { windowDays });
     return { history, forecast };
   }, lock);
 }
+
+// Read-only access for statistics and tests: ticks since a moment, rehydrated with the station dictionary. A
+// legacy v1 file is read as it is; it is converted by the next collection, which holds the history lock.
+export async function readHistory(path, { sinceMs = -Infinity } = {}) {
+  const layout = historyLayout(path);
+  let manifest;
+  try { manifest = await readJson(layout.manifest); }
+  catch (error) { if (error.code === "ENOENT") return { schemaVersion: 2, ticks: [], corruptLines: 0, stations: {} }; throw error; }
+  if (manifest.schemaVersion === 1 && Array.isArray(manifest.ticks)) return { ...manifest, ticks: manifest.ticks.filter(tick => new Date(tick.fetchedAt).getTime() >= sinceMs), corruptLines: 0, stations: {} };
+  if (manifest.schemaVersion !== 2) throw new Error("unsupported history schema");
+  const dictionary = await readerDictionary(layout);
+  const { ticks, corruptLines } = await readTickFiles(layout, { sinceMs, dictionary });
+  ticks.sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt));
+  return { ...manifest, ticks, corruptLines, stations: dictionary.stations };
+}
+
+// Streams the retained day files oldest first, one day in memory at a time, for statistics over a long retention.
+// Expired ticks still sitting in the oldest, partly expired day file are skipped, as the forecast would skip them.
+export async function forEachHistoryDay(path, { sinceMs: requestedSinceMs = -Infinity } = {}, visit) {
+  const layout = historyLayout(path);
+  const manifest = await readJson(layout.manifest).catch(error => { if (error.code === "ENOENT") return undefined; throw error; });
+  if (!manifest) return { days: 0, corruptLines: 0, stations: {} };
+  const retainedSinceMs = Date.parse(manifest.updatedAt) - manifest.retentionDays * 86400000;
+  const sinceMs = Number.isFinite(retainedSinceMs) ? Math.max(requestedSinceMs, retainedSinceMs) : requestedSinceMs;
+  if (manifest.schemaVersion === 1) { const value = await readHistory(path, { sinceMs }); await visit(value.ticks, "legacy"); return { days: 1, corruptLines: 0, stations: {} }; }
+  const dictionary = await readerDictionary(layout);
+  let corruptLines = 0, days = 0;
+  for (const day of await dayFiles(layout)) {
+    if (day.endMs < sinceMs) continue;
+    const parsed = await readDayFile(join(layout.ticksDir, day.name), dictionary);
+    corruptLines += parsed.corruptLines;
+    days += 1;
+    await visit(parsed.ticks.filter(tick => new Date(tick.fetchedAt).getTime() >= sinceMs).sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt)), day.key);
+  }
+  return { days, corruptLines, stations: dictionary.stations };
+}
+
+async function loadManifest(layout, assertLockHealthy) {
+  let value;
+  try { value = await readJson(layout.manifest); }
+  catch (error) { if (error.code === "ENOENT") return { schemaVersion: 2 }; throw error; }
+  if (value.schemaVersion === 2) return value;
+  if (value.schemaVersion !== 1 || !Array.isArray(value.ticks)) throw new Error("unsupported history schema");
+  return migrateV1(layout, value, assertLockHealthy);
+}
+
+// One-time conversion under the history lock. The v1 file is copied aside first and the manifest is replaced last,
+// so a crash in between leaves a v1 manifest and the conversion simply runs again, rewriting the same day files.
+async function migrateV1(layout, legacy, assertLockHealthy) {
+  // The backup appears complete or not at all: a copy cut short by a crash must not be kept as "the backup".
+  const temp = `${layout.v1Backup}.${process.pid}.${randomUUID()}.tmp`;
+  await copyFile(layout.manifest, temp);
+  try { await link(temp, layout.v1Backup); }
+  catch (error) {
+    if (error.code === "EEXIST") { /* an earlier, interrupted conversion already kept the original */ }
+    // A filesystem without hard links: rename is atomic too, but would replace a backup that already exists.
+    else if (["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV"].includes(error.code)) { if (!(await stat(layout.v1Backup).catch(() => undefined))) await rename(temp, layout.v1Backup); }
+    else throw error;
+  } finally { await unlink(temp).catch(() => {}); }
+  const dictionary = { schemaVersion: 1, stations: {} };
+  const byDay = new Map();
+  const seen = new Map();
+  for (const tick of [...legacy.ticks].sort((a, b) => new Date(a.fetchedAt) - new Date(b.fetchedAt))) {
+    if (!Number.isFinite(new Date(tick.fetchedAt).getTime())) continue;
+    rememberStations(dictionary, tick);
+    const stored = storedTick(tick, seen, dictionary);
+    for (const station of tick.stations ?? []) for (const value of station.activity ?? []) if (EVENT_KINDS.has(value.kind)) eventSet(seen, eventScope(tick, station)).add(eventKey(value));
+    const key = dayKey(tick.fetchedAt);
+    byDay.set(key, `${byDay.get(key) ?? ""}${JSON.stringify(stored)}\n`);
+  }
+  await mkdir(layout.ticksDir, { recursive: true, mode: 0o700 });
+  for (const [key, text] of byDay) await writeTextAtomic(join(layout.ticksDir, `${key}.jsonl`), text);
+  assertLockHealthy();
+  await writeJsonAtomic(layout.stations, dictionary);
+  const manifest = { schemaVersion: 2, layout: "daily-jsonl", retentionDays: legacy.retentionDays, updatedAt: legacy.updatedAt, migratedFromV1At: new Date().toISOString() };
+  await writeJsonAtomic(layout.manifest, manifest);
+  return manifest;
+}
+
+// Readers do not hold the lock: a collection may write the dictionary and append its tick after the reader loaded
+// the dictionary, so a station key it does not know yet triggers one reload (the dictionary is written first).
+async function readerDictionary(layout) {
+  const dictionary = await loadStationDictionary(layout);
+  dictionary.refresh = async () => { dictionary.refresh = undefined; dictionary.stations = (await loadStationDictionary(layout)).stations; };
+  return dictionary;
+}
+
+async function loadStationDictionary(layout) {
+  try {
+    const value = await readJson(layout.stations);
+    return value && typeof value.stations === "object" && value.stations ? value : { schemaVersion: 1, stations: {} };
+  } catch (error) { if (error.code === "ENOENT") return { schemaVersion: 1, stations: {} }; throw error; }
+}
+
+// Display fields follow the latest sighting, but title and brand also train the brand-level forecast, so every
+// distinct (title, brand) pair a key was seen with is kept and each stored tick points at its own pair.
+function rememberStations(dictionary, tick) {
+  for (const station of tick.stations ?? []) {
+    if (!station.stationKey) continue;
+    const old = dictionary.stations[station.stationKey];
+    const newer = !old || new Date(tick.fetchedAt) >= new Date(old.lastSeenAt);
+    const labels = old?.labels ?? (old ? [[old.title ?? null, old.brand ?? null]] : []);
+    if (labelIndex(labels, station) < 0) labels.push([station.title ?? null, station.brand ?? null]);
+    dictionary.stations[station.stationKey] = {
+      title: newer ? station.title ?? old?.title : old.title, address: newer ? station.address ?? old?.address : old.address,
+      brand: newer ? station.brand ?? old?.brand : old.brand, coordinate: newer ? station.coordinate ?? old?.coordinate : old.coordinate,
+      firstSeenAt: old && new Date(old.firstSeenAt) < new Date(tick.fetchedAt) ? old.firstSeenAt : tick.fetchedAt,
+      lastSeenAt: newer ? tick.fetchedAt : old.lastSeenAt,
+      labels
+    };
+  }
+}
+function labelIndex(labels, station) { return labels.findIndex(([title, brand]) => title === (station.title ?? null) && brand === (station.brand ?? null)); }
+
+// Display metadata goes to the dictionary (the tick keeps only the index of its title/brand pair when it is not
+// the first) and a source-reported event is stored in the first tick of the same area and query that saw it rather
+// than in every tick the source repeats it: the forecast reads one area and the statistics one area and query, so
+// an event first seen under another area must be stored again. Per-variant product verdicts are not kept: neither
+// the forecast nor the statistics use them (variants are collapsed into one AI-95 for the user).
+function storedTick(tick, seen, dictionary) {
+  return {
+    fetchedAt: tick.fetchedAt, areaHash: tick.areaHash, queryHash: tick.queryHash, ...(tick.sources ? { sources: tick.sources } : {}),
+    stations: (tick.stations ?? []).map(station => {
+      const known = seen.get(eventScope(tick, station));
+      const activity = (station.activity ?? []).filter(value => !(EVENT_KINDS.has(value.kind) && known?.has(eventKey(value)))).map(packActivity);
+      const label = labelIndex(dictionary.stations[station.stationKey]?.labels ?? [], station);
+      return { stationKey: station.stationKey, memberKeys: station.memberKeys, verdict: station.verdict, confidence: station.confidence, ...(label > 0 ? { label } : {}), activity };
+    })
+  };
+}
+
+function seenEvents(ticks) {
+  const seen = new Map();
+  for (const tick of ticks) for (const station of tick.stations ?? []) for (const value of station.activity ?? []) if (EVENT_KINDS.has(value.kind)) eventSet(seen, eventScope(tick, station)).add(eventKey(value));
+  return seen;
+}
+function eventScope(tick, station) { return JSON.stringify([tick.areaHash ?? null, tick.queryHash ?? null, station.stationKey ?? null]); }
+function eventKey(value) { return JSON.stringify(Object.keys(ACTIVITY_KEYS).map(field => value[field] ?? null)); }
+function eventSet(map, key) { if (!map.has(key)) map.set(key, new Set()); return map.get(key); }
+
+function rehydrate(stored, dictionary) {
+  return { ...stored, stations: (stored.stations ?? []).map(({ label, ...station }) => {
+    const meta = dictionary.stations[station.stationKey] ?? {};
+    const [title, brand] = meta.labels?.[label ?? 0] ?? [meta.title, meta.brand];
+    return { ...station, title: title ?? undefined, address: meta.address, brand: brand ?? undefined, coordinate: meta.coordinate, activity: (station.activity ?? []).map(unpackActivity) };
+  }) };
+}
+
+async function dayFiles(layout) {
+  let names;
+  try { names = await readdir(layout.ticksDir); }
+  catch (error) { if (error.code === "ENOENT") return []; throw error; }
+  return names.map(name => name.match(DAY_FILE)).filter(Boolean).map(match => ({ name: match[0], key: match[1], endMs: Date.parse(`${match[1]}T00:00:00Z`) + 86400000 })).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+async function readTickFiles(layout, { sinceMs, dictionary }) {
+  const ticks = [];
+  let corruptLines = 0;
+  for (const day of await dayFiles(layout)) {
+    if (day.endMs < sinceMs) continue;
+    const parsed = await readDayFile(join(layout.ticksDir, day.name), dictionary);
+    corruptLines += parsed.corruptLines;
+    for (const tick of parsed.ticks) if (new Date(tick.fetchedAt).getTime() >= sinceMs) ticks.push(tick);
+  }
+  return { ticks, corruptLines };
+}
+
+// A line torn by a crash is skipped instead of failing the whole history; appendLine never glues onto it.
+async function readDayFile(path, dictionary) {
+  const ticks = [];
+  let corruptLines = 0;
+  // Readers do not hold the lock, so a day pruned by a concurrent collection between listing and reading is empty.
+  const text = await readFile(path, "utf8").catch(error => { if (error.code === "ENOENT") return ""; throw error; });
+  const stored = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try { const value = JSON.parse(line); if (Array.isArray(value?.stations) && value.fetchedAt) stored.push(value); else corruptLines += 1; }
+    catch { corruptLines += 1; }
+  }
+  if (dictionary.refresh && stored.some(value => value.stations.some(station => station.stationKey && !dictionary.stations[station.stationKey]))) await dictionary.refresh();
+  for (const value of stored) ticks.push(rehydrate(value, dictionary));
+  return { ticks, corruptLines };
+}
+
+async function appendLine(path, value) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  let separator = "";
+  try {
+    const handle = await open(path, "r");
+    try { const { size } = await handle.stat(); if (size > 0) { const last = Buffer.alloc(1); await handle.read(last, 0, 1, size - 1); if (last[0] !== 0x0a) separator = "\n"; } }
+    finally { await handle.close(); }
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  await appendFile(path, `${separator}${JSON.stringify(value)}\n`, { mode: 0o600 });
+}
+
+async function pruneDayFiles(layout, cutoffMs) {
+  for (const day of await dayFiles(layout)) if (day.endMs <= cutoffMs) await unlink(join(layout.ticksDir, day.name)).catch(error => { if (error.code !== "ENOENT") throw error; });
+  // Temporary files of a conversion interrupted by a crash; anything this old is no longer being written.
+  const own = `${basename(layout.ticksDir).slice(0, -"ticks".length)}`;
+  for (const [directory, prefix] of [[layout.ticksDir, ""], [dirname(layout.manifest), own]]) {
+    const names = await readdir(directory).catch(error => { if (error.code === "ENOENT") return []; throw error; });
+    for (const name of names.filter(value => value.startsWith(prefix) && value.endsWith(".tmp"))) {
+      const path = join(directory, name);
+      const info = await stat(path).catch(() => undefined);
+      if (info?.isFile() && Date.now() - info.mtimeMs > 3600000) await unlink(path).catch(() => {});
+    }
+  }
+}
+
+async function writeTextAtomic(path, text) {
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(temp, text, { mode: 0o600 });
+  await rename(temp, path);
+}
+
+function dayKey(value) { return new Date(value).toISOString().slice(0, 10); }
 
 async function withHistoryLock(path, operation, lock) {
   const lockPath = `${path}.lock`;
@@ -85,10 +338,10 @@ function isProcessAlive(pid) {
   catch (error) { return error.code === "EPERM"; }
 }
 
-export function buildForecast(history, snapshot, config) {
+export function buildForecast(history, snapshot, config, { windowDays = config.history.retentionDays } = {}) {
   const brandAliases = compileBrandAliases(config.identity.brandAliases);
   const nowMs = new Date(snapshot.fetchedAt).getTime();
-  const cutoffMs = nowMs - config.history.retentionDays * 86400000;
+  const cutoffMs = nowMs - windowDays * 86400000;
   const retainedTicks = history.ticks.filter(tick => new Date(tick.fetchedAt).getTime() >= cutoffMs);
   const areaTicks = retainedTicks.filter(tick => tick.areaHash === snapshot.areaHash);
   const scopedTicks = retainedTicks.filter(tick => tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash);
@@ -110,18 +363,7 @@ export function buildForecast(history, snapshot, config) {
     if (!selected) return null;
     return forecastFromStatus(assessment, negativeStartedAt, selected, nowMs);
   }).filter(Boolean).sort((a, b) => new Date(a.expectedAt) - new Date(b.expectedAt)).slice(0, config.history.forecastCount);
-  return { generatedAt: snapshot.fetchedAt, retentionDays: config.history.retentionDays, requestedCount: config.history.forecastCount, tickCount: areaTicks.length, completedEpisodeCount: episodes.length, activityEventCount: rollingEvents.length, sourceTimelineEventCount: sourceEvents.length, petrolStatusEventCount: statusEvents.length, items: candidates };
-}
-
-async function loadHistory(path) {
-  try {
-    const value = await readJson(path);
-    if (value.schemaVersion !== 1 || !Array.isArray(value.ticks)) throw new Error("unsupported history schema");
-    return value;
-  } catch (error) {
-    if (error.code === "ENOENT") return { schemaVersion: 1, ticks: [] };
-    throw error;
-  }
+  return { generatedAt: snapshot.fetchedAt, retentionDays: config.history.retentionDays, windowDays, requestedCount: config.history.forecastCount, tickCount: areaTicks.length, completedEpisodeCount: episodes.length, activityEventCount: rollingEvents.length, sourceTimelineEventCount: sourceEvents.length, petrolStatusEventCount: statusEvents.length, items: candidates };
 }
 
 function compactTick(snapshot, cutoffMs = -Infinity) {
@@ -131,7 +373,8 @@ function compactTick(snapshot, cutoffMs = -Infinity) {
     const eventMs = new Date(sourceEventAt(value)).getTime();
     return Number.isFinite(eventMs) && eventMs >= cutoffMs;
   };
-  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, products: Object.fromEntries(Object.entries(assessment.productAssessments ?? {}).map(([key, value]) => [key, { verdict: value.verdict, confidence: value.confidence }])), activity: (assessment.activity ?? []).filter(keepActivity).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, resumedAt: value.resumedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
+  const sources = Array.isArray(snapshot.sourceHealth) ? Object.fromEntries(snapshot.sourceHealth.map(health => [health.source, health.status])) : undefined;
+  return { fetchedAt: snapshot.fetchedAt, areaHash: snapshot.areaHash, queryHash: snapshot.queryHash, ...(sources ? { sources } : {}), stations: snapshot.assessments.map(assessment => ({ stationKey: assessment.stationKey, memberKeys: (assessment.members ?? []).map(member => `${member.source}:${member.sourceStationId}`).sort(), title: assessment.title, address: assessment.address, brand: assessment.brand, coordinate: assessment.coordinate, verdict: assessment.verdict, confidence: assessment.confidence, activity: (assessment.activity ?? []).filter(keepActivity).map(value => ({ source: value.source, productKey: value.product?.productKey, gradeLabel: value.gradeLabel, kind: value.kind, status: value.status, observedAt: value.observedAt, resumedAt: value.resumedAt, latestEventAt: value.latestEventAt, windowMinutes: value.windowMinutes, count: value.count, gradeSpecific: value.gradeSpecific, sourceTerminology: value.sourceTerminology })) })) };
 }
 
 function sourceTimelineEvents(ticks, config, identity, brandAliases, cutoffMs, nowMs) {
@@ -386,7 +629,7 @@ function buildHistoryIdentity(ticks) {
   return { id, groups, stations };
 }
 function identityTokens(station) { return [...new Set([station.stationKey, ...(station.memberKeys ?? []), ...(station.members ?? []).map(member => `${member.source}:${member.sourceStationId}`)].filter(Boolean))]; }
-function aggregateIdentityStations(stations) {
+export function aggregateIdentityStations(stations) {
   if (stations.length === 1) return stations[0];
   const verdicts = new Set(stations.map(station => station.verdict));
   const allConfirmedPositive = stations.every(isConfirmedPositive);
@@ -397,7 +640,7 @@ function aggregateIdentityStations(stations) {
   const representative = stations[0];
   return { ...representative, verdict, confidence, memberKeys: [...new Set(stations.flatMap(station => station.memberKeys ?? []))].sort(), activity: [...new Map(stations.flatMap(station => station.activity ?? []).map(value => [JSON.stringify(value), value])).values()] };
 }
-function isConfirmedPositive(sample) { return sample.verdict === "AVAILABLE" || (sample.verdict === "LIKELY_AVAILABLE" && ["MEDIUM", "HIGH"].includes(sample.confidence)); }
+export function isConfirmedPositive(sample) { return sample.verdict === "AVAILABLE" || (sample.verdict === "LIKELY_AVAILABLE" && ["MEDIUM", "HIGH"].includes(sample.confidence)); }
 function stationBrand(station, aliases = {}) { return normalizeComparableBrand(station.brand, aliases) || normalizeBrand(station.title); }
 function quantile(values, q) { if (values.length === 1) return values[0]; const index = (values.length - 1) * q; const lower = Math.floor(index), upper = Math.ceil(index); return values[lower] + (values[upper] - values[lower]) * (index - lower); }
 function moscowMinute(value) { const shifted = new Date(new Date(value).getTime() + 180 * 60000); return shifted.getUTCHours() * 60 + shifted.getUTCMinutes(); }

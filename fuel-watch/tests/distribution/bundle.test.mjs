@@ -13,7 +13,7 @@ test("bundle initializes and preserves external state without node_modules", asy
   const userHome = join(directory, "user-state");
   try {
     await installArtifact(installed);
-    for (const entry of ["collect.mjs", "report.mjs", "monitor.mjs", "resolve-area.mjs"]) {
+    for (const entry of ["collect.mjs", "report.mjs", "monitor.mjs", "resolve-area.mjs", "history-stats.mjs"]) {
       const loaded = await runImport(join(installed, "dist", "scripts", entry));
       assert.equal(loaded.code, 0, `${entry}: ${loaded.stderr}`);
     }
@@ -30,6 +30,9 @@ test("bundle initializes and preserves external state without node_modules", asy
     const second = await runNode(join(installed, "dist", "scripts", "monitor.mjs"), ["init"], { FUEL_WATCH_HOME: userHome });
     assert.equal(second.code, 0, second.stderr);
     assert.equal(JSON.parse(await readFile(configPath, "utf8")).monitoring.intervalMinutes, 30);
+    const stats = await runNode(join(installed, "dist", "scripts", "history-stats.mjs"), [], { FUEL_WATCH_HOME: userHome });
+    assert.equal(stats.code, 0, stats.stderr);
+    assert.match(stats.stdout, /История наблюдений пока пуста/);
     assert.equal(await exists(join(installed, "node_modules")), false);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

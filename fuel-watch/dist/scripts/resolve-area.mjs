@@ -2,20 +2,22 @@
 import { createRequire as __fuelWatchCreateRequire } from 'node:module'; const require = __fuelWatchCreateRequire(import.meta.url);
 import {
   BrowserRunner
-} from "./chunks/chunk-KNAANFWM.mjs";
+} from "./chunks/chunk-4NES4PMI.mjs";
+import {
+  resolveArea
+} from "./chunks/chunk-GHVUWPOG.mjs";
 import {
   ensureUserConfig
-} from "./chunks/chunk-NO6Q45EE.mjs";
+} from "./chunks/chunk-EMN4BFNA.mjs";
 import {
   defaultBrowserConfigPath,
   defaultConfigPath,
   defaultSchemaPath,
   isMainModule,
   loadConfig,
-  resolveArea,
   stableJson,
   writeJsonAtomic
-} from "./chunks/chunk-Q2QRNGMD.mjs";
+} from "./chunks/chunk-VLCMFCCN.mjs";
 import "./chunks/chunk-XKTP5TT3.mjs";
 
 // scripts/resolve-area.mjs

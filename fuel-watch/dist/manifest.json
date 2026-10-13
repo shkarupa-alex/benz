@@ -3,20 +3,23 @@
   "adapterContractHash": "02583f1ca351f29346febaa2cf00893c949d8ee0f07ad87873bbd1d71ba2b4f0",
   "files": {
     "dist/scripts/chunks/benzonavt-4XPTXNEL.mjs": 12477,
+    "dist/scripts/chunks/chunk-4NES4PMI.mjs": 27848,
+    "dist/scripts/chunks/chunk-EDWE3O3S.mjs": 5346,
+    "dist/scripts/chunks/chunk-EMN4BFNA.mjs": 1924,
+    "dist/scripts/chunks/chunk-GHVUWPOG.mjs": 619836,
     "dist/scripts/chunks/chunk-IHSCRPAH.mjs": 11232,
     "dist/scripts/chunks/chunk-IVODUSOD.mjs": 7206,
-    "dist/scripts/chunks/chunk-KNAANFWM.mjs": 27848,
-    "dist/scripts/chunks/chunk-NO6Q45EE.mjs": 1906,
-    "dist/scripts/chunks/chunk-PYVMKYQI.mjs": 5307,
-    "dist/scripts/chunks/chunk-Q2QRNGMD.mjs": 907404,
-    "dist/scripts/chunks/chunk-WFJXF7QM.mjs": 28204,
+    "dist/scripts/chunks/chunk-KNPQEARR.mjs": 92552,
+    "dist/scripts/chunks/chunk-VLCMFCCN.mjs": 287697,
     "dist/scripts/chunks/chunk-XKTP5TT3.mjs": 4769,
+    "dist/scripts/chunks/chunk-ZKO6M6LI.mjs": 28590,
     "dist/scripts/chunks/gdebenz-4C2ZZH66.mjs": 18594,
     "dist/scripts/chunks/twogis-KSDWKEJC.mjs": 10735,
     "dist/scripts/chunks/yandex-IWVIAYJM.mjs": 9409,
-    "dist/scripts/collect.mjs": 121525,
-    "dist/scripts/monitor.mjs": 9293,
-    "dist/scripts/report.mjs": 1808,
-    "dist/scripts/resolve-area.mjs": 4082
+    "dist/scripts/collect.mjs": 43134,
+    "dist/scripts/history-stats.mjs": 22991,
+    "dist/scripts/monitor.mjs": 9331,
+    "dist/scripts/report.mjs": 1846,
+    "dist/scripts/resolve-area.mjs": 4128
   }
 }

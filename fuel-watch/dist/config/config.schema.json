@@ -554,7 +554,9 @@
       ],
       "properties": {
         "retentionDays": {
-          "const": 7
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 365
         },
         "forecastCount": {
           "const": 3

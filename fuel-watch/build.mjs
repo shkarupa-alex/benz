@@ -15,7 +15,7 @@ await mkdir(resolve(root, "dist", "config"), { recursive: true });
 for (const name of ["config.json", "config.schema.json", "agent-browser.json"]) await copyFile(resolve(root, "config", name), resolve(root, "dist", "config", name));
 const result = await build({
   absWorkingDir: root,
-  entryPoints: ["scripts/collect.mjs", "scripts/report.mjs", "scripts/monitor.mjs", "scripts/resolve-area.mjs"],
+  entryPoints: ["scripts/collect.mjs", "scripts/report.mjs", "scripts/monitor.mjs", "scripts/resolve-area.mjs", "scripts/history-stats.mjs"],
   outdir,
   bundle: true,
   platform: "node",

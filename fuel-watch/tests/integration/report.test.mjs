@@ -39,10 +39,10 @@ test("report excludes catalog and expired observations from supporting sources",
   assert.doesNotMatch(markdown,/последний подтверждающий сигнал: 1 мин назад/);
 });
 
-test("report always includes the seven-day forecast section with timing and uncertainty", () => {
+test("report always includes the forecast section with its history window, timing and uncertainty", () => {
   const snapshot={fetchedAt:"2026-08-30T10:00:00Z",areaLabel:"fixture",rankedStationKeys:[],assessments:[],sourceHealth:[],warnings:[],changes:[],forecast:{retentionDays:7,items:[{stationKey:"s",title:"АЗС",address:"Адрес",expectedAt:"2026-08-30T12:00:00Z",windowStartAt:"2026-08-30T11:30:00Z",windowEndAt:"2026-08-30T12:30:00Z",confidence:"LOW",basis:"AREA",signalBasis:"ROLLING_ACTIVITY",sampleSize:2}]}};
   const {markdown}=renderReport(snapshot);
-  assert.match(markdown,/Прогноз ближайшего появления \(история 7 дней\)/);
+  assert.match(markdown,/Прогноз ближайшего появления \(по истории за 7 дней\)/);
   assert.match(markdown,/АЗС · \[Адрес\]\(https:\/\/yandex\.ru\/maps\/38\/volgograd\/search\/%D0%90%D0%B4%D1%80%D0%B5%D1%81%2C%20%D0%92%D0%BE%D0%BB%D0%B3%D0%BE%D0%B3%D1%80%D0%B0%D0%B4\/\) — около/);
   assert.match(markdown,/основа: прошлые периоды в зоне, 2 эп\./);
   assert.match(markdown,/rolling-count сигналов по октановым маркам/);
@@ -142,7 +142,7 @@ test("recovered browser plumbing stays out of the report while unrecovered limit
   ]};
   const {markdown,diagnostics}=renderReport(snapshot);
   assert.doesNotMatch(markdown,/BROWSER_NETWORK_CONTROLS_DEGRADED|BROWSER_USER_AGENT_ADJUSTED|User-Agent|CDP|agent-browser|CLEANUP_FAILED|PARTIAL_COVERAGE/);
-  assert.match(markdown,/⚠ История за 7 дней не обновилась/);
+  assert.match(markdown,/⚠ История наблюдений не обновилась/);
   assert.doesNotMatch(markdown,/HISTORY_LOCK_TIMEOUT/);
   assert.equal(diagnostics.agentOnly,true);
   assert.deepEqual(diagnostics.warnings.map(w=>w.code),["BROWSER_NETWORK_CONTROLS_DEGRADED","BROWSER_USER_AGENT_ADJUSTED","CLEANUP_FAILED","PARTIAL_COVERAGE","HISTORY_UNAVAILABLE"]);

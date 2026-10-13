@@ -32,6 +32,7 @@ async function copyOnce(source, target) {
 }
 
 export {
+  userConfigPath,
   historyPath,
   latestSnapshotPath,
   monitorRoot,

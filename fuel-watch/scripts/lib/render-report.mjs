@@ -26,14 +26,14 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
     lines.push(`   ${runText(item.availabilityRun, item.activity, item.verdict, snapshot.fetchedAt, snapshot.freshnessPolicy)}`);
     lines.push(`   Источники текущей оценки: ${supportingSources(item)}.`);
   }
-  lines.push("", `Прогноз ближайшего появления (история ${snapshot.forecast?.retentionDays ?? 7} дней):`);
+  lines.push("", `Прогноз ближайшего появления (по истории за ${daysLabel(snapshot.forecast?.windowDays ?? snapshot.forecast?.retentionDays ?? 7)}):`);
   const forecasts = snapshot.forecast?.items ?? [];
   if (!forecasts.length) lines.push("Пока недостаточно повторных наблюдений массового возобновления сигналов или подтверждённых переходов статуса; история продолжает накапливаться.");
   for (const [index, forecast] of forecasts.slice(0, 3).entries()) {
     lines.push(`${index + 1}. ${stationHeading(forecast)} — около ${formatTime(forecast.expectedAt)}`);
     lines.push(`   окно ${formatTime(forecast.windowStartAt)} — ${formatTime(forecast.windowEndAt)} · уверенность ${CONFIDENCE[forecast.confidence]} · сигнал: ${forecastSignalBasis(forecast.signalBasis)} · основа: ${forecastBasis(forecast.basis)}, ${forecast.sampleSize} эп.`);
   }
-  if (forecasts.length > 0 && forecasts.length < 3) lines.push("До трёх прогнозов пока не хватает 7-дневной статистики.");
+  if (forecasts.length > 0 && forecasts.length < 3) lines.push("До трёх прогнозов пока не хватает накопленной статистики.");
   // A station whose own grade catalogue has no AI-95 is not out of AI-95; counting it as a negative read as a shortage.
   // A live positive still wins: the catalogue is a union over only the sources that publish one, so a station we
   // can currently see selling AI-95 is never filed under "does not sell it".
@@ -52,7 +52,7 @@ export function renderReport(snapshot, { monitorId, generation = 0, recovered = 
 const TECHNICAL_WARNING_CODES = new Set(["BROWSER_NETWORK_CONTROLS_DEGRADED", "BROWSER_USER_AGENT_ADJUSTED", "CLEANUP_FAILED", "PARTIAL_COVERAGE"]);
 const USER_WARNING = {
   BROWSER_RUNTIME_FAILED: "Браузер не запустился, источники в этом прогоне не опрашивались.",
-  HISTORY_UNAVAILABLE: "История за 7 дней не обновилась, поэтому прогноз появления может отсутствовать или быть хуже обычного.",
+  HISTORY_UNAVAILABLE: "История наблюдений не обновилась, поэтому прогноз появления может отсутствовать или быть хуже обычного.",
   COMPLETENESS_INVARIANT: "Один из источников отдал заметно меньше данных, чем обычно: покрытие зоны в этом прогоне неполное.",
   STATION_COUNT_REGRESSION: "Один из источников показал заметно меньше АЗС, чем обычно: часть станций могла не попасть в оценку."
 };
@@ -139,3 +139,4 @@ function activityText(activity = [], fetchedAt, freshness) { const current = act
 function isAi95Activity(value) { return petrolOctaneKey(value) === "95"; }
 function forecastBasis(value) { return ({ STATION: "прошлые периоды этой АЗС", BRAND: "прошлые периоды этого бренда", AREA: "прошлые периоды в зоне" })[value] ?? "история зоны"; }
 function forecastSignalBasis(value) { if (value === "ROLLING_ACTIVITY") return "rolling-count сигналов по октановым маркам"; if (value === "SOURCE_ACTIVITY_TIMELINE") return "история возобновления активности у источника"; if (value === "SOURCE_REPORTED_STATUS") return "история переходов статуса у источника"; if (value === "PETROL_STATUS_PATTERN") return "синхронные переходы статусов бензиновых марок"; return "переходы АИ-95 отсутствовало → появилось"; }
+function daysLabel(value) { const n = Math.abs(Number(value)) % 100, last = n % 10; const word = n > 10 && n < 20 ? "дней" : last === 1 ? "день" : last >= 2 && last <= 4 ? "дня" : "дней"; return `${value} ${word}`; }

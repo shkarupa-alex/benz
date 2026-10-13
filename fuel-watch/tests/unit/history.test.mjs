@@ -4,8 +4,10 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../../scripts/lib/config.mjs";
-import { buildForecast, recordHistory } from "../../scripts/lib/history.mjs";
+import { loadConfig as loadTemplateConfig } from "../../scripts/lib/config.mjs";
+// These cases were written for a seven-day retention; the template now defaults to 90, so pin the original window.
+const loadConfig = async () => { const config = await loadTemplateConfig(); config.history.retentionDays = 7; return config; };
+import { buildForecast, recordHistory, readHistory } from "../../scripts/lib/history.mjs";
 import { writeJsonAtomic } from "../../scripts/lib/util.mjs";
 
 const station = (stationKey, verdict, confidence = verdict === "AVAILABLE" ? "MEDIUM" : "NONE") => ({ stationKey, title: `АЗС ${stationKey}`, address: `Адрес ${stationKey}`, brand: "Лукойл", coordinate: [44.5,48.7], verdict, confidence, productAssessments: {} });
@@ -375,7 +377,7 @@ test("parallel history updates retain every tick", async () => {
   const path=join(dir,"history.json");
   const snapshots=Array.from({length:8},(_,index)=>({fetchedAt:new Date(Date.parse("2026-08-30T10:00:00Z")+index*60000).toISOString(),areaHash:"area",queryHash:"query",assessments:[]}));
   await Promise.all(snapshots.map(snapshot=>recordHistory(path,snapshot,config)));
-  const saved=JSON.parse(await readFile(path,"utf8"));
+  const saved=await readHistory(path);
   assert.equal(saved.ticks.length,8);
   assert.deepEqual(saved.ticks.map(value=>value.fetchedAt).sort(),snapshots.map(value=>value.fetchedAt).sort());
   await assert.rejects(readFile(`${path}.lock`,"utf8"),error=>error.code==="ENOENT");
