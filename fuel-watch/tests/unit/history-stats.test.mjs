@@ -35,7 +35,7 @@ async function seeded() {
 
 test("statistics merge one physical station, count only observed outages and find the restore window", async () => {
   const { path, config } = await seeded();
-  const stats = await computeHistoryStats(path, { intervalMinutes: config.monitoring.intervalMinutes, nowMs: Date.parse(at(4, 10)) });
+  const stats = await computeHistoryStats(path, { intervalMinutes: 15, nowMs: Date.parse(at(4, 10)) });
   assert.equal(stats.coverage.otherScopeTicks, 1);
   assert.equal(stats.coverage.gapCount, 4);
   assert.deepEqual(stats.sources.statuses.gdebenz, { OK: stats.sources.ticksWithHealth });
@@ -55,7 +55,7 @@ test("statistics merge one physical station, count only observed outages and fin
 
 test("statistics can be narrowed to one station and rendered in Russian", async () => {
   const { path, config } = await seeded();
-  const stats = await computeHistoryStats(path, { intervalMinutes: config.monitoring.intervalMinutes, station: "A2", nowMs: Date.parse(at(4, 10)) });
+  const stats = await computeHistoryStats(path, { intervalMinutes: 15, station: "A2", nowMs: Date.parse(at(4, 10)) });
   assert.equal(stats.matchedStationCount, 1);
   const markdown = renderHistoryStats(stats);
   assert.match(markdown, /Завершённых перебоев: 3; длительность: медиана 1 ч 15 мин/);
@@ -102,4 +102,36 @@ test("one delivery reported by several sources is one arrival, and inferred acti
   const stats = await computeHistoryStats(path, { intervalMinutes: 15, nowMs: Date.parse(at(2, 9)) });
   assert.deepEqual(stats.stations[0].sourceReportedArrivals.recent, [{ at: at(1, 6, 50), sources: ["2gis", "gdebenz"], reports: 2 }, { at: at(2, 7), sources: ["gdebenz"], reports: 1 }]);
   assert.equal(stats.coverage.otherScopeTicks, 0);
+});
+
+test("a station timeline shows every observation with the sources behind it and the ones that failed", async () => {
+  const { path } = await seeded();
+  const stats = await computeHistoryStats(path, { intervalMinutes: 15, station: "A2", timeline: true, nowMs: Date.parse(at(4, 10)) });
+  const rows = stats.stations[0].timeline;
+  assert.equal(rows.length, stats.stations[0].samples);
+  assert.deepEqual(rows.at(-1), { at: at(4, 9, 15), verdict: "NOT_AVAILABLE", confidence: "NONE", stationSources: ["gdebenz"], failedSources: {} });
+  // 2gis failed in that tick and listed nothing for this station: it must not look like one of its sources.
+  assert.deepEqual(rows.find(row => row.at === at(1, 7)), { at: at(1, 7), verdict: "AVAILABLE", confidence: "MEDIUM", stationSources: ["gdebenz"], failedSources: { "2gis": "CHALLENGE" } });
+  const markdown = renderHistoryStats(stats);
+  assert.match(markdown, /Хронология опросов \(МСК\):\n  - 01\.09 06:00 — НЕТ; данные об АЗС: gdebenz\n/);
+  assert.match(markdown, /  - 01\.09 07:00 — ЕСТЬ, уверенность средняя; данные об АЗС: gdebenz; не ответили полностью: 2gis \(CHALLENGE\)/);
+  assert.equal((await computeHistoryStats(path, { intervalMinutes: 15, nowMs: Date.parse(at(4, 10)) })).stations[0].timeline, undefined);
+  const all = await computeHistoryStats(path, { intervalMinutes: 15, timeline: true, nowMs: Date.parse(at(4, 10)) });
+  assert.ok(all.stations.every(value => value.timeline.length === value.samples), "without a station filter every station keeps its rows");
+  const run = spawnSync(process.execPath, [join(root, "scripts", "history-stats.mjs"), "--history", path, "--timeline"], { encoding: "utf8" });
+  assert.equal(run.status, 2);
+  assert.match(run.stderr, /--timeline requires --station/);
+});
+
+test("a source switched off in the config is not reported as one that failed", async () => {
+  const config = await loadConfig();
+  const path = join(await mkdtemp(join(tmpdir(), "fuel-history-stats-disabled-")), "history.json");
+  await recordHistory(path, { fetchedAt: at(1, 7), areaHash: "area", queryHash: "query", sourceHealth: [{ source: "gdebenz", status: "OK" }, { source: "2gis", status: "DISABLED" }, { source: "yandex", status: "PARTIAL" }], assessments: [station("a", ["w1"], "AVAILABLE")] }, config);
+  const stats = await computeHistoryStats(path, { intervalMinutes: 15, station: "a", timeline: true, nowMs: Date.parse(at(1, 8)) });
+  assert.deepEqual(stats.stations[0].timeline[0].failedSources, { yandex: "PARTIAL" });
+});
+
+test("the header explains that a fixed schedule's night pauses are gaps by design", async () => {
+  const { path } = await seeded();
+  assert.match(renderHistoryStats(await computeHistoryStats(path, { intervalMinutes: 15, nowMs: Date.parse(at(4, 10)) })), /каждая ночь — такой пропуск.*не сбой/);
 });

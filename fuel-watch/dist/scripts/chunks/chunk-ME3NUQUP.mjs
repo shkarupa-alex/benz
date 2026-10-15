@@ -1,7 +1,7 @@
 import { createRequire as __fuelWatchCreateRequire } from 'node:module'; const require = __fuelWatchCreateRequire(import.meta.url);
 import {
   historyPath
-} from "./chunk-EMN4BFNA.mjs";
+} from "./chunk-FYT6RGSZ.mjs";
 import {
   readJson,
   writeJsonAtomic
@@ -1615,6 +1615,9 @@ var unpackActivity = (value) => Object.fromEntries(Object.entries(value).map(([a
 function forecastWindowDays(config) {
   return Math.min(config.history.retentionDays, FORECAST_WINDOW_MAX_DAYS);
 }
+function historySampleMinutes(config) {
+  return config.history.sampleIntervalMinutes ?? config.monitoring.intervalMinutes;
+}
 function historyLayout(path) {
   const base = path.endsWith(".json") ? path.slice(0, -5) : path;
   return { manifest: path, ticksDir: `${base}.ticks`, stations: `${base}.stations.json`, v1Backup: `${base}.v1-backup.json` };
@@ -1982,13 +1985,13 @@ function buildForecast(history, snapshot, config, { windowDays = config.history.
   const areaTicks = retainedTicks.filter((tick) => tick.areaHash === snapshot.areaHash);
   const scopedTicks = retainedTicks.filter((tick) => tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash);
   const identity = buildHistoryIdentity(areaTicks);
-  const episodes = completedEpisodes(scopedTicks, config.monitoring.intervalMinutes * 3, identity, brandAliases);
+  const episodes = completedEpisodes(scopedTicks, historySampleMinutes(config) * 3, identity, brandAliases);
   const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
   const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases, cutoffMs, nowMs);
   const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
   const candidates = snapshot.assessments.filter((assessment) => assessment.verdict === NEGATIVE && assessment.sellsRequestedFamily !== false).map((assessment) => {
     const samples = stationSamples(scopedTicks, assessment, identity);
-    const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
+    const negativeStartedAt = currentNegativeStart(samples, historySampleMinutes(config) * 3);
     if (!negativeStartedAt) return null;
     const brand = stationBrand(assessment, brandAliases);
     const activity = selectTimePattern(rollingEvents, assessment, brand, identity) ?? selectTimePattern(sourceEvents, assessment, brand, identity) ?? selectTimePattern(statusEvents, assessment, brand, identity);
@@ -2048,7 +2051,7 @@ function rollingActivityEvents(ticks, config, identity, brandAliases) {
     const before = previous.get(key);
     const tickMs = new Date(tick.fetchedAt).getTime();
     const latestMs = new Date(summary.latestEventAt).getTime();
-    const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 6e4;
+    const closeTicks = before && tickMs - before.tickMs <= historySampleMinutes(config) * 3 * 6e4;
     const recentEvent = Number.isFinite(latestMs) && tickMs - latestMs >= -config.freshness.futureSkewSeconds * 1e3 && tickMs - latestMs <= config.activity.resumeWindowMinutes * 6e4;
     const witnessed = before && [...summary.variantCounts].some(([variant, count]) => count > 0 && before.summary.variantCounts.get(variant) === 0);
     if (closeTicks && witnessed && before.summary.windowMinutes >= config.activity.quietGapMinutes && before.summary.count === 0 && summary.count >= config.activity.minimumEvents && recentEvent) {
@@ -2072,7 +2075,7 @@ function petrolStatusEvents(ticks, config, identity, brandAliases) {
     const key = `${identityId}|${summary.source}|${grade}`;
     const before = previous.get(key);
     const tickMs = new Date(tick.fetchedAt).getTime();
-    const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 6e4;
+    const closeTicks = before && tickMs - before.tickMs <= historySampleMinutes(config) * 3 * 6e4;
     const witnessed = before && [...summary.variantStatuses].some(([variant, status]) => ["IN_STOCK", "LIMITED"].includes(status) && before.summary.variantStatuses.get(variant) === "OUT_OF_STOCK");
     if (closeTicks && witnessed && before.summary.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;
@@ -2320,7 +2323,9 @@ function nextMoscowMinute(value, nowMs) {
 }
 
 export {
+  require_proper_lockfile,
   forecastWindowDays,
+  historySampleMinutes,
   ensureDefaultHistoryPath,
   recordHistory,
   forEachHistoryDay,

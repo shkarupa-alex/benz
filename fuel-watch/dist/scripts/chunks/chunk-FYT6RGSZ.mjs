@@ -13,6 +13,7 @@ var userBrowserConfigPath = (env = process.env) => join(fuelWatchHome(env), "con
 var userSchemaPath = (env = process.env) => join(fuelWatchHome(env), "config", "config.schema.json");
 var historyPath = (env = process.env) => resolve(env.FUEL_WATCH_HISTORY_PATH || join(fuelWatchHome(env), "history", "history.json"));
 var latestSnapshotPath = (env = process.env) => join(fuelWatchHome(env), "state", "latest.json");
+var collectionLockPath = (env = process.env) => join(fuelWatchHome(env), "state", "collection");
 var monitorRoot = (env = process.env) => join(fuelWatchHome(env), "monitors");
 async function ensureUserConfig({ templateConfigPath, templateBrowserConfigPath, templateSchemaPath, env = process.env } = {}) {
   if (!templateConfigPath || !templateBrowserConfigPath || !templateSchemaPath) throw new Error("Fuel Watch config templates are required");
@@ -35,6 +36,7 @@ export {
   userConfigPath,
   historyPath,
   latestSnapshotPath,
+  collectionLockPath,
   monitorRoot,
   ensureUserConfig
 };

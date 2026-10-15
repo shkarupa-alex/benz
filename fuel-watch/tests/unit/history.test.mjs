@@ -422,3 +422,14 @@ test("a station whose own catalogue has no AI-95 is never given a delivery forec
   const unknownCatalogue={...snapshot,assessments:assessments.map(value=>({...value}))};
   assert.equal(buildForecast(history,unknownCatalogue,config).items.length,3);
 });
+
+test("outages are measured against the background sampling interval, not the urgent monitoring cadence", async () => {
+  const config = await loadConfig();
+  config.monitoring.intervalMinutes = 10;
+  const every3h = (day, verdicts) => verdicts.map((verdict, index) => ({ fetchedAt: new Date(Date.parse(`2026-08-${day}T04:30:00Z`) + index * 180 * 60000).toISOString(), areaHash: "area", queryHash: "query", stations: [station("s", verdict)] }));
+  const history = { schemaVersion: 2, ticks: [...every3h(28, ["NOT_AVAILABLE", "NOT_AVAILABLE", "AVAILABLE"]), ...every3h(29, ["NOT_AVAILABLE", "AVAILABLE"])] };
+  const snapshot = { fetchedAt: "2026-08-30T04:30:00Z", areaHash: "area", queryHash: "query", assessments: [station("s", "NOT_AVAILABLE")] };
+  assert.equal(buildForecast(history, snapshot, config).completedEpisodeCount, 0, "three-hour steps are gaps for a 10-minute cadence");
+  config.history.sampleIntervalMinutes = 175;
+  assert.equal(buildForecast(history, snapshot, config).completedEpisodeCount, 2);
+});

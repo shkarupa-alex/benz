@@ -7,29 +7,45 @@ const ARRIVAL_STATUSES = new Set(["IN_STOCK", "LIMITED"]);
 // Reports of one delivery by several sources or users within this gap are one arrival, as in the forecast's
 // source timeline (max(resumeWindowMinutes, 2 × quietGapMinutes) with the default config).
 const DEFAULT_ARRIVAL_CLUSTER_MINUTES = 120;
+const TIMELINE_ROWS = 60;
+const VERDICT_LABELS = { AVAILABLE: "ЕСТЬ", LIKELY_AVAILABLE: "СКОРЕЕ ЕСТЬ", NOT_AVAILABLE: "НЕТ" };
+const CONFIDENCE_LABELS = { LOW: "низкая", MEDIUM: "средняя", HIGH: "высокая" };
 const MOSCOW_OFFSET_MS = 3 * 3600000;
 const MIN_WINDOW_EPISODES = 3;
 
 // Long-range AI-95 statistics per physical station over the whole retained history. Two streaming passes keep one
 // day of ticks in memory: the first links station keys that ever appeared together (the same union the forecast
 // uses) and finds the current area and query; the second walks each station's samples in time order.
-export async function computeHistoryStats(path, { intervalMinutes, days, station, arrivalClusterMinutes = DEFAULT_ARRIVAL_CLUSTER_MINUTES, nowMs = Date.now() } = {}) {
+// `timeline` adds every observation of a station (time, verdict, the sources that listed this station in that tick,
+// and the sources that failed in it): the answer to "did the data show it at the time?". With `station` the rows are
+// kept only for the stations that match it, so a 90-day timeline stays small.
+export async function computeHistoryStats(path, { intervalMinutes, days, station, timeline = false, arrivalClusterMinutes = DEFAULT_ARRIVAL_CLUSTER_MINUTES, nowMs = Date.now() } = {}) {
   if (!(intervalMinutes > 0)) throw new Error("intervalMinutes is required");
   const sinceMs = Number.isFinite(days) ? nowMs - days * 86400000 : -Infinity;
   const gapMs = intervalMinutes * 3 * 60000;
   const identity = unionFind();
+  const query = station ? String(station).toLocaleLowerCase("ru") : undefined;
+  const matches = matchesQuery(query);
+  const matchedTokens = new Set();
   let latest;
   const firstPass = await forEachHistoryDay(path, { sinceMs }, ticks => {
     for (const tick of ticks) {
       if (!latest || tick.fetchedAt >= latest.fetchedAt) latest = tick;
-      for (const value of tick.stations ?? []) { const tokens = identityTokens(value); for (const token of tokens) identity.unite(tokens[0], token); }
+      for (const value of tick.stations ?? []) {
+        const tokens = identityTokens(value);
+        for (const token of tokens) identity.unite(tokens[0], token);
+        if (timeline && query && matches([value.title, value.address, value.brand, ...tokens])) matchedTokens.add(tokens[0]);
+      }
     }
   });
   if (!latest) return { empty: true, corruptLines: firstPass.corruptLines, intervalMinutes };
+  // Every record of a station that the final filter keeps was seen here, so its identity is among these.
+  const timelineIds = timeline && query ? new Set([...matchedTokens].map(token => identity.find(token))) : undefined;
   const scope = { areaHash: latest.areaHash, queryHash: latest.queryHash };
   const stations = new Map();
   const coverage = { ticks: 0, firstAt: undefined, lastAt: undefined, gaps: [], previousMs: undefined };
   const sources = new Map();
+  const tickSources = new Map();
   let ticksWithHealth = 0, otherScopeTicks = 0;
   await forEachHistoryDay(path, { sinceMs }, ticks => {
     for (const tick of ticks) {
@@ -45,16 +61,16 @@ export async function computeHistoryStats(path, { intervalMinutes, days, station
       if (tick.sources) {
         ticksWithHealth += 1;
         for (const [source, status] of Object.entries(tick.sources)) { const counts = sources.get(source) ?? {}; counts[status] = (counts[status] ?? 0) + 1; sources.set(source, counts); }
+        if (timeline) tickSources.set(atMs, Object.fromEntries(Object.entries(tick.sources).filter(([, status]) => status !== "OK" && status !== "DISABLED").sort(([a], [b]) => a.localeCompare(b))));
       }
       const grouped = new Map();
       for (const value of tick.stations ?? []) { const id = identity.find(identityTokens(value)[0]); grouped.set(id, [...(grouped.get(id) ?? []), value]); }
-      for (const [id, members] of grouped) observe(stations, id, members, tick.fetchedAt, atMs, gapMs, Date.parse(coverage.firstAt));
+      for (const [id, members] of grouped) observe(stations, id, members, tick.fetchedAt, atMs, gapMs, Date.parse(coverage.firstAt), timeline && (!timelineIds || timelineIds.has(id)));
     }
   });
-  const query = station ? String(station).toLocaleLowerCase("ru") : undefined;
   const results = [...stations.values()]
-    .filter(value => !query || [value.title, value.address, value.brand, ...value.keys].some(text => String(text ?? "").toLocaleLowerCase("ru").includes(query)))
-    .map(value => summarize(value, coverage.lastAt, arrivalClusterMinutes * 60000))
+    .filter(value => matches([value.title, value.address, value.brand, ...value.keys]))
+    .map(value => ({ ...summarize(value, coverage.lastAt, arrivalClusterMinutes * 60000), ...(timeline ? { timeline: value.timeline.map(([atMs, verdict, confidence, stationSources]) => ({ at: new Date(atMs).toISOString(), verdict, confidence, stationSources, ...(tickSources.has(atMs) ? { failedSources: tickSources.get(atMs) } : {}) })) } : {}) }))
     .sort((a, b) => b.outages.count - a.outages.count || a.shares.available - b.shares.available || String(a.title).localeCompare(String(b.title), "ru"));
   const spanMs = Date.parse(coverage.lastAt) - Date.parse(coverage.firstAt);
   return {
@@ -66,8 +82,8 @@ export async function computeHistoryStats(path, { intervalMinutes, days, station
   };
 }
 
-function observe(stations, id, members, fetchedAt, atMs, gapMs, periodStartMs) {
-  const state = stations.get(id) ?? { id, keys: new Set(), samples: 0, positive: 0, negative: 0, unclear: 0, episodes: [], events: new Map() };
+function observe(stations, id, members, fetchedAt, atMs, gapMs, periodStartMs, timeline) {
+  const state = stations.get(id) ?? { id, keys: new Set(), samples: 0, positive: 0, negative: 0, unclear: 0, episodes: [], events: new Map(), timeline: [] };
   stations.set(id, state);
   const latestMember = members[0];
   state.title = latestMember.title ?? state.title; state.address = latestMember.address ?? state.address; state.brand = latestMember.brand ?? state.brand;
@@ -76,6 +92,8 @@ function observe(stations, id, members, fetchedAt, atMs, gapMs, periodStartMs) {
   const kind = isConfirmedPositive(sample) ? "positive" : sample.verdict === NEGATIVE ? "negative" : "unclear";
   state.samples += 1;
   state[kind] += 1;
+  // Member keys are "<source>:<id>", so they say which sources listed this station in this tick.
+  if (timeline) state.timeline.push([atMs, sample.verdict, sample.confidence, [...new Set(members.flatMap(value => (value.memberKeys ?? []).map(key => key.slice(0, key.indexOf(":")))).filter(Boolean))].sort()]);
   const gap = state.previousMs !== undefined && atMs - state.previousMs > gapMs;
   // Same episode rules as the forecast: a gap in observation ends it, a low-confidence "likely" neither ends nor
   // breaks it, and anything else that is not a confirmed positive breaks it.
@@ -139,7 +157,7 @@ export function renderHistoryStats(stats, { limit = 20 } = {}) {
   // 100 % would be meaningless, so the count is then shown on its own.
   const polls = coverage.ticks > coverage.expectedTicks ? `${coverage.ticks} (чаще интервала ${stats.intervalMinutes} мин — были и ручные запуски)` : `${coverage.ticks} из ~${coverage.expectedTicks} ожидаемых при интервале ${stats.intervalMinutes} мин (${Math.round(coverage.ticks / Math.max(1, coverage.expectedTicks) * 100)} %)`;
   lines.push(`Период: ${moscowDateTime(period.firstAt)} – ${moscowDateTime(period.lastAt)} МСК (${period.days} дн.), опросов: ${polls}.`);
-  if (coverage.gapCount) lines.push(`Пропуски сбора длиннее ${stats.intervalMinutes * 3} мин: ${coverage.gapCount}; самые длинные: ${coverage.longestGaps.slice(0, 3).map(gap => `${moscowDateTime(gap.from)} – ${moscowDateTime(gap.to)} (${duration(gap.minutes)})`).join("; ")}.`);
+  if (coverage.gapCount) lines.push(`Пропуски сбора длиннее ${stats.intervalMinutes * 3} мин: ${coverage.gapCount}; самые длинные: ${coverage.longestGaps.slice(0, 3).map(gap => `${moscowDateTime(gap.from)} – ${moscowDateTime(gap.to)} (${duration(gap.minutes)})`).join("; ")}. Если фоновый сбор идёт по расписанию с ночной паузой (например, шесть раз в день), каждая ночь — такой пропуск, а «ожидаемых» опросов выходит больше реальных: это устройство расписания, а не сбой.`);
   if (coverage.otherScopeTicks) lines.push(`Не учтено ${coverage.otherScopeTicks} ${plural(coverage.otherScopeTicks, "опрос", "опроса", "опросов")} с другой областью или набором топлива (настройки менялись).`);
   if (coverage.corruptLines) lines.push(`Повреждённых строк истории пропущено: ${coverage.corruptLines}.`);
   if (stats.sources.ticksWithHealth) lines.push(`Источники (доля опросов со статусом OK): ${Object.entries(stats.sources.statuses).map(([source, counts]) => `${source} ${share(counts.OK ?? 0, stats.sources.ticksWithHealth)} %`).join(", ")}.`);
@@ -158,6 +176,11 @@ export function renderHistoryStats(stats, { limit = 20 } = {}) {
     }
     const arrivals = value.sourceReportedArrivals;
     if (arrivals.count) lines.push(`- Источники сообщали о поступлении АИ-95: ${arrivals.count} ${plural(arrivals.count, "раз", "раза", "раз")}${arrivals.typicalWindow ? `, обычно ${clock(arrivals.typicalWindow.start)}–${clock(arrivals.typicalWindow.end)} МСК` : ""}; по часам: ${hoursText(arrivals.byMoscowHour)}.`);
+    if (value.timeline) {
+      const rows = value.timeline.slice(-TIMELINE_ROWS);
+      lines.push(`- Хронология опросов (МСК${value.timeline.length > rows.length ? `, последние ${rows.length} из ${value.timeline.length}` : ""}):`);
+      for (const row of rows) lines.push(`  - ${moscowDateTime(row.at)} — ${VERDICT_LABELS[row.verdict] ?? `неясно (${row.verdict})`}${CONFIDENCE_LABELS[row.confidence] ? `, уверенность ${CONFIDENCE_LABELS[row.confidence]}` : ""}; данные об АЗС: ${row.stationSources.join(", ") || "нет"}${row.failedSources && Object.keys(row.failedSources).length ? `; не ответили полностью: ${Object.entries(row.failedSources).map(([source, status]) => `${source} (${status})`).join(", ")}` : ""}`);
+    }
   }
   if (stats.stations.length > shown.length) lines.push("", `Показано ${shown.length} из ${stats.stations.length} АЗС; остальные — с меньшим числом перебоев. Полный список: \`--json\` или \`--limit\`.`);
   return lines.join("\n");
@@ -170,6 +193,7 @@ function currentText(current, lastTickAt) {
 }
 
 function identityTokens(station) { return [...new Set([station.stationKey, ...(station.memberKeys ?? [])].filter(Boolean))]; }
+function matchesQuery(query) { return texts => !query || texts.some(text => String(text ?? "").toLocaleLowerCase("ru").includes(query)); }
 function unionFind() {
   const parent = new Map();
   const find = key => { let root = key; while (parent.has(root) && parent.get(root) !== root) root = parent.get(root); while (key !== root) { const next = parent.get(key) ?? root; parent.set(key, root); key = next; } if (!parent.has(root)) parent.set(root, root); return root; };

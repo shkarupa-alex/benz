@@ -9,7 +9,8 @@ import { diffSnapshots } from "./lib/diff.mjs";
 import { petrolOctaneKey } from "./lib/fuels.mjs";
 import { resolveArea, isInsideArea } from "./lib/geometry.mjs";
 import { ensureDefaultHistoryPath, forecastWindowDays, recordHistory } from "./lib/history.mjs";
-import { ensureUserConfig, latestSnapshotPath } from "./lib/paths.mjs";
+import { withCollectionLock } from "./lib/collection-lock.mjs";
+import { collectionLockPath, ensureUserConfig, latestSnapshotPath } from "./lib/paths.mjs";
 import { reconcileStations } from "./lib/identity.mjs";
 import { normalizeQueues } from "./lib/queue.mjs";
 import { rankAssessments } from "./lib/ranking.mjs";
@@ -242,15 +243,22 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   args.config ??= await ensureUserConfig({ templateConfigPath: defaultConfigPath, templateBrowserConfigPath: defaultBrowserConfigPath, templateSchemaPath: defaultSchemaPath });
   const statePath = args.state ?? latestSnapshotPath();
+  // A one-off area writes only where it is told: it must not touch the monitored snapshot or the shared history.
+  const areaOverride = args.area ? await validateAreaSpec(areaSpec(await readJson(args.area))) : undefined;
+  if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
+  // An invalid config is reported at once, not after waiting for another collection.
+  await loadConfig(args.config);
+  // Every run, the one-off area included, queues behind a collection in progress; the previous snapshot is read
+  // only after that, so it is the one the other run has just written.
+  await withCollectionLock(collectionLockPath(), () => collectOnce(args, statePath, areaOverride));
+}
+async function collectOnce(args, statePath, areaOverride) {
   const previousPath = args.previous ?? await existingPath(statePath);
   let interrupted;
   const onSigint = () => { interrupted = "SIGINT"; };
   const onSigterm = () => { interrupted = "SIGTERM"; };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  // A one-off area writes only where it is told: it must not touch the monitored snapshot or the shared history.
-  const areaOverride = args.area ? await validateAreaSpec(areaSpec(await readJson(args.area))) : undefined;
-  if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
   const result = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: areaOverride ? undefined : previousPath, historyPath: areaOverride ? undefined : args.history ?? await ensureDefaultHistoryPath(), areaOverride });
   if (!areaOverride && resolve(args.output ?? "") !== resolve(statePath)) await writeJsonAtomic(statePath, result.snapshot);
   process.removeListener("SIGINT", onSigint);

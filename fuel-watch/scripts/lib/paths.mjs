@@ -12,6 +12,7 @@ export const userBrowserConfigPath = (env = process.env) => join(fuelWatchHome(e
 export const userSchemaPath = (env = process.env) => join(fuelWatchHome(env), "config", "config.schema.json");
 export const historyPath = (env = process.env) => resolve(env.FUEL_WATCH_HISTORY_PATH || join(fuelWatchHome(env), "history", "history.json"));
 export const latestSnapshotPath = (env = process.env) => join(fuelWatchHome(env), "state", "latest.json");
+export const collectionLockPath = (env = process.env) => join(fuelWatchHome(env), "state", "collection");
 export const monitorRoot = (env = process.env) => join(fuelWatchHome(env), "monitors");
 
 export async function ensureUserConfig({ templateConfigPath, templateBrowserConfigPath, templateSchemaPath, env = process.env } = {}) {

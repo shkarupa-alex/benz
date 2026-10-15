@@ -8,7 +8,7 @@ import {
 } from "./chunks/chunk-GHVUWPOG.mjs";
 import {
   ensureUserConfig
-} from "./chunks/chunk-EMN4BFNA.mjs";
+} from "./chunks/chunk-FYT6RGSZ.mjs";
 import {
   defaultBrowserConfigPath,
   defaultConfigPath,

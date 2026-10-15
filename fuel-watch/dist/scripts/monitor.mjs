@@ -9,7 +9,7 @@ import "./chunks/chunk-GHVUWPOG.mjs";
 import {
   ensureUserConfig,
   monitorRoot
-} from "./chunks/chunk-EMN4BFNA.mjs";
+} from "./chunks/chunk-FYT6RGSZ.mjs";
 import {
   defaultBrowserConfigPath,
   defaultConfigPath,

@@ -45,3 +45,16 @@ test("a malformed one-off area is rejected by field name instead of dying inside
   await rejects({ kind: "rectangle", label: "Прямоугольник", south: 48.6, west: 44.3, north: 48.9 }, /required property 'east'/u, /waypoints|coordinates|anchors/u);
   await rejects({ kind: "polygon", label: "Полигон", coordinates: [[44.4, 48.7], [44.5, 48.8], [44.6]] }, /coordinates\/2.*fewer than 2 items/u, /waypoints|south|anchors/u);
 });
+
+test("the history sample interval is optional and bounded like the monitoring interval", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "fuel-watch-config-"));
+  try {
+    const config = JSON.parse(await readFile(defaultConfigPath, "utf8"));
+    assert.equal(config.history.sampleIntervalMinutes, undefined);
+    const path = join(directory, "config.json");
+    await writeFile(path, JSON.stringify({ ...config, history: { ...config.history, sampleIntervalMinutes: 175 } }));
+    assert.equal((await loadConfig(path)).history.sampleIntervalMinutes, 175);
+    await writeFile(path, JSON.stringify({ ...config, history: { ...config.history, sampleIntervalMinutes: 2 } }));
+    await assert.rejects(loadConfig(path), error => error.name === "ConfigError" && /sampleIntervalMinutes/u.test(error.message));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

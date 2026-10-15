@@ -558,6 +558,12 @@
           "minimum": 7,
           "maximum": 365
         },
+        "sampleIntervalMinutes": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440,
+          "description": "Expected spacing of history ticks (the background collector's cadence). Forecast and statistics treat a gap longer than three of these as missing data. Defaults to monitoring.intervalMinutes, which only suits a history built by in-task monitoring; the Linux timer installer requires it."
+        },
         "forecastCount": {
           "const": 3
         }

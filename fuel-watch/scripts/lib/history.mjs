@@ -23,6 +23,10 @@ const packActivity = value => Object.fromEntries(Object.entries(value).filter(([
 const unpackActivity = value => Object.fromEntries(Object.entries(value).map(([alias, item]) => [ACTIVITY_FIELDS[alias] ?? alias, item]));
 
 export function forecastWindowDays(config) { return Math.min(config.history.retentionDays, FORECAST_WINDOW_MAX_DAYS); }
+// History ticks come mostly from the background collector, whose cadence can differ from the in-task monitoring
+// cadence (e.g. six collections a day vs. every 10 minutes while the user urgently looks for fuel). Gap and
+// "neighbouring tick" logic must follow the collector, so it has its own setting and falls back to monitoring.
+export function historySampleMinutes(config) { return config.history.sampleIntervalMinutes ?? config.monitoring.intervalMinutes; }
 
 // Storage v2: the history path is a small manifest; ticks are appended one JSON line each to a file per UTC day
 // next to it, and station display metadata (title, address, brand, coordinate) lives once in a dictionary instead
@@ -346,7 +350,7 @@ export function buildForecast(history, snapshot, config, { windowDays = config.h
   const areaTicks = retainedTicks.filter(tick => tick.areaHash === snapshot.areaHash);
   const scopedTicks = retainedTicks.filter(tick => tick.areaHash === snapshot.areaHash && tick.queryHash === snapshot.queryHash);
   const identity = buildHistoryIdentity(areaTicks);
-  const episodes = completedEpisodes(scopedTicks, config.monitoring.intervalMinutes * 3, identity, brandAliases);
+  const episodes = completedEpisodes(scopedTicks, historySampleMinutes(config) * 3, identity, brandAliases);
   const rollingEvents = rollingActivityEvents(areaTicks, config, identity, brandAliases);
   const sourceEvents = sourceTimelineEvents(areaTicks, config, identity, brandAliases, cutoffMs, nowMs);
   const statusEvents = petrolStatusEvents(areaTicks, config, identity, brandAliases);
@@ -354,7 +358,7 @@ export function buildForecast(history, snapshot, config, { windowDays = config.h
   // inference "a tanker arrived, therefore AI-95 is probably back" must not be applied to it.
   const candidates = snapshot.assessments.filter(assessment => assessment.verdict === NEGATIVE && assessment.sellsRequestedFamily !== false).map(assessment => {
     const samples = stationSamples(scopedTicks, assessment, identity);
-    const negativeStartedAt = currentNegativeStart(samples, config.monitoring.intervalMinutes * 3);
+    const negativeStartedAt = currentNegativeStart(samples, historySampleMinutes(config) * 3);
     if (!negativeStartedAt) return null;
     const brand = stationBrand(assessment, brandAliases);
     const activity = selectTimePattern(rollingEvents, assessment, brand, identity) ?? selectTimePattern(sourceEvents, assessment, brand, identity) ?? selectTimePattern(statusEvents, assessment, brand, identity);
@@ -412,7 +416,7 @@ function rollingActivityEvents(ticks, config, identity, brandAliases) {
     const before = previous.get(key);
     const tickMs = new Date(tick.fetchedAt).getTime();
     const latestMs = new Date(summary.latestEventAt).getTime();
-    const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
+    const closeTicks = before && tickMs - before.tickMs <= historySampleMinutes(config) * 3 * 60000;
     const recentEvent = Number.isFinite(latestMs) && tickMs - latestMs >= -config.freshness.futureSkewSeconds * 1000 && tickMs - latestMs <= config.activity.resumeWindowMinutes * 60000;
     const witnessed = before && [...summary.variantCounts].some(([variant, count]) => count > 0 && before.summary.variantCounts.get(variant) === 0);
     if (closeTicks && witnessed && before.summary.windowMinutes >= config.activity.quietGapMinutes && before.summary.count === 0 && summary.count >= config.activity.minimumEvents && recentEvent) {
@@ -437,7 +441,7 @@ function petrolStatusEvents(ticks, config, identity, brandAliases) {
     const key = `${identityId}|${summary.source}|${grade}`;
     const before = previous.get(key);
     const tickMs = new Date(tick.fetchedAt).getTime();
-    const closeTicks = before && tickMs - before.tickMs <= config.monitoring.intervalMinutes * 3 * 60000;
+    const closeTicks = before && tickMs - before.tickMs <= historySampleMinutes(config) * 3 * 60000;
     const witnessed = before && [...summary.variantStatuses].some(([variant, status]) => ["IN_STOCK", "LIMITED"].includes(status) && before.summary.variantStatuses.get(variant) === "OUT_OF_STOCK");
     if (closeTicks && witnessed && before.summary.status === "OUT_OF_STOCK" && ["IN_STOCK", "LIMITED"].includes(summary.status)) {
       const groupKey = `${identityId}|${tick.fetchedAt}`;

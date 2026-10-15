@@ -17,12 +17,14 @@ import {
 import {
   ensureDefaultHistoryPath,
   forecastWindowDays,
-  recordHistory
-} from "./chunks/chunk-KNPQEARR.mjs";
+  recordHistory,
+  require_proper_lockfile
+} from "./chunks/chunk-ME3NUQUP.mjs";
 import {
+  collectionLockPath,
   ensureUserConfig,
   latestSnapshotPath
-} from "./chunks/chunk-EMN4BFNA.mjs";
+} from "./chunks/chunk-FYT6RGSZ.mjs";
 import {
   ageMinutes,
   defaultBrowserConfigPath,
@@ -48,12 +50,13 @@ import {
   normalizeText
 } from "./chunks/chunk-IVODUSOD.mjs";
 import {
+  __toESM,
   petrolOctaneKey
 } from "./chunks/chunk-XKTP5TT3.mjs";
 
 // scripts/collect.mjs
-import { readFile, stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile as readFile2, stat } from "node:fs/promises";
+import { dirname as dirname2, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // scripts/lib/activity.mjs
@@ -104,6 +107,43 @@ function diffSnapshots(previous, current) {
 }
 function queueValue(queue) {
   return queue?.vehicleCount ?? queue?.ordinal ?? queue?.displayText ?? "unknown";
+}
+
+// scripts/lib/collection-lock.mjs
+var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+var COLLECTION_PAUSE_MS = 6e4;
+var DEFAULT_WAIT_MS = 10 * 6e4;
+var DEFAULT_POLL_MS = 5e3;
+async function withCollectionLock(path, operation, { waitMs = DEFAULT_WAIT_MS, pollMs = DEFAULT_POLL_MS, pauseMs = COLLECTION_PAUSE_MS, lock = import_proper_lockfile.default.lock, sleep = (ms) => new Promise((resolve2) => setTimeout(resolve2, ms)), now = Date.now } = {}) {
+  await mkdir(dirname(path), { recursive: true, mode: 448 });
+  let release;
+  try {
+    release = await lock(path, { realpath: false, stale: 6e4, update: 15e3, retries: { retries: Math.ceil(waitMs / pollMs), factor: 1, minTimeout: pollMs, maxTimeout: pollMs, randomize: false }, onCompromised: () => {
+    } });
+  } catch (error) {
+    if (error.code === "ELOCKED") throw Object.assign(new Error(`COLLECTION_BUSY: another Fuel Watch collection is still running after ${Math.round(waitMs / 6e4)} min of waiting (${path}.lock)`), { code: "COLLECTION_BUSY", cause: error });
+    throw error;
+  }
+  const finishedPath = `${path}.finished`;
+  try {
+    const finishedMs = Date.parse((await readFile(finishedPath, "utf8").catch((error) => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    })).trim());
+    const pause = Number.isFinite(finishedMs) ? finishedMs + pauseMs - now() : 0;
+    if (pause > 0) await sleep(Math.min(pause, pauseMs));
+    return await operation();
+  } finally {
+    try {
+      await writeFile(finishedPath, `${new Date(now()).toISOString()}
+`, { mode: 384 });
+    } finally {
+      await release().catch(() => {
+      });
+    }
+  }
 }
 
 // scripts/lib/identity.mjs
@@ -584,11 +624,11 @@ function isNetworkControlsHealth(health, runner) {
   if (health?.code === "PAGE_LOST" && /, got (?:about:|chrome-error:|empty URL)/i.test(String(health.message))) return true;
   return CONTROLS_ATTRIBUTABLE_CODES.has(health?.code) && runner.lastCommandFailure?.code === health.code;
 }
-var moduleDir = dirname(fileURLToPath(import.meta.url));
+var moduleDir = dirname2(fileURLToPath(import.meta.url));
 async function computeAdapterContractHash() {
   if (true) return "02583f1ca351f29346febaa2cf00893c949d8ee0f07ad87873bbd1d71ba2b4f0";
   const names = ["common.mjs", "yandex.mjs", "gdebenz.mjs", "twogis.mjs", "benzonavt.mjs"];
-  return sha256((await Promise.all(names.map((name) => readFile(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
+  return sha256((await Promise.all(names.map((name) => readFile2(resolve(moduleDir, "lib/sources", name), "utf8")))).join("\n---adapter---\n"));
 }
 function baselineKey(source, areaHash, contractHash) {
   return `${source}:${areaHash}:${contractHash}`;
@@ -623,6 +663,12 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   args.config ??= await ensureUserConfig({ templateConfigPath: defaultConfigPath, templateBrowserConfigPath: defaultBrowserConfigPath, templateSchemaPath: defaultSchemaPath });
   const statePath = args.state ?? latestSnapshotPath();
+  const areaOverride = args.area ? await validateAreaSpec(areaSpec(await readJson(args.area))) : void 0;
+  if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
+  await loadConfig(args.config);
+  await withCollectionLock(collectionLockPath(), () => collectOnce(args, statePath, areaOverride));
+}
+async function collectOnce(args, statePath, areaOverride) {
   const previousPath = args.previous ?? await existingPath(statePath);
   let interrupted;
   const onSigint = () => {
@@ -633,8 +679,6 @@ async function main() {
   };
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
-  const areaOverride = args.area ? await validateAreaSpec(areaSpec(await readJson(args.area))) : void 0;
-  if (areaOverride && !args.output) throw new Error("--area requires --output so a one-off zone cannot overwrite the monitored snapshot");
   const result2 = await collectSnapshot({ configPath: args.config, outputPath: args.output, previousPath: areaOverride ? void 0 : previousPath, historyPath: areaOverride ? void 0 : args.history ?? await ensureDefaultHistoryPath(), areaOverride });
   if (!areaOverride && resolve(args.output ?? "") !== resolve(statePath)) await writeJsonAtomic(statePath, result2.snapshot);
   process.removeListener("SIGINT", onSigint);

@@ -3,12 +3,13 @@ import { createRequire as __fuelWatchCreateRequire } from 'node:module'; const r
 import {
   aggregateIdentityStations,
   forEachHistoryDay,
+  historySampleMinutes,
   isConfirmedPositive
-} from "./chunks/chunk-KNPQEARR.mjs";
+} from "./chunks/chunk-ME3NUQUP.mjs";
 import {
   historyPath,
   userConfigPath
-} from "./chunks/chunk-EMN4BFNA.mjs";
+} from "./chunks/chunk-FYT6RGSZ.mjs";
 import {
   defaultConfigPath,
   isMainModule,
@@ -29,13 +30,19 @@ var NEGATIVE = "NOT_AVAILABLE";
 var POSITIVE = /* @__PURE__ */ new Set(["AVAILABLE", "LIKELY_AVAILABLE"]);
 var ARRIVAL_STATUSES = /* @__PURE__ */ new Set(["IN_STOCK", "LIMITED"]);
 var DEFAULT_ARRIVAL_CLUSTER_MINUTES = 120;
+var TIMELINE_ROWS = 60;
+var VERDICT_LABELS = { AVAILABLE: "\u0415\u0421\u0422\u042C", LIKELY_AVAILABLE: "\u0421\u041A\u041E\u0420\u0415\u0415 \u0415\u0421\u0422\u042C", NOT_AVAILABLE: "\u041D\u0415\u0422" };
+var CONFIDENCE_LABELS = { LOW: "\u043D\u0438\u0437\u043A\u0430\u044F", MEDIUM: "\u0441\u0440\u0435\u0434\u043D\u044F\u044F", HIGH: "\u0432\u044B\u0441\u043E\u043A\u0430\u044F" };
 var MOSCOW_OFFSET_MS = 3 * 36e5;
 var MIN_WINDOW_EPISODES = 3;
-async function computeHistoryStats(path, { intervalMinutes, days, station, arrivalClusterMinutes = DEFAULT_ARRIVAL_CLUSTER_MINUTES, nowMs = Date.now() } = {}) {
+async function computeHistoryStats(path, { intervalMinutes, days, station, timeline = false, arrivalClusterMinutes = DEFAULT_ARRIVAL_CLUSTER_MINUTES, nowMs = Date.now() } = {}) {
   if (!(intervalMinutes > 0)) throw new Error("intervalMinutes is required");
   const sinceMs = Number.isFinite(days) ? nowMs - days * 864e5 : -Infinity;
   const gapMs = intervalMinutes * 3 * 6e4;
   const identity = unionFind();
+  const query = station ? String(station).toLocaleLowerCase("ru") : void 0;
+  const matches = matchesQuery(query);
+  const matchedTokens = /* @__PURE__ */ new Set();
   let latest;
   const firstPass = await forEachHistoryDay(path, { sinceMs }, (ticks) => {
     for (const tick of ticks) {
@@ -43,14 +50,17 @@ async function computeHistoryStats(path, { intervalMinutes, days, station, arriv
       for (const value of tick.stations ?? []) {
         const tokens = identityTokens(value);
         for (const token of tokens) identity.unite(tokens[0], token);
+        if (timeline && query && matches([value.title, value.address, value.brand, ...tokens])) matchedTokens.add(tokens[0]);
       }
     }
   });
   if (!latest) return { empty: true, corruptLines: firstPass.corruptLines, intervalMinutes };
+  const timelineIds = timeline && query ? new Set([...matchedTokens].map((token) => identity.find(token))) : void 0;
   const scope = { areaHash: latest.areaHash, queryHash: latest.queryHash };
   const stations = /* @__PURE__ */ new Map();
   const coverage = { ticks: 0, firstAt: void 0, lastAt: void 0, gaps: [], previousMs: void 0 };
   const sources = /* @__PURE__ */ new Map();
+  const tickSources = /* @__PURE__ */ new Map();
   let ticksWithHealth = 0, otherScopeTicks = 0;
   await forEachHistoryDay(path, { sinceMs }, (ticks) => {
     for (const tick of ticks) {
@@ -70,17 +80,17 @@ async function computeHistoryStats(path, { intervalMinutes, days, station, arriv
           counts[status] = (counts[status] ?? 0) + 1;
           sources.set(source, counts);
         }
+        if (timeline) tickSources.set(atMs, Object.fromEntries(Object.entries(tick.sources).filter(([, status]) => status !== "OK" && status !== "DISABLED").sort(([a], [b]) => a.localeCompare(b))));
       }
       const grouped = /* @__PURE__ */ new Map();
       for (const value of tick.stations ?? []) {
         const id = identity.find(identityTokens(value)[0]);
         grouped.set(id, [...grouped.get(id) ?? [], value]);
       }
-      for (const [id, members] of grouped) observe(stations, id, members, tick.fetchedAt, atMs, gapMs, Date.parse(coverage.firstAt));
+      for (const [id, members] of grouped) observe(stations, id, members, tick.fetchedAt, atMs, gapMs, Date.parse(coverage.firstAt), timeline && (!timelineIds || timelineIds.has(id)));
     }
   });
-  const query = station ? String(station).toLocaleLowerCase("ru") : void 0;
-  const results = [...stations.values()].filter((value) => !query || [value.title, value.address, value.brand, ...value.keys].some((text) => String(text ?? "").toLocaleLowerCase("ru").includes(query))).map((value) => summarize(value, coverage.lastAt, arrivalClusterMinutes * 6e4)).sort((a, b) => b.outages.count - a.outages.count || a.shares.available - b.shares.available || String(a.title).localeCompare(String(b.title), "ru"));
+  const results = [...stations.values()].filter((value) => matches([value.title, value.address, value.brand, ...value.keys])).map((value) => ({ ...summarize(value, coverage.lastAt, arrivalClusterMinutes * 6e4), ...timeline ? { timeline: value.timeline.map(([atMs, verdict, confidence, stationSources]) => ({ at: new Date(atMs).toISOString(), verdict, confidence, stationSources, ...tickSources.has(atMs) ? { failedSources: tickSources.get(atMs) } : {} })) } : {} })).sort((a, b) => b.outages.count - a.outages.count || a.shares.available - b.shares.available || String(a.title).localeCompare(String(b.title), "ru"));
   const spanMs = Date.parse(coverage.lastAt) - Date.parse(coverage.firstAt);
   return {
     generatedAt: new Date(nowMs).toISOString(),
@@ -94,8 +104,8 @@ async function computeHistoryStats(path, { intervalMinutes, days, station, arriv
     stations: results
   };
 }
-function observe(stations, id, members, fetchedAt, atMs, gapMs, periodStartMs) {
-  const state = stations.get(id) ?? { id, keys: /* @__PURE__ */ new Set(), samples: 0, positive: 0, negative: 0, unclear: 0, episodes: [], events: /* @__PURE__ */ new Map() };
+function observe(stations, id, members, fetchedAt, atMs, gapMs, periodStartMs, timeline) {
+  const state = stations.get(id) ?? { id, keys: /* @__PURE__ */ new Set(), samples: 0, positive: 0, negative: 0, unclear: 0, episodes: [], events: /* @__PURE__ */ new Map(), timeline: [] };
   stations.set(id, state);
   const latestMember = members[0];
   state.title = latestMember.title ?? state.title;
@@ -106,6 +116,7 @@ function observe(stations, id, members, fetchedAt, atMs, gapMs, periodStartMs) {
   const kind = isConfirmedPositive(sample) ? "positive" : sample.verdict === NEGATIVE ? "negative" : "unclear";
   state.samples += 1;
   state[kind] += 1;
+  if (timeline) state.timeline.push([atMs, sample.verdict, sample.confidence, [...new Set(members.flatMap((value) => (value.memberKeys ?? []).map((key) => key.slice(0, key.indexOf(":")))).filter(Boolean))].sort()]);
   const gap = state.previousMs !== void 0 && atMs - state.previousMs > gapMs;
   if (gap) state.negativeStart = void 0;
   if (sample.verdict === NEGATIVE) state.negativeStart ??= fetchedAt;
@@ -166,7 +177,7 @@ function renderHistoryStats(stats, { limit = 20 } = {}) {
   const { coverage, period } = stats;
   const polls = coverage.ticks > coverage.expectedTicks ? `${coverage.ticks} (\u0447\u0430\u0449\u0435 \u0438\u043D\u0442\u0435\u0440\u0432\u0430\u043B\u0430 ${stats.intervalMinutes} \u043C\u0438\u043D \u2014 \u0431\u044B\u043B\u0438 \u0438 \u0440\u0443\u0447\u043D\u044B\u0435 \u0437\u0430\u043F\u0443\u0441\u043A\u0438)` : `${coverage.ticks} \u0438\u0437 ~${coverage.expectedTicks} \u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0445 \u043F\u0440\u0438 \u0438\u043D\u0442\u0435\u0440\u0432\u0430\u043B\u0435 ${stats.intervalMinutes} \u043C\u0438\u043D (${Math.round(coverage.ticks / Math.max(1, coverage.expectedTicks) * 100)} %)`;
   lines.push(`\u041F\u0435\u0440\u0438\u043E\u0434: ${moscowDateTime(period.firstAt)} \u2013 ${moscowDateTime(period.lastAt)} \u041C\u0421\u041A (${period.days} \u0434\u043D.), \u043E\u043F\u0440\u043E\u0441\u043E\u0432: ${polls}.`);
-  if (coverage.gapCount) lines.push(`\u041F\u0440\u043E\u043F\u0443\u0441\u043A\u0438 \u0441\u0431\u043E\u0440\u0430 \u0434\u043B\u0438\u043D\u043D\u0435\u0435 ${stats.intervalMinutes * 3} \u043C\u0438\u043D: ${coverage.gapCount}; \u0441\u0430\u043C\u044B\u0435 \u0434\u043B\u0438\u043D\u043D\u044B\u0435: ${coverage.longestGaps.slice(0, 3).map((gap) => `${moscowDateTime(gap.from)} \u2013 ${moscowDateTime(gap.to)} (${duration(gap.minutes)})`).join("; ")}.`);
+  if (coverage.gapCount) lines.push(`\u041F\u0440\u043E\u043F\u0443\u0441\u043A\u0438 \u0441\u0431\u043E\u0440\u0430 \u0434\u043B\u0438\u043D\u043D\u0435\u0435 ${stats.intervalMinutes * 3} \u043C\u0438\u043D: ${coverage.gapCount}; \u0441\u0430\u043C\u044B\u0435 \u0434\u043B\u0438\u043D\u043D\u044B\u0435: ${coverage.longestGaps.slice(0, 3).map((gap) => `${moscowDateTime(gap.from)} \u2013 ${moscowDateTime(gap.to)} (${duration(gap.minutes)})`).join("; ")}. \u0415\u0441\u043B\u0438 \u0444\u043E\u043D\u043E\u0432\u044B\u0439 \u0441\u0431\u043E\u0440 \u0438\u0434\u0451\u0442 \u043F\u043E \u0440\u0430\u0441\u043F\u0438\u0441\u0430\u043D\u0438\u044E \u0441 \u043D\u043E\u0447\u043D\u043E\u0439 \u043F\u0430\u0443\u0437\u043E\u0439 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, \u0448\u0435\u0441\u0442\u044C \u0440\u0430\u0437 \u0432 \u0434\u0435\u043D\u044C), \u043A\u0430\u0436\u0434\u0430\u044F \u043D\u043E\u0447\u044C \u2014 \u0442\u0430\u043A\u043E\u0439 \u043F\u0440\u043E\u043F\u0443\u0441\u043A, \u0430 \xAB\u043E\u0436\u0438\u0434\u0430\u0435\u043C\u044B\u0445\xBB \u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0432\u044B\u0445\u043E\u0434\u0438\u0442 \u0431\u043E\u043B\u044C\u0448\u0435 \u0440\u0435\u0430\u043B\u044C\u043D\u044B\u0445: \u044D\u0442\u043E \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E \u0440\u0430\u0441\u043F\u0438\u0441\u0430\u043D\u0438\u044F, \u0430 \u043D\u0435 \u0441\u0431\u043E\u0439.`);
   if (coverage.otherScopeTicks) lines.push(`\u041D\u0435 \u0443\u0447\u0442\u0435\u043D\u043E ${coverage.otherScopeTicks} ${plural(coverage.otherScopeTicks, "\u043E\u043F\u0440\u043E\u0441", "\u043E\u043F\u0440\u043E\u0441\u0430", "\u043E\u043F\u0440\u043E\u0441\u043E\u0432")} \u0441 \u0434\u0440\u0443\u0433\u043E\u0439 \u043E\u0431\u043B\u0430\u0441\u0442\u044C\u044E \u0438\u043B\u0438 \u043D\u0430\u0431\u043E\u0440\u043E\u043C \u0442\u043E\u043F\u043B\u0438\u0432\u0430 (\u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043C\u0435\u043D\u044F\u043B\u0438\u0441\u044C).`);
   if (coverage.corruptLines) lines.push(`\u041F\u043E\u0432\u0440\u0435\u0436\u0434\u0451\u043D\u043D\u044B\u0445 \u0441\u0442\u0440\u043E\u043A \u0438\u0441\u0442\u043E\u0440\u0438\u0438 \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E: ${coverage.corruptLines}.`);
   if (stats.sources.ticksWithHealth) lines.push(`\u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 (\u0434\u043E\u043B\u044F \u043E\u043F\u0440\u043E\u0441\u043E\u0432 \u0441\u043E \u0441\u0442\u0430\u0442\u0443\u0441\u043E\u043C OK): ${Object.entries(stats.sources.statuses).map(([source, counts]) => `${source} ${share(counts.OK ?? 0, stats.sources.ticksWithHealth)} %`).join(", ")}.`);
@@ -188,6 +199,11 @@ function renderHistoryStats(stats, { limit = 20 } = {}) {
     }
     const arrivals = value.sourceReportedArrivals;
     if (arrivals.count) lines.push(`- \u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A\u0438 \u0441\u043E\u043E\u0431\u0449\u0430\u043B\u0438 \u043E \u043F\u043E\u0441\u0442\u0443\u043F\u043B\u0435\u043D\u0438\u0438 \u0410\u0418-95: ${arrivals.count} ${plural(arrivals.count, "\u0440\u0430\u0437", "\u0440\u0430\u0437\u0430", "\u0440\u0430\u0437")}${arrivals.typicalWindow ? `, \u043E\u0431\u044B\u0447\u043D\u043E ${clock(arrivals.typicalWindow.start)}\u2013${clock(arrivals.typicalWindow.end)} \u041C\u0421\u041A` : ""}; \u043F\u043E \u0447\u0430\u0441\u0430\u043C: ${hoursText(arrivals.byMoscowHour)}.`);
+    if (value.timeline) {
+      const rows = value.timeline.slice(-TIMELINE_ROWS);
+      lines.push(`- \u0425\u0440\u043E\u043D\u043E\u043B\u043E\u0433\u0438\u044F \u043E\u043F\u0440\u043E\u0441\u043E\u0432 (\u041C\u0421\u041A${value.timeline.length > rows.length ? `, \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0435 ${rows.length} \u0438\u0437 ${value.timeline.length}` : ""}):`);
+      for (const row of rows) lines.push(`  - ${moscowDateTime(row.at)} \u2014 ${VERDICT_LABELS[row.verdict] ?? `\u043D\u0435\u044F\u0441\u043D\u043E (${row.verdict})`}${CONFIDENCE_LABELS[row.confidence] ? `, \u0443\u0432\u0435\u0440\u0435\u043D\u043D\u043E\u0441\u0442\u044C ${CONFIDENCE_LABELS[row.confidence]}` : ""}; \u0434\u0430\u043D\u043D\u044B\u0435 \u043E\u0431 \u0410\u0417\u0421: ${row.stationSources.join(", ") || "\u043D\u0435\u0442"}${row.failedSources && Object.keys(row.failedSources).length ? `; \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B\u0438 \u043F\u043E\u043B\u043D\u043E\u0441\u0442\u044C\u044E: ${Object.entries(row.failedSources).map(([source, status]) => `${source} (${status})`).join(", ")}` : ""}`);
+    }
   }
   if (stats.stations.length > shown.length) lines.push("", `\u041F\u043E\u043A\u0430\u0437\u0430\u043D\u043E ${shown.length} \u0438\u0437 ${stats.stations.length} \u0410\u0417\u0421; \u043E\u0441\u0442\u0430\u043B\u044C\u043D\u044B\u0435 \u2014 \u0441 \u043C\u0435\u043D\u044C\u0448\u0438\u043C \u0447\u0438\u0441\u043B\u043E\u043C \u043F\u0435\u0440\u0435\u0431\u043E\u0435\u0432. \u041F\u043E\u043B\u043D\u044B\u0439 \u0441\u043F\u0438\u0441\u043E\u043A: \`--json\` \u0438\u043B\u0438 \`--limit\`.`);
   return lines.join("\n");
@@ -199,6 +215,9 @@ function currentText(current, lastTickAt) {
 }
 function identityTokens(station) {
   return [...new Set([station.stationKey, ...station.memberKeys ?? []].filter(Boolean))];
+}
+function matchesQuery(query) {
+  return (texts) => !query || texts.some((text) => String(text ?? "").toLocaleLowerCase("ru").includes(query));
 }
 function unionFind() {
   const parent = /* @__PURE__ */ new Map();
@@ -278,7 +297,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const configPath = args.config ?? await access(userConfigPath()).then(() => userConfigPath(), () => defaultConfigPath);
   const config = await loadConfig(configPath);
-  const stats = await computeHistoryStats(args.history ?? historyPath(), { intervalMinutes: config.monitoring.intervalMinutes, arrivalClusterMinutes: Math.max(config.activity.resumeWindowMinutes, config.activity.quietGapMinutes * 2), days: args.days, station: args.station });
+  const stats = await computeHistoryStats(args.history ?? historyPath(), { intervalMinutes: historySampleMinutes(config), arrivalClusterMinutes: Math.max(config.activity.resumeWindowMinutes, config.activity.quietGapMinutes * 2), days: args.days, station: args.station, timeline: args.timeline === true });
   process.stdout.write(args.json ? `${stableJson(stats)}
 ` : `${renderHistoryStats(stats, { limit: args.limit })}
 `);
@@ -294,8 +313,10 @@ function parseArgs(argv) {
       if (!Number.isInteger(value) || value < 1) throw new Error(`${arg} must be a positive integer`);
       out[arg.slice(2)] = value;
     } else if (arg === "--json") out.json = true;
+    else if (arg === "--timeline") out.timeline = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
+  if (out.timeline && !out.station) throw new Error("--timeline requires --station");
   return out;
 }
 function requireValue(argv, index, arg) {
